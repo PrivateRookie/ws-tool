@@ -1,3 +1,5 @@
+use std::io::BufReader;
+use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
 use tokio::net::TcpStream;
@@ -77,7 +79,7 @@ impl AsyncWrite for WsStream {
 }
 
 /// create connection
-pub async fn connect(uri: &str) -> Result<WsStream, WsError> {
+pub async fn connect(uri: &str, cert: Option<PathBuf>) -> Result<WsStream, WsError> {
     let uri = uri
         .parse::<http::Uri>()
         .map_err(|e| WsError::InvalidUri(format!("{} {}", uri, e.to_string())))?;
@@ -106,7 +108,7 @@ pub async fn connect(uri: &str) -> Result<WsStream, WsError> {
     let mut stream = match mode {
         Mode::WS => WsStream::Plain(stream),
         Mode::WSS => {
-            let tls_stream = wrap_tls(stream, host).await?;
+            let tls_stream = wrap_tls(stream, host, cert).await?;
             WsStream::Tls(tls_stream)
         }
     };
@@ -115,8 +117,17 @@ pub async fn connect(uri: &str) -> Result<WsStream, WsError> {
     Ok(stream)
 }
 
-async fn wrap_tls(stream: TcpStream, host: &str) -> Result<TlsStream<TcpStream>, WsError> {
+async fn wrap_tls(
+    stream: TcpStream,
+    host: &str,
+    cert: Option<PathBuf>,
+) -> Result<TlsStream<TcpStream>, WsError> {
     let mut config = ClientConfig::new();
+    if let Some(cert_path) = cert {
+        let mut pem = std::fs::File::open(cert_path).unwrap();
+        let mut cert = BufReader::new(&mut pem);
+        config.root_store.add_pem_file(&mut cert).unwrap();
+    }
     config
         .root_store
         .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);

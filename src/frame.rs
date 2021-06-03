@@ -16,7 +16,7 @@ const DEFAULT_FRAME: [u8; 14] = [0b10000001, 0b10000000, 0, 0, 0, 0, 0, 0, 0, 0,
 /// - x9 denotes a ping
 /// - xA denotes a pong
 /// - xB-F are reserved for further control frames
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpCode {
     Continue,
     Text,
@@ -348,7 +348,7 @@ impl Frame {
         }
     }
 
-    pub fn get_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         let (occ, len) = self.payload_len_with_occ();
         let mut end = 1 + occ + len as usize;
         if self.mask() {

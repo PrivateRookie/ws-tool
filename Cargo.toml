@@ -21,3 +21,5 @@ bytes = "1"
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 pretty_env_logger = "0.4.0"
+structopt = "0.3"
+rcgen = "0.8"

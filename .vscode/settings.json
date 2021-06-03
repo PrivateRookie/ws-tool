@@ -1,6 +1,8 @@
 {
     "cSpell.words": [
+        "rustls",
         "thiserror",
         "webpki"
-    ]
+    ],
+    "python.pythonPath": ".venv/bin/python"
 }
