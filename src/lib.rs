@@ -1,3 +1,4 @@
+use std::io::{BufReader, Read};
 use std::{fmt::Debug, sync::Arc};
 
 use tokio::net::TcpStream;
@@ -117,6 +118,10 @@ pub async fn connect(uri: &str) -> Result<WsStream, WsError> {
 
 async fn wrap_tls(stream: TcpStream, host: &str) -> Result<TlsStream<TcpStream>, WsError> {
     let mut config = ClientConfig::new();
+    let mut pem = std::fs::File::open("./scripts/target.pem").unwrap();
+    let mut cert = BufReader::new(&mut pem);
+    config.root_store.add_pem_file(&mut cert).unwrap();
+
     config
         .root_store
         .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);

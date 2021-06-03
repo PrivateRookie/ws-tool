@@ -17,6 +17,7 @@ rand = "0.8"
 base64 = "0.13"
 log = "0.4"
 bytes = "1"
+rcgen = "0.8"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

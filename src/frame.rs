@@ -348,7 +348,7 @@ impl Frame {
         }
     }
 
-    pub fn get_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         let (occ, len) = self.payload_len_with_occ();
         let mut end = 1 + occ + len as usize;
         if self.mask() {
