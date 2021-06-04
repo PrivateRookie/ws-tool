@@ -1,5 +1,7 @@
 use std::{io::Write, path::PathBuf};
 
+use rcgen::generate_simple_self_signed;
+
 use bytes::BytesMut;
 use structopt::StructOpt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
