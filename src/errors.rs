@@ -4,6 +4,10 @@ use thiserror::Error;
 pub enum WsError {
     #[error("invalid uri `{0}`")]
     InvalidUri(String),
+    #[error("unsupported proxy, expect socks5 or http, got {0}")]
+    UnsupportedProxy(String),
+    #[error("invalid proxy {0}")]
+    InvalidProxy(String),
     #[error("connection failed `{0}`")]
     ConnectionFailed(String),
     #[error("tls dns lookup failed `{0}`")]

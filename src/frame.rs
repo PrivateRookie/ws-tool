@@ -360,34 +360,13 @@ impl Frame {
 
 impl Debug for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Websocket Frame")?;
-        writeln!(f, "============================================")?;
         writeln!(
             f,
-            "fin {}, rsv1 {}, rsv2 {} , rsv3 {}",
-            self.fin(),
-            self.rsv1(),
-            self.rsv2(),
-            self.rsv3()
-        )?;
-        writeln!(
-            f,
-            "opcode {:?} mask {} payload_len {}",
+            "<Frame {:b} {:?} {}>",
+            self.raw[0] >> 4,
             self.opcode(),
-            self.mask(),
             self.payload_len()
         )?;
-        if self.mask() {
-            writeln!(f, "masking key {:x?}", self.masking_key().unwrap())?;
-        }
-        writeln!(f, "============================================")?;
-        let data = self.payload_data_unmask();
-        writeln!(
-            f,
-            "payload data \n {:?}",
-            data.iter().map(|c| *c as char).collect::<String>()
-        )?;
-        writeln!(f, "============================================")?;
         Ok(())
     }
 }

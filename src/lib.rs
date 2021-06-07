@@ -1,16 +1,87 @@
 use std::io::BufReader;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
+use stream::WsStream;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
 use webpki::DNSNameRef;
 
 pub mod errors;
 pub mod frame;
+pub mod stream;
+pub mod proxy;
 use errors::WsError;
+
+#[derive(Debug)]
+pub struct Client {
+    pub uri: http::Uri,
+    stream: stream::WsStream,
+    pub state: ConnectionState,
+}
+
+pub struct ClientBuilder {
+    uri: String,
+    proxy_uri: Option<String>,
+    protocols: Vec<String>,
+}
+
+impl ClientBuilder {
+    pub fn new(uri: &str) -> Self {
+        Self {
+            uri: uri.to_string(),
+            proxy_uri: None,
+            protocols: vec![],
+        }
+    }
+
+    /// config  proxy
+    pub fn proxy(self, uri: &str) -> Self {
+        Self {
+            proxy_uri: Some(uri.to_string()),
+            ..self
+        }
+    }
+
+
+    /// add protocol in handshake http header
+    pub fn protocols(self, protocols: Vec<String>) -> Self {
+        Self { protocols, ..self }
+    }
+
+    pub fn build(self) -> Result<Client, WsError> {
+        let Self {
+            uri,
+            proxy_uri,
+            protocols,
+        } = self;
+        let uri = uri
+            .parse::<http::Uri>()
+            .map_err(|e| WsError::InvalidUri(format!("{} {}", uri, e.to_string())))?;
+        let ws_proxy: Option<proxy::Proxy> = match proxy_uri {
+            Some(uri) => Some(uri.parse()?),
+            None => None,
+        };
+        todo!()
+    }
+}
+
+/// websocket connection state
+#[derive(Debug, Clone)]
+pub enum ConnectionState {
+    /// init state, tcp & tls connection creating state
+    Connecting,
+    /// perform websocket handshake
+    HandShaking,
+    /// websocket connection has been successfully established
+    Running,
+    /// client or peer has send "close frame"
+    Closing,
+}
 
 #[derive(Debug)]
 enum Mode {
@@ -23,57 +94,6 @@ impl Mode {
         match self {
             Mode::WS => 80,
             Mode::WSS => 443,
-        }
-    }
-}
-
-pub enum WsStream {
-    Plain(TcpStream),
-    Tls(TlsStream<TcpStream>),
-}
-
-impl AsyncRead for WsStream {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            WsStream::Plain(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
-            WsStream::Tls(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
-        }
-    }
-}
-
-impl AsyncWrite for WsStream {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<Result<usize, std::io::Error>> {
-        match self.get_mut() {
-            WsStream::Plain(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
-            WsStream::Tls(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
-        }
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        match self.get_mut() {
-            WsStream::Plain(stream) => std::pin::Pin::new(stream).poll_flush(cx),
-            WsStream::Tls(stream) => std::pin::Pin::new(stream).poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        match self.get_mut() {
-            WsStream::Plain(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
-            WsStream::Tls(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
         }
     }
 }
