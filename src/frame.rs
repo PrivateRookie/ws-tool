@@ -195,7 +195,7 @@ impl Frame {
     }
 
     fn set_opcode(&mut self, code: OpCode) {
-        let leading_bits = self.raw[0] | 0b11110000;
+        let leading_bits = (self.raw[0] >> 4) << 4;
         self.raw[0] = leading_bits | code.as_u8()
     }
 

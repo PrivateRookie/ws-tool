@@ -18,6 +18,8 @@ base64 = "0.13"
 log = "0.4"
 bytes = "1"
 rcgen = "0.8"
+httparse = "1.4"
+sha-1 = "0.9"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
