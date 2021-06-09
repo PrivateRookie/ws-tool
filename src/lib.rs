@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::BufReader;
-use std::ops::Index;
 use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
@@ -26,9 +25,9 @@ const BUF_SIZE: usize = 4 * 1024;
 const GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 pub struct HandshakeResponse {
-    code: u8,
-    reason: String,
-    headers: HashMap<String, String>,
+    pub code: u8,
+    pub reason: String,
+    pub headers: HashMap<String, String>,
 }
 
 #[derive(Debug)]

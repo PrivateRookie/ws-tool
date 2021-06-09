@@ -7,7 +7,7 @@ use crate::errors::WsError;
 
 #[derive(Debug, Clone)]
 pub enum ProxySchema {
-    Socket5,
+    Socks5,
     Http,
 }
 
@@ -26,7 +26,7 @@ impl FromStr for Proxy {
             .map_err(|e| WsError::InvalidUri(e.to_string()))?;
         let schema_str = uri.scheme_str().unwrap_or_default().to_lowercase();
         let schema = match schema_str.as_str() {
-            "sock5" => Ok(ProxySchema::Socket5),
+            "sock5" => Ok(ProxySchema::Socks5),
             "http" => Ok(ProxySchema::Http),
             _ => Err(WsError::UnsupportedProxy(schema_str)),
         }?;
