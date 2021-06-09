@@ -1,0 +1,6 @@
+/target
+Cargo.lock
+.venv
+
+scripts/*.pem
+scripts/*.key

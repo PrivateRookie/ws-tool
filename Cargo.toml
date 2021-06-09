@@ -1,0 +1,28 @@
+[package]
+name = "ws-client"
+version = "0.1.0"
+authors = ["PrivateRookie <996514515@qq.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+http = "0.2"
+tokio = { version = "1", features = ["rt", "net", "io-util"] }
+tokio-rustls = "0.22"
+webpki = "0.21"
+webpki-roots = "0.21"
+thiserror = "1"
+rand = "0.8"
+base64 = "0.13"
+log = "0.4"
+bytes = "1"
+rcgen = "0.8"
+httparse = "1.4"
+sha-1 = "0.9"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+pretty_env_logger = "0.4.0"
+structopt = "0.3"
+rcgen = "0.8"
