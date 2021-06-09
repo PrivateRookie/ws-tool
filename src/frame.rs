@@ -116,7 +116,7 @@ impl Frame {
         }
         // TODO check nonzero value according to extension negotiation
         let leading_bits = source[0] >> 4;
-        if leading_bits != 0b00001000 || leading_bits != 0b00000000 {
+        if !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
             return Err(ProtocolError::InvalidLeadingBits(leading_bits));
         }
         parse_opcode(source[0]).map_err(ProtocolError::InvalidOpcode)?;

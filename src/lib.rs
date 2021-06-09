@@ -4,6 +4,8 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
+use bytes::BytesMut;
+use errors::ProtocolError;
 use frame::Frame;
 use frame::OpCode;
 use sha1::Digest;
@@ -37,6 +39,7 @@ pub struct Client {
     stream: Option<stream::WsStream>,
     certs: HashSet<PathBuf>,
     accept_key: String,
+    read_buf: [u8; BUF_SIZE],
     pub state: ConnectionState,
     pub proxy: Option<proxy::Proxy>,
     pub protocols: HashSet<String>,
@@ -138,16 +141,15 @@ impl Client {
         }
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut resp = httparse::Response::new(&mut headers);
+        resp.parse(&resp_buf)
+            .map_err(|_| WsError::HandShakeFailed(format!("invalid response")))?;
+
         if resp.code.unwrap_or_default() != 101 {
             return Err(WsError::HandShakeFailed(format!(
                 "expect 101 response, got {:?} {:?}",
                 resp.code, resp.reason
             )));
         }
-
-        resp.parse(&resp_buf)
-            .map_err(|_| WsError::HandShakeFailed(format!("invalid response")))?;
-
         for header in resp.headers.iter() {
             if header.name.to_lowercase() == "sec-websocket-accept" {
                 if header.value != self.accept_key.as_bytes() {
@@ -173,15 +175,34 @@ impl Client {
         Ok(handshake_resp)
     }
 
-    pub async fn close(&mut self) -> Result<(), WsError> {
-        self.state = ConnectionState::Closing;
-        let close = Frame::new_with_opcode(OpCode::Close);
-        self.stream
-            .as_mut()
-            .unwrap()
-            .write_all(close.as_bytes())
+    pub async fn read_frame(&mut self) -> Result<Frame, WsError> {
+        let stream = self.stream.as_mut().unwrap();
+
+        let num = stream
+            .read(&mut self.read_buf)
             .await
-            .map_err(|e| WsError::IOError(e.to_string()))
+            .map_err(|e| WsError::IOError(e.to_string()))?;
+        if num >= BUF_SIZE {
+            log::error!("data len reach limit");
+        }
+        Ok(Frame::from_bytes(&self.read_buf[..num]).unwrap())
+    }
+
+    pub async fn write_frame(&mut self, frame: Frame) -> Result<(), WsError> {
+        let stream = self.stream.as_mut().unwrap();
+        stream
+            .write_all(frame.as_bytes())
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn close(&mut self) -> Result<Frame, WsError> {
+        self.state = ConnectionState::Closing;
+        let mut close = Frame::new_with_opcode(OpCode::Close);
+        close.set_payload(&1000u16.to_be_bytes());
+        self.write_frame(close).await?;
+        self.read_frame().await
     }
 }
 
@@ -266,6 +287,7 @@ impl ClientBuilder {
             uri,
             mode,
             stream: None,
+            read_buf: [0; BUF_SIZE],
             state: ConnectionState::Created,
             proxy: ws_proxy,
             accept_key: String::new(),
