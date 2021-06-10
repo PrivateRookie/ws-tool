@@ -20,6 +20,7 @@ bytes = "1"
 rcgen = "0.8"
 httparse = "1.4"
 sha-1 = "0.9"
+tokio-socks = "0.5"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

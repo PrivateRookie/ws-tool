@@ -22,6 +22,8 @@ pub enum WsError {
     HandShakeFailed(String),
     #[error("protocol error `{0}`")]
     ProtocolError(String),
+    #[error("proxy error `{0}`")]
+    ProxyError(String),
 }
 
 #[derive(Debug, Error)]
@@ -34,6 +36,7 @@ pub enum ProtocolError {
     InvalidOpcode(u8),
     #[error("invalid leading payload len {0}")]
     InvalidLeadingLen(u8),
-    #[error("insufficient data, expect {0}, got {1}")]
-    UnMatchDataLen(usize, usize),
+    #[error("mismatch data len, expect {0}, got {1}")]
+    MisMatchDataLen(usize, usize),
 }
+

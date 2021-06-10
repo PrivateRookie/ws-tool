@@ -76,25 +76,31 @@ fn set_bit(source: &mut [u8], byte_idx: usize, bit_idx: usize, val: bool) {
     source[byte_idx] = b | op
 }
 
-fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), u8> {
+pub(crate) fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
     let mut len = source[1];
     len = (len << 1) >> 1;
     match len {
         0..=125 => Ok((1, len as usize)),
         126 => {
+            if source.len() < 4 {
+                return Err(ProtocolError::InsufficientLen(source.len()));
+            }
             let mut arr = [0u8; 2];
             arr[0] = source[2];
             arr[1] = source[3];
             Ok((1 + 2, u16::from_be_bytes(arr) as usize))
         }
         127 => {
+            if source.len() < 10 {
+                return Err(ProtocolError::InsufficientLen(source.len()));
+            }
             let mut arr = [0u8; 8];
             for idx in 0..8 {
                 arr[idx] = source[idx + 2];
             }
             Ok((1 + 8, usize::from_be_bytes(arr)))
         }
-        _ => Err(len),
+        _ => Err(ProtocolError::InvalidLeadingLen(len)),
     }
 }
 
@@ -110,7 +116,8 @@ impl Frame {
         Self { raw }
     }
 
-    pub fn from_bytes(source: &[u8]) -> Result<Self, ProtocolError> {
+
+    pub fn from_bytes(source: BytesMut) -> Result<Self, ProtocolError> {
         if source.len() < 2 {
             return Err(ProtocolError::InsufficientLen(source.len()));
         }
@@ -120,22 +127,16 @@ impl Frame {
             return Err(ProtocolError::InvalidLeadingBits(leading_bits));
         }
         parse_opcode(source[0]).map_err(ProtocolError::InvalidOpcode)?;
-        let (payload_len, len_occ_bytes) = parse_payload_len(source.deref())
-            .map_err(|leading_len| ProtocolError::InvalidLeadingLen(leading_len))?;
+        let (payload_len, len_occ_bytes) = parse_payload_len(source.deref())?;
         let mut expected_len = 1 + len_occ_bytes + payload_len;
-        let mask = get_bit(source, 1, 0);
+        let mask = get_bit(&source, 1, 0);
         if mask {
             expected_len += 4;
         }
         if expected_len != source.len() {
-            return Err(ProtocolError::UnMatchDataLen(expected_len, source.len()));
+            return Err(ProtocolError::MisMatchDataLen(expected_len, source.len()));
         }
-        // let mut raw = BytesMut::with_capacity(expected_len);
-        // raw.copy_from_slice(source);
-        // Ok(Frame { raw })
-        Ok(Frame {
-            raw: BytesMut::from(source),
-        })
+        Ok(Frame { raw: source })
     }
 
     #[inline]

@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
 use bytes::BytesMut;
-use errors::ProtocolError;
 use frame::Frame;
 use frame::OpCode;
 use sha1::Digest;
@@ -56,14 +55,22 @@ impl Client {
             Some(port) => port,
             None => self.mode.default_port(),
         };
-        let stream = TcpStream::connect(format!("{}:{}", host, port))
-            .await
-            .map_err(|e| {
+        let stream = match &self.proxy {
+            Some(proxy_conf) => {
+                log::debug!("should use proxy");
+                let socks5_stream =
+                    tokio_socks::tcp::Socks5Stream::connect(proxy_conf.socket, (host, port))
+                        .await
+                        .map_err(|e| WsError::ProxyError(e.to_string()))?;
+                socks5_stream.into_inner()
+            }
+            None => TcpStream::connect((host, port)).await.map_err(|e| {
                 WsError::ConnectionFailed(format!(
                     "failed to create tcp connection {}",
                     e.to_string()
                 ))
-            })?;
+            })?,
+        };
         log::debug!("tcp connection established");
         let mut stream = match self.mode {
             Mode::WS => WsStream::Plain(stream),
@@ -119,7 +126,11 @@ impl Client {
         let req_str = format!(
             "{method} {path} {version:?}\r\n{headers}\r\n\r\n",
             method = method,
-            path = self.uri.path(),
+            path = self
+                .uri
+                .path_and_query()
+                .map(|full_path| full_path.to_string())
+                .unwrap_or_default(),
             version = http::Version::HTTP_11,
             headers = headers
         );
@@ -177,15 +188,48 @@ impl Client {
 
     pub async fn read_frame(&mut self) -> Result<Frame, WsError> {
         let stream = self.stream.as_mut().unwrap();
-
-        let num = stream
-            .read(&mut self.read_buf)
+        let mut source = BytesMut::with_capacity(BUF_SIZE / 4);
+        let mut leading_bytes = [0u8; 2];
+        stream
+            .read_exact(&mut leading_bytes)
             .await
             .map_err(|e| WsError::IOError(e.to_string()))?;
-        if num >= BUF_SIZE {
-            log::error!("data len reach limit");
-        }
-        Ok(Frame::from_bytes(&self.read_buf[..num]).unwrap())
+        source.extend_from_slice(&leading_bytes);
+        let leading_len = (leading_bytes[1] << 1) >> 1;
+        let payload_len: usize = match leading_len {
+            0..=125 => Ok(leading_len as usize),
+            126 => {
+                let mut len_bytes = [0u8; 2];
+                stream
+                    .read_exact(&mut len_bytes)
+                    .await
+                    .map_err(|e| WsError::IOError(e.to_string()))?;
+                source.extend_from_slice(&len_bytes);
+                Ok(u16::from_be_bytes(len_bytes) as usize)
+            }
+            127 => {
+                let mut len_bytes = [0u8; 8];
+                stream
+                    .read_exact(&mut len_bytes)
+                    .await
+                    .map_err(|e| WsError::IOError(e.to_string()))?;
+                source.extend_from_slice(&len_bytes);
+                Ok(u64::from_be_bytes(len_bytes) as usize)
+            }
+            _ => Err(WsError::ProtocolError(format!(
+                "invalid leading len {}",
+                leading_len
+            ))),
+        }?;
+        let start_idx = source.len();
+        let new_size = start_idx + payload_len;
+        source.resize(new_size, 0);
+        stream
+            .read_exact(&mut source[start_idx..])
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?;
+        let frame = Frame::from_bytes(source).map_err(|e| WsError::ProtocolError(e.to_string()))?;
+        Ok(frame)
     }
 
     pub async fn write_frame(&mut self, frame: Frame) -> Result<(), WsError> {
@@ -197,12 +241,11 @@ impl Client {
         Ok(())
     }
 
-    pub async fn close(&mut self) -> Result<Frame, WsError> {
+    pub async fn close(&mut self) -> Result<(), WsError> {
         self.state = ConnectionState::Closing;
         let mut close = Frame::new_with_opcode(OpCode::Close);
         close.set_payload(&1000u16.to_be_bytes());
-        self.write_frame(close).await?;
-        self.read_frame().await
+        self.write_frame(close).await
     }
 }
 

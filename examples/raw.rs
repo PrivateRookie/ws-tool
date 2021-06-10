@@ -10,6 +10,10 @@ struct Args {
     /// cert file path
     #[structopt(short, long)]
     cert: Option<PathBuf>,
+
+    /// proxy setting
+    #[structopt(long)]
+    proxy: Option<String>,
 }
 
 #[tokio::main]
@@ -20,6 +24,9 @@ async fn main() -> Result<(), ()> {
     if let Some(cert) = args.cert {
         builder = builder.cert(cert);
     }
+    if let Some(proxy) = args.proxy {
+        builder = builder.proxy(&proxy)
+    }
     let mut client = builder.build().unwrap();
     client.connect().await.unwrap();
 
@@ -29,7 +36,6 @@ async fn main() -> Result<(), ()> {
         std::io::stdout().flush().unwrap();
         std::io::stdin().read_line(&mut input).unwrap();
         if &input == "quit\n" {
-            println!("should exit");
             break;
         }
         let mut frame = Frame::new();
@@ -41,6 +47,7 @@ async fn main() -> Result<(), ()> {
         if &msg == "quit" {
             break;
         }
+        input.clear()
     }
     client.close().await.unwrap();
     return Ok(());
