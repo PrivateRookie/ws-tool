@@ -31,6 +31,14 @@ pub struct HandshakeResponse {
     pub headers: HashMap<String, String>,
 }
 
+/// websocket client, use ClientBuilder to construct new client
+///
+/// ```rust
+/// use ws_client::{frame::Frame, ClientBuilder};
+/// let mut client = ClientBuilder::new("wss://privaterookie.com").proxy("socks5://proxy:proxy_port").build().unwrap();
+/// client.connect().await.unwrap();
+/// client.read_frame().await.unwrap();
+/// ```
 #[derive(Debug)]
 pub struct Client {
     pub uri: http::Uri,
@@ -45,6 +53,7 @@ pub struct Client {
 }
 
 impl Client {
+    /// create tcp connection & perform websocket handshake
     pub async fn connect(&mut self) -> Result<HandshakeResponse, WsError> {
         self.state = ConnectionState::Connecting;
         let host = self.uri.host().ok_or(WsError::InvalidUri(format!(

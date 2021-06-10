@@ -111,12 +111,13 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// simply copy source bytes, don't run any check
     pub fn from_bytes_uncheck(source: &[u8]) -> Self {
         let raw = BytesMut::from(source);
         Self { raw }
     }
 
-
+    /// check source len, fin bit, opcode, payload len etc
     pub fn from_bytes(source: BytesMut) -> Result<Self, ProtocolError> {
         if source.len() < 2 {
             return Err(ProtocolError::InsufficientLen(source.len()));
@@ -189,6 +190,7 @@ impl Frame {
         self.set_bit(0, 3, val)
     }
 
+    /// return frame opcode
     pub fn opcode(&self) -> OpCode {
         parse_opcode(self.raw[0])
             .map_err(|code| format!("unexpected opcode {}", code))
@@ -326,6 +328,10 @@ impl Frame {
         frame
     }
 
+    /// set frame payload
+    ///
+    /// **NOTE!** avoid calling this method multi times, since it need to calculate mask
+    /// every time
     pub fn set_payload(&mut self, payload: &[u8]) {
         let len = payload.len();
         let offset = self.set_payload_len(len as u64);
