@@ -2,6 +2,7 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     str::FromStr,
 };
+use tokio::net::TcpStream;
 
 use crate::errors::WsError;
 
@@ -40,5 +41,30 @@ impl FromStr for Proxy {
             .next()
             .ok_or(WsError::InvalidProxy(format!("{} empty proxy socket", s)))?;
         Ok(Self { schema, socket })
+    }
+}
+
+impl Proxy {
+    pub(crate) async fn connect(&self, target: (&str, u16)) -> Result<TcpStream, WsError> {
+        match &self.schema {
+            ProxySchema::Socks5 => {
+                let stream = tokio_socks::tcp::Socks5Stream::connect(self.socket, target)
+                    .await
+                    .map_err(|e| WsError::ProxyError(e.to_string()))?;
+                Ok(stream.into_inner())
+            }
+            ProxySchema::Http => {
+                let mut stream = TcpStream::connect(self.socket).await.map_err(|e| {
+                    WsError::ConnectionFailed(format!(
+                        "failed to create tcp connection {}",
+                        e.to_string()
+                    ))
+                })?;
+                async_http_proxy::http_connect_tokio(&mut stream, target.0, target.1)
+                    .await
+                    .map_err(|e| WsError::ProxyError(e.to_string()))?;
+                Ok(stream)
+            }
+        }
     }
 }

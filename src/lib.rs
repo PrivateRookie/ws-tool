@@ -56,14 +56,7 @@ impl Client {
             None => self.mode.default_port(),
         };
         let stream = match &self.proxy {
-            Some(proxy_conf) => {
-                log::debug!("should use proxy");
-                let socks5_stream =
-                    tokio_socks::tcp::Socks5Stream::connect(proxy_conf.socket, (host, port))
-                        .await
-                        .map_err(|e| WsError::ProxyError(e.to_string()))?;
-                socks5_stream.into_inner()
-            }
+            Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
             None => TcpStream::connect((host, port)).await.map_err(|e| {
                 WsError::ConnectionFailed(format!(
                     "failed to create tcp connection {}",
