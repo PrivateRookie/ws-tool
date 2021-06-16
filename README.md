@@ -68,6 +68,12 @@ cargo run --example echo -- wss://wsl.com:4430 -c ./scripts/target.pem
 
 [examples/binance](./examples/binance.rs) show how to connect via proxy
 
+## TODO
+
+- [ ] add proxy auth config
+- [ ] support custom https proxy cert
+- [ ] split client into writer & reader
+
 
 ## REF
 

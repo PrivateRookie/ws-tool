@@ -46,8 +46,8 @@ pub struct Client {
     stream: Option<stream::WsStream>,
     certs: HashSet<PathBuf>,
     accept_key: String,
-    read_buf: [u8; BUF_SIZE],
     pub state: ConnectionState,
+    pub handshake_remaining: BytesMut,
     pub proxy: Option<proxy::Proxy>,
     pub protocols: HashSet<String>,
 }
@@ -82,7 +82,8 @@ impl Client {
             }
         };
         self.state = ConnectionState::HandShaking;
-        let resp = self.perform_handshake(&mut stream).await?;
+        let (resp, remain_bytes) = self.perform_handshake(&mut stream).await?;
+        self.handshake_remaining = remain_bytes;
         self.stream = Some(stream);
         Ok(resp)
     }
@@ -90,7 +91,7 @@ impl Client {
     async fn perform_handshake(
         &mut self,
         stream: &mut WsStream,
-    ) -> Result<HandshakeResponse, WsError> {
+    ) -> Result<(HandshakeResponse, BytesMut), WsError> {
         let protocols = self
             .protocols
             .iter()
@@ -140,23 +141,32 @@ impl Client {
             .write_all(req_str.as_bytes())
             .await
             .map_err(|e| WsError::IOError(e.to_string()))?;
-        let mut buf = [0; BUF_SIZE];
-        let mut resp_buf = Vec::with_capacity(BUF_SIZE);
+        let mut read_bytes = BytesMut::with_capacity(1024);
+        let mut buf: [u8; 1024] = [0; 1024];
         loop {
             let num = stream
                 .read(&mut buf)
                 .await
                 .map_err(|e| WsError::IOError(e.to_string()))?;
-            resp_buf.extend_from_slice(&buf[..num]);
-            if num < BUF_SIZE {
+            read_bytes.extend_from_slice(&buf[..num]);
+            let header_complete = read_bytes
+                .windows(4)
+                .any(|slice| slice == [b'\r', b'\n', b'\r', b'\n']);
+            if header_complete || num == 0 {
                 break;
             }
         }
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut resp = httparse::Response::new(&mut headers);
-        resp.parse(&resp_buf)
+        let parse_status = resp
+            .parse(&read_bytes)
             .map_err(|_| WsError::HandShakeFailed(format!("invalid response")))?;
-
+        let header_len = match parse_status {
+            httparse::Status::Complete(len) => Ok(len),
+            httparse::Status::Partial => Err(WsError::HandShakeFailed(format!(
+                "incomplete handshake response"
+            ))),
+        }?;
         if resp.code.unwrap_or_default() != 101 {
             return Err(WsError::HandShakeFailed(format!(
                 "expect 101 response, got {:?} {:?}",
@@ -185,14 +195,16 @@ impl Client {
                 String::from_utf8_lossy(header.value).to_string(),
             );
         });
-        Ok(handshake_resp)
+        log::debug!("protocol handshake complete");
+        Ok((handshake_resp, BytesMut::from(&read_bytes[header_len..])))
     }
 
     pub async fn read_frame(&mut self) -> Result<Frame, WsError> {
         let stream = self.stream.as_mut().unwrap();
         let mut source = BytesMut::with_capacity(BUF_SIZE / 4);
         let mut leading_bytes = [0u8; 2];
-        stream
+        let mut chained_stream = self.handshake_remaining.chain(stream);
+        chained_stream
             .read_exact(&mut leading_bytes)
             .await
             .map_err(|e| WsError::IOError(e.to_string()))?;
@@ -202,7 +214,7 @@ impl Client {
             0..=125 => Ok(leading_len as usize),
             126 => {
                 let mut len_bytes = [0u8; 2];
-                stream
+                chained_stream
                     .read_exact(&mut len_bytes)
                     .await
                     .map_err(|e| WsError::IOError(e.to_string()))?;
@@ -211,7 +223,7 @@ impl Client {
             }
             127 => {
                 let mut len_bytes = [0u8; 8];
-                stream
+                chained_stream
                     .read_exact(&mut len_bytes)
                     .await
                     .map_err(|e| WsError::IOError(e.to_string()))?;
@@ -226,10 +238,12 @@ impl Client {
         let start_idx = source.len();
         let new_size = start_idx + payload_len;
         source.resize(new_size, 0);
-        stream
+        chained_stream
             .read_exact(&mut source[start_idx..])
             .await
             .map_err(|e| WsError::IOError(e.to_string()))?;
+        let remaining_idx = new_size.min(self.handshake_remaining.len());
+        self.handshake_remaining = BytesMut::from(&self.handshake_remaining[remaining_idx..]);
         let frame = Frame::from_bytes(source).map_err(|e| WsError::ProtocolError(e.to_string()))?;
         Ok(frame)
     }
@@ -332,10 +346,10 @@ impl ClientBuilder {
             uri,
             mode,
             stream: None,
-            read_buf: [0; BUF_SIZE],
             state: ConnectionState::Created,
             proxy: ws_proxy,
             accept_key: String::new(),
+            handshake_remaining: BytesMut::with_capacity(0),
             certs: certs.iter().map(|p| p.into()).collect(),
             protocols: protocols.clone(),
         })
