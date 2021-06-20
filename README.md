@@ -89,9 +89,9 @@ report files should be under `test_reports` dir.
 ## autobahn test report
 
 <details>
-    <summary>click to expand report</summary>
+<summary>click to expand report</summary>
 
-    ![report](./assets/report.jpeg)
+![report](./assets/report.jpeg)
 </details>
 
 ## TODO
