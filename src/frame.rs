@@ -328,6 +328,13 @@ impl Frame {
         frame
     }
 
+    pub fn new_with_payload(opcode: OpCode, payload: &[u8]) -> Self {
+        let mut frame = Frame::new();
+        frame.set_opcode(opcode);
+        frame.set_payload(payload);
+        frame
+    }
+
     /// set frame payload
     ///
     /// **NOTE!** avoid calling this method multi times, since it need to calculate mask

@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::{frame::OpCode, ConnectionState};
+
 #[derive(Debug, Error)]
 pub enum WsError {
     #[error("invalid uri `{0}`")]
@@ -20,10 +22,14 @@ pub enum WsError {
     IOError(String),
     #[error("{0}")]
     HandShakeFailed(String),
-    #[error("protocol error `{0}`")]
-    ProtocolError(String),
+    #[error("{0:?}")]
+    ProtocolError(ProtocolError),
     #[error("proxy error `{0}`")]
     ProxyError(String),
+    #[error("io on invalid connection state {0:?}")]
+    InvalidConnState(ConnectionState),
+    #[error("unsupported frame {0:?}")]
+    UnsupportedFrame(OpCode),
 }
 
 #[derive(Debug, Error)]
@@ -38,5 +44,18 @@ pub enum ProtocolError {
     InvalidLeadingLen(u8),
     #[error("mismatch data len, expect {0}, got {1}")]
     MisMatchDataLen(usize, usize),
+    #[error("missing init fragmented frame")]
+    MissInitialFragmentedFrame,
+    #[error("not continue frame after init fragmented frame")]
+    NotContinueFrameAfterFragmented,
+    #[error("fragmented control frame ")]
+    FragmentedControlFrame,
+    #[error("control frame is too big {0}")]
+    ControlFrameTooBig(usize),
+    #[error("invalid close frame payload len, expect 0, >= 2")]
+    InvalidCloseFramePayload,
+    #[error("invalid utf-8 text")]
+    InvalidUtf8,
+    #[error("invalid close code {0}")]
+    InvalidCloseCode(u16),
 }
-

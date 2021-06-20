@@ -6,6 +6,7 @@ features:
 
 - support tls & self signed cert
 - support setting http proxy & socks5 proxy
+- tested by autobahn
 
 ## usage
 
@@ -13,7 +14,7 @@ features:
 
 ```rust
 use ws_client::{frame::Frame, ClientBuilder};
-let mut client = ClientBuilder::new("wss://privaterookie.com").proxy("socks5://proxy:proxy_port").build().unwrap();
+let mut client = ClientBuilder::new("wss://privaterookie.com").proxy("socks5://proxy:proxy_port").build().await.unwrap();
 client.connect().await.unwrap();
 client.read_frame().await.unwrap();
 ```
@@ -67,6 +68,37 @@ cargo run --example echo -- wss://wsl.com:4430 -c ./scripts/target.pem
 ### use proxy
 
 [examples/binance](./examples/binance.rs) show how to connect via proxy
+
+### run autobaha testsuit
+
+start test server
+
+```bash
+./script/start_autobahn_server.sh
+```
+
+run test on other terminal
+
+```bash
+cargo run --example autobahn-client
+```
+
+report files should be under `test_reports` dir.
+
+
+## autobahn test report
+
+<details>
+    <summary>click to expand report</summary>
+
+    ![report](./assets/report.jpeg)
+</details>
+
+## TODO
+
+- [ ] add proxy auth config
+- [ ] support custom https proxy cert
+- [ ] split client into writer & reader
 
 
 ## REF

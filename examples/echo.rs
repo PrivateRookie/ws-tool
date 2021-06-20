@@ -1,7 +1,7 @@
 use std::{io::Write, path::PathBuf};
 
 use structopt::StructOpt;
-use ws_client::{frame::Frame, ClientBuilder};
+use ws_client::{frame::Frame, ConnBuilder};
 
 /// websocket client demo with raw frame
 #[derive(StructOpt)]
@@ -20,14 +20,14 @@ struct Args {
 async fn main() -> Result<(), ()> {
     pretty_env_logger::init();
     let args = Args::from_args();
-    let mut builder = ClientBuilder::new(&args.uri);
+    let mut builder = ConnBuilder::new(&args.uri);
     if let Some(cert) = args.cert {
         builder = builder.cert(cert);
     }
     if let Some(proxy) = args.proxy {
         builder = builder.proxy(&proxy)
     }
-    let mut client = builder.build().unwrap();
+    let mut client = builder.build().await.unwrap();
     client.connect().await.unwrap();
 
     let mut input = String::new();
@@ -49,6 +49,6 @@ async fn main() -> Result<(), ()> {
         }
         input.clear()
     }
-    client.close().await.unwrap();
+    client.close(1000, "".to_string()).await.unwrap();
     return Ok(());
 }

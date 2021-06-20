@@ -1,269 +1,58 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
-use std::io::BufReader;
+use std::fmt::Debug;
 use std::path::PathBuf;
-use std::{fmt::Debug, sync::Arc};
 
 use bytes::BytesMut;
 use frame::Frame;
 use frame::OpCode;
-use sha1::Digest;
+use log::trace;
+use protocol::perform_handshake;
+use protocol::read_frame;
+use protocol::write_frame;
 use stream::WsStream;
 use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-
-use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
-use webpki::DNSNameRef;
 
 pub mod errors;
 pub mod frame;
+pub mod protocol;
 pub mod proxy;
 pub mod stream;
-use errors::WsError;
+use errors::{ProtocolError, WsError};
 
-const BUF_SIZE: usize = 4 * 1024;
-const GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+use crate::protocol::wrap_tls;
+use crate::protocol::Mode;
 
-pub struct HandshakeResponse {
-    pub code: u8,
-    pub reason: String,
-    pub headers: HashMap<String, String>,
+/// websocket connection state
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionState {
+    /// init state
+    Created,
+    /// tcp & tls connection creating state
+    HandShaking,
+    /// websocket connection has been successfully established
+    Running,
+    /// client or peer has send "close frame"
+    Closing,
+    /// client or peer have send "close" response frame
+    Closed,
 }
 
-/// websocket client, use ClientBuilder to construct new client
-///
-/// ```rust
-/// use ws_client::{frame::Frame, ClientBuilder};
-/// let mut client = ClientBuilder::new("wss://privaterookie.com").proxy("socks5://proxy:proxy_port").build().unwrap();
-/// client.connect().await.unwrap();
-/// client.read_frame().await.unwrap();
-/// ```
-#[derive(Debug)]
-pub struct Client {
-    pub uri: http::Uri,
-    mode: Mode,
-    stream: Option<stream::WsStream>,
-    certs: HashSet<PathBuf>,
-    accept_key: String,
-    read_buf: [u8; BUF_SIZE],
-    pub state: ConnectionState,
-    pub proxy: Option<proxy::Proxy>,
-    pub protocols: HashSet<String>,
-}
-
-impl Client {
-    /// create tcp connection & perform websocket handshake
-    pub async fn connect(&mut self) -> Result<HandshakeResponse, WsError> {
-        self.state = ConnectionState::Connecting;
-        let host = self.uri.host().ok_or(WsError::InvalidUri(format!(
-            "can not find host {}",
-            self.uri
-        )))?;
-        let port = match self.uri.port_u16() {
-            Some(port) => port,
-            None => self.mode.default_port(),
-        };
-        let stream = match &self.proxy {
-            Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
-            None => TcpStream::connect((host, port)).await.map_err(|e| {
-                WsError::ConnectionFailed(format!(
-                    "failed to create tcp connection {}",
-                    e.to_string()
-                ))
-            })?,
-        };
-        log::debug!("tcp connection established");
-        let mut stream = match self.mode {
-            Mode::WS => WsStream::Plain(stream),
-            Mode::WSS => {
-                let tls_stream = wrap_tls(stream, host, &self.certs).await?;
-                WsStream::Tls(tls_stream)
-            }
-        };
-        self.state = ConnectionState::HandShaking;
-        let resp = self.perform_handshake(&mut stream).await?;
-        self.stream = Some(stream);
-        Ok(resp)
-    }
-
-    async fn perform_handshake(
-        &mut self,
-        stream: &mut WsStream,
-    ) -> Result<HandshakeResponse, WsError> {
-        let protocols = self
-            .protocols
-            .iter()
-            .map(|p| p.to_string())
-            .collect::<Vec<String>>();
-        let key = gen_key();
-        self.accept_key = cal_accept_key(&key);
-
-        let req = http::Request::builder()
-            .uri(&self.uri)
-            .header(
-                "Host",
-                format!(
-                    "{}:{}",
-                    self.uri.host().unwrap_or_default(),
-                    self.uri
-                        .port_u16()
-                        .unwrap_or_else(|| self.mode.default_port())
-                ),
-            )
-            .header("Upgrade", "websocket")
-            .header("Connection", "Upgrade")
-            .header("Sec-Websocket-Key", &key)
-            .header("Sec-WebSocket-Protocol", protocols.join(" "))
-            .header("Sec-WebSocket-Version", "13")
-            .body(())
-            .unwrap();
-        let headers = req
-            .headers()
-            .iter()
-            .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or_default()))
-            .collect::<Vec<String>>()
-            .join("\r\n");
-        let method = http::Method::GET;
-        let req_str = format!(
-            "{method} {path} {version:?}\r\n{headers}\r\n\r\n",
-            method = method,
-            path = self
-                .uri
-                .path_and_query()
-                .map(|full_path| full_path.to_string())
-                .unwrap_or_default(),
-            version = http::Version::HTTP_11,
-            headers = headers
-        );
-        stream
-            .write_all(req_str.as_bytes())
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
-        let mut buf = [0; BUF_SIZE];
-        let mut resp_buf = Vec::with_capacity(BUF_SIZE);
-        loop {
-            let num = stream
-                .read(&mut buf)
-                .await
-                .map_err(|e| WsError::IOError(e.to_string()))?;
-            resp_buf.extend_from_slice(&buf[..num]);
-            if num < BUF_SIZE {
-                break;
-            }
-        }
-        let mut headers = [httparse::EMPTY_HEADER; 64];
-        let mut resp = httparse::Response::new(&mut headers);
-        resp.parse(&resp_buf)
-            .map_err(|_| WsError::HandShakeFailed(format!("invalid response")))?;
-
-        if resp.code.unwrap_or_default() != 101 {
-            return Err(WsError::HandShakeFailed(format!(
-                "expect 101 response, got {:?} {:?}",
-                resp.code, resp.reason
-            )));
-        }
-        for header in resp.headers.iter() {
-            if header.name.to_lowercase() == "sec-websocket-accept" {
-                if header.value != self.accept_key.as_bytes() {
-                    return Err(WsError::HandShakeFailed(format!(
-                        "mismatch key, expect {:?}, got {:?}",
-                        self.accept_key.as_bytes(),
-                        header.value
-                    )));
-                }
-            }
-        }
-        let mut handshake_resp = HandshakeResponse {
-            code: 101,
-            reason: resp.reason.map(|r| r.to_string()).unwrap_or_default(),
-            headers: HashMap::new(),
-        };
-        resp.headers.iter().for_each(|header| {
-            handshake_resp.headers.insert(
-                header.name.to_string(),
-                String::from_utf8_lossy(header.value).to_string(),
-            );
-        });
-        Ok(handshake_resp)
-    }
-
-    pub async fn read_frame(&mut self) -> Result<Frame, WsError> {
-        let stream = self.stream.as_mut().unwrap();
-        let mut source = BytesMut::with_capacity(BUF_SIZE / 4);
-        let mut leading_bytes = [0u8; 2];
-        stream
-            .read_exact(&mut leading_bytes)
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
-        source.extend_from_slice(&leading_bytes);
-        let leading_len = (leading_bytes[1] << 1) >> 1;
-        let payload_len: usize = match leading_len {
-            0..=125 => Ok(leading_len as usize),
-            126 => {
-                let mut len_bytes = [0u8; 2];
-                stream
-                    .read_exact(&mut len_bytes)
-                    .await
-                    .map_err(|e| WsError::IOError(e.to_string()))?;
-                source.extend_from_slice(&len_bytes);
-                Ok(u16::from_be_bytes(len_bytes) as usize)
-            }
-            127 => {
-                let mut len_bytes = [0u8; 8];
-                stream
-                    .read_exact(&mut len_bytes)
-                    .await
-                    .map_err(|e| WsError::IOError(e.to_string()))?;
-                source.extend_from_slice(&len_bytes);
-                Ok(u64::from_be_bytes(len_bytes) as usize)
-            }
-            _ => Err(WsError::ProtocolError(format!(
-                "invalid leading len {}",
-                leading_len
-            ))),
-        }?;
-        let start_idx = source.len();
-        let new_size = start_idx + payload_len;
-        source.resize(new_size, 0);
-        stream
-            .read_exact(&mut source[start_idx..])
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
-        let frame = Frame::from_bytes(source).map_err(|e| WsError::ProtocolError(e.to_string()))?;
-        Ok(frame)
-    }
-
-    pub async fn write_frame(&mut self, frame: Frame) -> Result<(), WsError> {
-        let stream = self.stream.as_mut().unwrap();
-        stream
-            .write_all(frame.as_bytes())
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
-        Ok(())
-    }
-
-    pub async fn close(&mut self) -> Result<(), WsError> {
-        self.state = ConnectionState::Closing;
-        let mut close = Frame::new_with_opcode(OpCode::Close);
-        close.set_payload(&1000u16.to_be_bytes());
-        self.write_frame(close).await
-    }
-}
-
-pub struct ClientBuilder {
+pub struct ConnBuilder {
     uri: String,
     proxy_uri: Option<String>,
     protocols: HashSet<String>,
+    extensions: HashSet<String>,
     certs: HashSet<PathBuf>,
 }
 
-impl ClientBuilder {
+impl ConnBuilder {
     pub fn new(uri: &str) -> Self {
         Self {
             uri: uri.to_string(),
             proxy_uri: None,
             protocols: HashSet::new(),
+            extensions: HashSet::new(),
             certs: HashSet::new(),
         }
     }
@@ -282,11 +71,23 @@ impl ClientBuilder {
         self
     }
 
-    /// set protocols in handshake http header
+    /// set extension in handshake http header
     ///
     /// **NOTE** it will clear protocols set by `protocol` method
     pub fn protocols(self, protocols: HashSet<String>) -> Self {
         Self { protocols, ..self }
+    }
+    /// add protocols
+    pub fn extension(mut self, extension: String) -> Self {
+        self.extensions.insert(extension);
+        self
+    }
+
+    /// set extension in handshake http header
+    ///
+    /// **NOTE** it will clear protocols set by `protocol` method
+    pub fn extensions(self, extensions: HashSet<String>) -> Self {
+        Self { extensions, ..self }
     }
 
     pub fn cert(mut self, cert: PathBuf) -> Self {
@@ -301,11 +102,12 @@ impl ClientBuilder {
         Self { certs, ..self }
     }
 
-    pub fn build(&self) -> Result<Client, WsError> {
+    pub async fn build(&self) -> Result<Client, WsError> {
         let Self {
             uri,
             proxy_uri,
             protocols,
+            extensions,
             certs,
         } = self;
         let uri = uri
@@ -328,87 +130,234 @@ impl ClientBuilder {
             None => None,
         };
 
+        let host = uri.host().ok_or(WsError::InvalidUri(format!(
+            "can not find host {}",
+            self.uri
+        )))?;
+        let port = match uri.port_u16() {
+            Some(port) => port,
+            None => mode.default_port(),
+        };
+
+        let stream = match &ws_proxy {
+            Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
+            None => TcpStream::connect((host, port)).await.map_err(|e| {
+                WsError::ConnectionFailed(format!(
+                    "failed to create tcp connection {}",
+                    e.to_string()
+                ))
+            })?,
+        };
+        log::debug!("tcp connection established");
+        let stream = match mode {
+            Mode::WS => WsStream::Plain(stream),
+            Mode::WSS => {
+                let tls_stream = wrap_tls(stream, host, &self.certs).await?;
+                WsStream::Tls(tls_stream)
+            }
+        };
         Ok(Client {
             uri,
             mode,
-            stream: None,
-            read_buf: [0; BUF_SIZE],
+            stream,
             state: ConnectionState::Created,
+            certs: certs.clone(),
+            handshake_remaining: BytesMut::with_capacity(0),
             proxy: ws_proxy,
-            accept_key: String::new(),
-            certs: certs.iter().map(|p| p.into()).collect(),
-            protocols: protocols.clone(),
+            protocols: protocols.to_owned(),
+            extensions: extensions.to_owned(),
         })
     }
 }
 
-/// websocket connection state
-#[derive(Debug, Clone)]
-pub enum ConnectionState {
-    /// init state
-    Created,
-    /// tcp & tls connection creating state
-    Connecting,
-    /// perform websocket handshake
-    HandShaking,
-    /// websocket connection has been successfully established
-    Running,
-    /// client or peer has send "close frame"
-    Closing,
+/// websocket client, use ConnBuilder to construct new client
+#[derive(Debug)]
+pub struct Client {
+    uri: http::Uri,
+    mode: Mode,
+    stream: stream::WsStream,
+    certs: HashSet<PathBuf>,
+    state: ConnectionState,
+    handshake_remaining: BytesMut,
+    proxy: Option<proxy::Proxy>,
+    protocols: HashSet<String>,
+    extensions: HashSet<String>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum Mode {
-    WS,
-    WSS,
-}
+impl Client {
+    pub async fn connect(&mut self) -> Result<protocol::HandshakeResponse, WsError> {
+        self.state = ConnectionState::HandShaking;
+        let protocols = self
+            .protocols
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<String>>()
+            .join(" ");
+        let extensions = self
+            .extensions
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<String>>()
+            .join(" ");
 
-impl Mode {
-    fn default_port(&self) -> u16 {
-        match self {
-            Mode::WS => 80,
-            Mode::WSS => 443,
+        let (resp, remaining_bytes) = perform_handshake(
+            &mut self.stream,
+            &self.mode,
+            &self.uri,
+            protocols,
+            extensions,
+            13,
+        )
+        .await?;
+        self.handshake_remaining = remaining_bytes;
+        self.state = ConnectionState::Running;
+        Ok(resp)
+    }
+
+    async fn read(&mut self) -> Result<Frame, WsError> {
+        let frame = if self.handshake_remaining.is_empty() {
+            read_frame(&mut self.stream).await.map(|(frame, _)| frame)
+        } else {
+            let mut stream = self.handshake_remaining.chain(&mut self.stream);
+            let (frame, count) = read_frame(&mut stream).await?;
+            let start_idx = count.min(self.handshake_remaining.len());
+            self.handshake_remaining = BytesMut::from(&self.handshake_remaining[start_idx..]);
+            Ok(frame)
+        }?;
+        trace!("{:?}", frame);
+        Ok(frame)
+    }
+
+    async fn write(&mut self, frame: Frame) -> Result<(), WsError> {
+        write_frame(&mut self.stream, frame).await
+    }
+
+    pub async fn read_frame(&mut self) -> Result<Frame, WsError> {
+        if self.state != ConnectionState::Running {
+            return Err(WsError::InvalidConnState(self.state.clone()));
+        }
+        let mut fragmented = false;
+        let mut fragmented_data = BytesMut::new();
+        let mut fragmented_type = OpCode::Text;
+        loop {
+            let frame = self.read().await?;
+            let opcode = frame.opcode();
+            match opcode {
+                OpCode::Continue => {
+                    if !fragmented {
+                        let reason = ProtocolError::MissInitialFragmentedFrame;
+                        self.close(1002, reason.to_string()).await?;
+                        return Err(WsError::ProtocolError(reason));
+                    }
+                    fragmented_data.extend_from_slice(&frame.payload_data_unmask());
+                    if frame.fin() {
+                        if let Err(_) = String::from_utf8(fragmented_data.to_vec()) {
+                            let reason = ProtocolError::InvalidUtf8;
+                            self.close(1007, reason.to_string()).await?;
+                            return Err(WsError::ProtocolError(reason));
+                        }
+                        let completed_frame =
+                            Frame::new_with_payload(fragmented_type, &fragmented_data);
+                        return Ok(completed_frame);
+                    }
+                }
+                OpCode::Text | OpCode::Binary => {
+                    if fragmented {
+                        let reason = ProtocolError::NotContinueFrameAfterFragmented;
+                        self.close(1002, reason.to_string()).await?;
+                        return Err(WsError::ProtocolError(reason));
+                    }
+                    if !frame.fin() {
+                        fragmented = true;
+                        fragmented_type = opcode.clone();
+                        let payload = frame.payload_data_unmask();
+                        fragmented_data.extend_from_slice(&payload);
+                    } else {
+                        if opcode == OpCode::Text {
+                            if let Err(_) = String::from_utf8(frame.payload_data_unmask().to_vec())
+                            {
+                                let reason = ProtocolError::InvalidUtf8;
+                                self.close(1007, reason.to_string()).await?;
+                                return Err(WsError::ProtocolError(reason));
+                            }
+                        }
+                        return Ok(frame);
+                    }
+                }
+                OpCode::Close | OpCode::Ping | OpCode::Pong => {
+                    if !frame.fin() {
+                        let reason = ProtocolError::FragmentedControlFrame;
+                        self.close(1002, reason.to_string()).await?;
+                        return Err(WsError::ProtocolError(reason));
+                    }
+                    let payload_len = frame.payload_len();
+                    if payload_len > 125 {
+                        let reason = ProtocolError::ControlFrameTooBig(payload_len as usize);
+                        self.close(1002, reason.to_string()).await?;
+                        return Err(WsError::ProtocolError(reason));
+                    }
+                    if opcode == OpCode::Close {
+                        if payload_len == 1 {
+                            let reason = ProtocolError::InvalidCloseFramePayload;
+                            self.close(1002, reason.to_string()).await?;
+                            return Err(WsError::ProtocolError(reason));
+                        }
+                        if payload_len >= 2 {
+                            let payload = frame.payload_data();
+
+                            // check close code
+                            let mut code_byte = [0u8; 2];
+                            code_byte.copy_from_slice(&payload[..2]);
+                            let code = u16::from_be_bytes(code_byte);
+                            if code < 1000
+                                || (code >= 1004 && code <= 1006)
+                                || (code >= 1015 && code <= 2999)
+                                || code >= 5000
+                            {
+                                let reason = ProtocolError::InvalidCloseCode(code);
+                                self.close(1002, reason.to_string()).await?;
+                                return Err(WsError::ProtocolError(reason));
+                            }
+
+                            // utf-8 validation
+                            if let Err(_) = String::from_utf8(payload[2..].to_vec()) {
+                                let reason = ProtocolError::InvalidUtf8;
+                                self.close(1007, reason.to_string()).await?;
+                                return Err(WsError::ProtocolError(reason));
+                            }
+                        }
+                    }
+                    if opcode == OpCode::Close || !fragmented {
+                        return Ok(frame);
+                    } else {
+                        log::debug!("{:?} frame between fragmented data", opcode);
+                        let echo =
+                            Frame::new_with_payload(OpCode::Pong, &frame.payload_data_unmask());
+                        self.write_frame(echo).await?;
+                    }
+                }
+                OpCode::ReservedNonControl | OpCode::ReservedControl => {
+                    self.close(1002, format!("can not handle {:?} frame", opcode))
+                        .await?;
+                    return Err(WsError::UnsupportedFrame(opcode));
+                }
+            }
         }
     }
-}
 
-async fn wrap_tls(
-    stream: TcpStream,
-    host: &str,
-    certs: &HashSet<PathBuf>,
-) -> Result<TlsStream<TcpStream>, WsError> {
-    let mut config = ClientConfig::new();
-    for cert_path in certs {
-        let mut pem = std::fs::File::open(cert_path).map_err(|_| {
-            WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-        })?;
-        let mut cert = BufReader::new(&mut pem);
-        config.root_store.add_pem_file(&mut cert).map_err(|_| {
-            WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-        })?;
+    pub async fn write_frame(&mut self, frame: Frame) -> Result<(), WsError> {
+        if self.state != ConnectionState::Running {
+            return Err(WsError::InvalidConnState(self.state.clone()));
+        }
+        self.write(frame).await
     }
-    config
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    let domain =
-        DNSNameRef::try_from_ascii_str(host).map_err(|e| WsError::TlsDnsFailed(e.to_string()))?;
-    let connector = TlsConnector::from(Arc::new(config));
-    let tls_stream = connector
-        .connect(domain, stream)
-        .await
-        .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
-    log::debug!("tls connection established");
-    Ok(tls_stream)
-}
 
-fn gen_key() -> String {
-    let r: [u8; 16] = rand::random();
-    base64::encode(&r)
-}
-
-fn cal_accept_key(source: &str) -> String {
-    let mut sha1 = sha1::Sha1::default();
-    sha1.update(source.as_bytes());
-    sha1.update(GUID);
-    base64::encode(&sha1.finalize())
+    pub async fn close(&mut self, code: u16, reason: String) -> Result<(), WsError> {
+        self.state = ConnectionState::Closing;
+        let mut payload = BytesMut::with_capacity(2 + reason.len());
+        payload.extend_from_slice(&code.to_be_bytes());
+        payload.extend_from_slice(reason.as_bytes());
+        let close = Frame::new_with_payload(OpCode::Close, &payload);
+        self.write(close).await
+    }
 }

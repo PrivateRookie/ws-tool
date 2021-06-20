@@ -4,3 +4,4 @@ Cargo.lock
 
 scripts/*.pem
 scripts/*.key
+test_reports
