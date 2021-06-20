@@ -22,6 +22,7 @@ httparse = "1.4"
 sha-1 = "0.9"
 tokio-socks = "0.5"
 async-http-proxy = { version = "1", features = ["runtime-tokio"] }
+async-trait = "0.1.50"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

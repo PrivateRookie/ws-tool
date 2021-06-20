@@ -4,9 +4,14 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
+use async_trait::async_trait;
 use bytes::BytesMut;
 use frame::Frame;
 use frame::OpCode;
+use log::trace;
+use protocol::perform_handshake;
+use protocol::read_frame;
+use protocol::write_frame;
 use sha1::Digest;
 use stream::WsStream;
 use tokio::io::AsyncReadExt;
@@ -18,276 +23,47 @@ use webpki::DNSNameRef;
 
 pub mod errors;
 pub mod frame;
+pub mod protocol;
 pub mod proxy;
 pub mod stream;
 use errors::WsError;
 
+use crate::protocol::wrap_tls;
+use crate::protocol::Mode;
+
 const BUF_SIZE: usize = 4 * 1024;
 const GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-pub struct HandshakeResponse {
-    pub code: u8,
-    pub reason: String,
-    pub headers: HashMap<String, String>,
+/// websocket connection state
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionState {
+    /// init state
+    Created,
+    /// tcp & tls connection creating state
+    HandShaking,
+    /// websocket connection has been successfully established
+    Running,
+    /// client or peer has send "close frame"
+    Closing,
+    /// client or peer have send "close" response frame
+    Closed,
 }
 
-/// websocket client, use ClientBuilder to construct new client
-///
-/// ```rust
-/// use ws_client::{frame::Frame, ClientBuilder};
-/// let mut client = ClientBuilder::new("wss://privaterookie.com").proxy("socks5://proxy:proxy_port").build().unwrap();
-/// client.connect().await.unwrap();
-/// client.read_frame().await.unwrap();
-/// ```
-#[derive(Debug)]
-pub struct Client {
-    pub uri: http::Uri,
-    mode: Mode,
-    stream: Option<stream::WsStream>,
-    certs: HashSet<PathBuf>,
-    accept_key: String,
-    pub state: ConnectionState,
-    pub handshake_remaining: BytesMut,
-    pub proxy: Option<proxy::Proxy>,
-    pub protocols: HashSet<String>,
-}
-
-impl Client {
-    /// create tcp connection & perform websocket handshake
-    pub async fn connect(&mut self) -> Result<HandshakeResponse, WsError> {
-        self.state = ConnectionState::Connecting;
-        let host = self.uri.host().ok_or(WsError::InvalidUri(format!(
-            "can not find host {}",
-            self.uri
-        )))?;
-        let port = match self.uri.port_u16() {
-            Some(port) => port,
-            None => self.mode.default_port(),
-        };
-        let stream = match &self.proxy {
-            Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
-            None => TcpStream::connect((host, port)).await.map_err(|e| {
-                WsError::ConnectionFailed(format!(
-                    "failed to create tcp connection {}",
-                    e.to_string()
-                ))
-            })?,
-        };
-        log::debug!("tcp connection established");
-        let mut stream = match self.mode {
-            Mode::WS => WsStream::Plain(stream),
-            Mode::WSS => {
-                let tls_stream = wrap_tls(stream, host, &self.certs).await?;
-                WsStream::Tls(tls_stream)
-            }
-        };
-        self.state = ConnectionState::HandShaking;
-        let (resp, remain_bytes) = self.perform_handshake(&mut stream).await?;
-        self.handshake_remaining = remain_bytes;
-        self.stream = Some(stream);
-        Ok(resp)
-    }
-
-    async fn perform_handshake(
-        &mut self,
-        stream: &mut WsStream,
-    ) -> Result<(HandshakeResponse, BytesMut), WsError> {
-        let protocols = self
-            .protocols
-            .iter()
-            .map(|p| p.to_string())
-            .collect::<Vec<String>>();
-        let key = gen_key();
-        self.accept_key = cal_accept_key(&key);
-
-        let req = http::Request::builder()
-            .uri(&self.uri)
-            .header(
-                "Host",
-                format!(
-                    "{}:{}",
-                    self.uri.host().unwrap_or_default(),
-                    self.uri
-                        .port_u16()
-                        .unwrap_or_else(|| self.mode.default_port())
-                ),
-            )
-            .header("Upgrade", "websocket")
-            .header("Connection", "Upgrade")
-            .header("Sec-Websocket-Key", &key)
-            .header("Sec-WebSocket-Protocol", protocols.join(" "))
-            .header("Sec-WebSocket-Version", "13")
-            .body(())
-            .unwrap();
-        let headers = req
-            .headers()
-            .iter()
-            .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or_default()))
-            .collect::<Vec<String>>()
-            .join("\r\n");
-        let method = http::Method::GET;
-        let req_str = format!(
-            "{method} {path} {version:?}\r\n{headers}\r\n\r\n",
-            method = method,
-            path = self
-                .uri
-                .path_and_query()
-                .map(|full_path| full_path.to_string())
-                .unwrap_or_default(),
-            version = http::Version::HTTP_11,
-            headers = headers
-        );
-        stream
-            .write_all(req_str.as_bytes())
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
-        let mut read_bytes = BytesMut::with_capacity(1024);
-        let mut buf: [u8; 1024] = [0; 1024];
-        loop {
-            let num = stream
-                .read(&mut buf)
-                .await
-                .map_err(|e| WsError::IOError(e.to_string()))?;
-            read_bytes.extend_from_slice(&buf[..num]);
-            let header_complete = read_bytes
-                .windows(4)
-                .any(|slice| slice == [b'\r', b'\n', b'\r', b'\n']);
-            if header_complete || num == 0 {
-                break;
-            }
-        }
-        let mut headers = [httparse::EMPTY_HEADER; 64];
-        let mut resp = httparse::Response::new(&mut headers);
-        let parse_status = resp
-            .parse(&read_bytes)
-            .map_err(|_| WsError::HandShakeFailed(format!("invalid response")))?;
-        let header_len = match parse_status {
-            httparse::Status::Complete(len) => Ok(len),
-            httparse::Status::Partial => Err(WsError::HandShakeFailed(format!(
-                "incomplete handshake response"
-            ))),
-        }?;
-        if resp.code.unwrap_or_default() != 101 {
-            return Err(WsError::HandShakeFailed(format!(
-                "expect 101 response, got {:?} {:?}",
-                resp.code, resp.reason
-            )));
-        }
-        for header in resp.headers.iter() {
-            if header.name.to_lowercase() == "sec-websocket-accept" {
-                if header.value != self.accept_key.as_bytes() {
-                    return Err(WsError::HandShakeFailed(format!(
-                        "mismatch key, expect {:?}, got {:?}",
-                        self.accept_key.as_bytes(),
-                        header.value
-                    )));
-                }
-            }
-        }
-        let mut handshake_resp = HandshakeResponse {
-            code: 101,
-            reason: resp.reason.map(|r| r.to_string()).unwrap_or_default(),
-            headers: HashMap::new(),
-        };
-        resp.headers.iter().for_each(|header| {
-            handshake_resp.headers.insert(
-                header.name.to_string(),
-                String::from_utf8_lossy(header.value).to_string(),
-            );
-        });
-        log::debug!("protocol handshake complete");
-        Ok((handshake_resp, BytesMut::from(&read_bytes[header_len..])))
-    }
-
-    pub async fn read_frame(&mut self) -> Result<Frame, WsError> {
-        let stream = self.stream.as_mut().unwrap();
-        let mut source = BytesMut::with_capacity(BUF_SIZE / 4);
-        let mut leading_bytes = [0u8; 2];
-        let mut chained_stream = self.handshake_remaining.chain(stream);
-        chained_stream
-            .read_exact(&mut leading_bytes)
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
-        source.extend_from_slice(&leading_bytes);
-        let leading_len = (leading_bytes[1] << 1) >> 1;
-        let payload_len: usize = match leading_len {
-            0..=125 => Ok(leading_len as usize),
-            126 => {
-                let mut len_bytes = [0u8; 2];
-                chained_stream
-                    .read_exact(&mut len_bytes)
-                    .await
-                    .map_err(|e| WsError::IOError(e.to_string()))?;
-                source.extend_from_slice(&len_bytes);
-                Ok(u16::from_be_bytes(len_bytes) as usize)
-            }
-            127 => {
-                let mut len_bytes = [0u8; 8];
-                chained_stream
-                    .read_exact(&mut len_bytes)
-                    .await
-                    .map_err(|e| WsError::IOError(e.to_string()))?;
-                source.extend_from_slice(&len_bytes);
-                Ok(u64::from_be_bytes(len_bytes) as usize)
-            }
-            _ => Err(WsError::ProtocolError(format!(
-                "invalid leading len {}",
-                leading_len
-            ))),
-        }?;
-        let start_idx = source.len();
-        let new_size = start_idx + payload_len;
-        source.resize(new_size, 0);
-        chained_stream
-            .read_exact(&mut source[start_idx..])
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
-        let remaining_idx = new_size.min(self.handshake_remaining.len());
-        self.handshake_remaining = BytesMut::from(&self.handshake_remaining[remaining_idx..]);
-        let frame = Frame::from_bytes(source).map_err(|e| WsError::ProtocolError(e.to_string()))?;
-        Ok(frame)
-    }
-
-    pub async fn write_frame(&mut self, frame: Frame) -> Result<(), WsError> {
-        let stream = self.stream.as_mut().unwrap();
-        stream
-            .write_all(frame.as_bytes())
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
-        Ok(())
-    }
-
-    /// simply send normal close with empty payload
-    pub async fn close(&mut self) -> Result<(), WsError> {
-        self.state = ConnectionState::Closing;
-        let mut close = Frame::new_with_opcode(OpCode::Close);
-        close.set_payload(&1000u16.to_be_bytes());
-        self.write_frame(close).await
-    }
-
-    pub async fn close_with_reason(&mut self, code: u16, message: &str) -> Result<(), WsError> {
-        self.state = ConnectionState::Closing;
-        let mut payload = BytesMut::with_capacity(2 + message.len());
-        payload.extend_from_slice(&code.to_be_bytes());
-        payload.extend_from_slice(message.as_bytes());
-        let close = Frame::new_with_payload(OpCode::Close, &payload);
-        self.write_frame(close).await
-    }
-}
-
-pub struct ClientBuilder {
+pub struct ConnBuilder {
     uri: String,
     proxy_uri: Option<String>,
     protocols: HashSet<String>,
+    extensions: HashSet<String>,
     certs: HashSet<PathBuf>,
 }
 
-impl ClientBuilder {
+impl ConnBuilder {
     pub fn new(uri: &str) -> Self {
         Self {
             uri: uri.to_string(),
             proxy_uri: None,
             protocols: HashSet::new(),
+            extensions: HashSet::new(),
             certs: HashSet::new(),
         }
     }
@@ -306,11 +82,23 @@ impl ClientBuilder {
         self
     }
 
-    /// set protocols in handshake http header
+    /// set extension in handshake http header
     ///
     /// **NOTE** it will clear protocols set by `protocol` method
     pub fn protocols(self, protocols: HashSet<String>) -> Self {
         Self { protocols, ..self }
+    }
+    /// add protocols
+    pub fn extension(mut self, extension: String) -> Self {
+        self.extensions.insert(extension);
+        self
+    }
+
+    /// set extension in handshake http header
+    ///
+    /// **NOTE** it will clear protocols set by `protocol` method
+    pub fn extensions(self, extensions: HashSet<String>) -> Self {
+        Self { extensions, ..self }
     }
 
     pub fn cert(mut self, cert: PathBuf) -> Self {
@@ -325,11 +113,12 @@ impl ClientBuilder {
         Self { certs, ..self }
     }
 
-    pub fn build(&self) -> Result<Client, WsError> {
+    pub async fn build(&self) -> Result<Client, WsError> {
         let Self {
             uri,
             proxy_uri,
             protocols,
+            extensions,
             certs,
         } = self;
         let uri = uri
@@ -352,185 +141,194 @@ impl ClientBuilder {
             None => None,
         };
 
+        let host = uri.host().ok_or(WsError::InvalidUri(format!(
+            "can not find host {}",
+            self.uri
+        )))?;
+        let port = match uri.port_u16() {
+            Some(port) => port,
+            None => mode.default_port(),
+        };
+
+        let stream = match &ws_proxy {
+            Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
+            None => TcpStream::connect((host, port)).await.map_err(|e| {
+                WsError::ConnectionFailed(format!(
+                    "failed to create tcp connection {}",
+                    e.to_string()
+                ))
+            })?,
+        };
+        log::debug!("tcp connection established");
+        let stream = match mode {
+            Mode::WS => WsStream::Plain(stream),
+            Mode::WSS => {
+                let tls_stream = wrap_tls(stream, host, &self.certs).await?;
+                WsStream::Tls(tls_stream)
+            }
+        };
         Ok(Client {
             uri,
             mode,
-            stream: None,
+            stream,
             state: ConnectionState::Created,
-            proxy: ws_proxy,
-            accept_key: String::new(),
+            certs: certs.clone(),
             handshake_remaining: BytesMut::with_capacity(0),
-            certs: certs.iter().map(|p| p.into()).collect(),
-            protocols: protocols.clone(),
+            proxy: ws_proxy,
+            protocols: protocols.to_owned(),
+            extensions: extensions.to_owned(),
         })
     }
 }
 
-/// websocket connection state
-#[derive(Debug, Clone)]
-pub enum ConnectionState {
-    /// init state
-    Created,
-    /// tcp & tls connection creating state
-    Connecting,
-    /// perform websocket handshake
-    HandShaking,
-    /// websocket connection has been successfully established
-    Running,
-    /// client or peer has send "close frame"
-    Closing,
+/// websocket client, use ConnBuilder to construct new client
+#[derive(Debug)]
+pub struct Client {
+    uri: http::Uri,
+    mode: Mode,
+    stream: stream::WsStream,
+    certs: HashSet<PathBuf>,
+    state: ConnectionState,
+    handshake_remaining: BytesMut,
+    proxy: Option<proxy::Proxy>,
+    protocols: HashSet<String>,
+    extensions: HashSet<String>,
 }
 
-/// close status code to indicate reason for closure
-#[derive(Debug, Clone)]
-pub enum StatusCode {
-    /// 1000 indicates a normal closure, meaning that the purpose for
-    /// which the connection was established has been fulfilled.
-    C1000,
+impl Client {
+    pub async fn connect(&mut self) -> Result<protocol::HandshakeResponse, WsError> {
+        self.state = ConnectionState::HandShaking;
+        let protocols = self
+            .protocols
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<String>>()
+            .join(" ");
+        let extensions = self
+            .extensions
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<String>>()
+            .join(" ");
 
-    /// 1001 indicates that an endpoint is "going away", such as a server
-    /// going down or a browser having navigated away from a page.
-    C1001,
+        let (resp, remaining_bytes) = perform_handshake(
+            &mut self.stream,
+            &self.mode,
+            &self.uri,
+            protocols,
+            extensions,
+            13,
+        )
+        .await?;
+        self.handshake_remaining = remaining_bytes;
+        self.state = ConnectionState::Running;
+        Ok(resp)
+    }
 
-    /// 1002 indicates that an endpoint is terminating the connection due
-    /// to a protocol error.
-    C1002,
+    async fn read(&mut self) -> Result<Frame, WsError> {
+        let frame = if self.handshake_remaining.is_empty() {
+            read_frame(&mut self.stream).await.map(|(frame, _)| frame)
+        } else {
+            let mut stream = self.handshake_remaining.chain(&mut self.stream);
+            let (frame, count) = read_frame(&mut stream).await?;
+            let start_idx = count.min(self.handshake_remaining.len());
+            self.handshake_remaining = BytesMut::from(&self.handshake_remaining[start_idx..]);
+            Ok(frame)
+        }?;
+        trace!("{:?}", frame);
+        Ok(frame)
+    }
 
-    /// 1003 indicates that an endpoint is terminating the connection
-    /// because it has received a type of data it cannot accept (e.g., an
-    /// endpoint that understands only text data MAY send this if it
-    /// receives a binary message).
-    C1003,
+    async fn write(&mut self, frame: Frame) -> Result<(), WsError> {
+        write_frame(&mut self.stream, frame).await
+    }
 
-    /// Reserved.  The specific meaning might be defined in the future.
-    C1004,
-
-    /// 1005 is a reserved value and MUST NOT be set as a status code in a
-    /// Close control frame by an endpoint.  It is designated for use in
-    /// applications expecting a status code to indicate that no status
-    /// code was actually present.
-    C1005,
-
-    /// 1006 is a reserved value and MUST NOT be set as a status code in a
-    /// Close control frame by an endpoint.  It is designated for use in
-    /// applications expecting a status code to indicate that the
-    /// connection was closed abnormally, e.g., without sending or
-    /// receiving a Close control frame.
-    C1006,
-
-    /// 1007 indicates that an endpoint is terminating the connection
-    /// because it has received data within a message that was not
-    /// consistent with the type of the message (e.g., non-UTF-8 [RFC3629]
-    /// data within a text message).
-    C1007,
-
-    /// 1008 indicates that an endpoint is terminating the connection
-    /// because it has received a message that violates its policy.  This
-    /// is a generic status code that can be returned when there is no
-    /// other more suitable status code (e.g., 1003 or 1009) or if there
-    /// is a need to hide specific details about the policy.
-    C1008,
-
-    /// 1009 indicates that an endpoint is terminating the connection
-    /// because it has received a message that is too big for it to
-    /// process.
-    C1009,
-
-    /// 1010 indicates that an endpoint (client) is terminating the
-    /// connection because it has expected the server to negotiate one or
-    /// more extension, but the server didn't return them in the response
-    /// message of the WebSocket handshake.  The list of extensions that
-    /// are needed SHOULD appear in the /reason/ part of the Close frame.
-    /// Note that this status code is not used by the server, because it
-    /// can fail the WebSocket handshake instead.
-    C1010,
-
-    /// 1011 indicates that a server is terminating the connection because
-    /// it encountered an
-    C1011,
-
-    /// 1015 is a reserved value and MUST NOT be set as a status code in a
-    /// Close control frame by an endpoint.  It is designated for use in
-    /// applications expecting a status code to indicate that the
-    /// connection was closed due to a failure to perform a TLS handshake
-    /// (e.g., the server certificate can't be verified).
-    C1015,
-
-    /// Status codes in the range 0-999 are not used.
-    C0_999,
-
-    // Status codes in the range 1000-2999 are reserved for definition by
-    // this protocol, its future revisions, and extensions specified in a
-    // permanent and readily available public specification.
-    C1000_2999,
-
-    /// Status codes in the range 3000-3999 are reserved for use by
-    /// libraries, frameworks, and applications.  These status codes are
-    /// registered directly with IANA.  The interpretation of these codes
-    /// is undefined by this protocol.
-    C3000_3999,
-
-    /// Status codes in the range 4000-4999 are reserved for private use
-    /// and thus can't be registered.  Such codes can be used by prior
-    /// agreements between WebSocket applications.  The interpretation of
-    /// these codes is undefined by this protocol.
-    C4000_4999,
-
-    Unknown,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum Mode {
-    WS,
-    WSS,
-}
-
-impl Mode {
-    fn default_port(&self) -> u16 {
-        match self {
-            Mode::WS => 80,
-            Mode::WSS => 443,
+    pub async fn read_frame(&mut self) -> Result<Frame, WsError> {
+        if self.state != ConnectionState::Running {
+            return Err(WsError::InvalidConnState(self.state.clone()));
+        }
+        let mut fragmented = false;
+        let mut fragmented_data = BytesMut::new();
+        let mut fragmented_type = OpCode::Text;
+        loop {
+            let frame = self.read().await?;
+            let opcode = frame.opcode();
+            match opcode {
+                OpCode::Continue => {
+                    if !fragmented {
+                        let reason = "missing first fragmented frame".to_string();
+                        self.close(1002, reason.clone()).await?;
+                        return Err(WsError::ProtocolError(reason));
+                    }
+                    fragmented_data.extend_from_slice(&frame.payload_data_unmask());
+                    if frame.fin() {
+                        let completed_frame =
+                            Frame::new_with_payload(fragmented_type, &fragmented_data);
+                        return Ok(completed_frame);
+                    }
+                }
+                OpCode::Text | OpCode::Binary => {
+                    if fragmented {
+                        let reason = "not continue frame after first fragmented frame".to_string();
+                        self.close(1002, reason.clone()).await?;
+                        return Err(WsError::ProtocolError(reason));
+                    }
+                    if !frame.fin() {
+                        fragmented = true;
+                        fragmented_type = opcode;
+                        fragmented_data.extend_from_slice(&frame.payload_data_unmask());
+                    } else {
+                        return Ok(frame);
+                    }
+                }
+                OpCode::Close | OpCode::Ping | OpCode::Pong => {
+                    if !frame.fin() {
+                        let reason = "control frame can not be fragmented".to_string();
+                        self.close(1002, reason.clone()).await?;
+                        return Err(WsError::ProtocolError(reason));
+                    }
+                    let payload_len = frame.payload_len();
+                    if payload_len > 125 {
+                        let reason = format!("control frame is too big {}", payload_len);
+                        self.close(1002, reason.clone()).await?;
+                        return Err(WsError::ProtocolError(reason));
+                    }
+                    if opcode == OpCode::Close && payload_len == 1 {
+                        let reason = format!("invalid close frame payload len {}", payload_len);
+                        self.close(1002, reason.clone()).await?;
+                        return Err(WsError::ProtocolError(reason));
+                    }
+                    if opcode == OpCode::Close || !fragmented {
+                        return Ok(frame);
+                    } else {
+                        log::debug!("{:?} frame between fragmented data", opcode);
+                        let echo =
+                            Frame::new_with_payload(OpCode::Pong, &frame.payload_data_unmask());
+                        self.write_frame(echo).await?;
+                    }
+                }
+                OpCode::ReservedNonControl | OpCode::ReservedControl => {
+                    self.close(1002, format!("can not handle {:?} frame", opcode))
+                        .await?;
+                    return Err(WsError::UnsupportedFrame(opcode));
+                }
+            }
         }
     }
-}
 
-async fn wrap_tls(
-    stream: TcpStream,
-    host: &str,
-    certs: &HashSet<PathBuf>,
-) -> Result<TlsStream<TcpStream>, WsError> {
-    let mut config = ClientConfig::new();
-    for cert_path in certs {
-        let mut pem = std::fs::File::open(cert_path).map_err(|_| {
-            WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-        })?;
-        let mut cert = BufReader::new(&mut pem);
-        config.root_store.add_pem_file(&mut cert).map_err(|_| {
-            WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-        })?;
+    pub async fn write_frame(&mut self, frame: Frame) -> Result<(), WsError> {
+        if self.state != ConnectionState::Running {
+            return Err(WsError::InvalidConnState(self.state.clone()));
+        }
+        self.write(frame).await
     }
-    config
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    let domain =
-        DNSNameRef::try_from_ascii_str(host).map_err(|e| WsError::TlsDnsFailed(e.to_string()))?;
-    let connector = TlsConnector::from(Arc::new(config));
-    let tls_stream = connector
-        .connect(domain, stream)
-        .await
-        .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
-    log::debug!("tls connection established");
-    Ok(tls_stream)
-}
 
-fn gen_key() -> String {
-    let r: [u8; 16] = rand::random();
-    base64::encode(&r)
-}
-
-fn cal_accept_key(source: &str) -> String {
-    let mut sha1 = sha1::Sha1::default();
-    sha1.update(source.as_bytes());
-    sha1.update(GUID);
-    base64::encode(&sha1.finalize())
+    pub async fn close(&mut self, code: u16, reason: String) -> Result<(), WsError> {
+        self.state = ConnectionState::Closing;
+        let mut payload = BytesMut::with_capacity(2 + reason.len());
+        payload.extend_from_slice(&code.to_be_bytes());
+        payload.extend_from_slice(reason.as_bytes());
+        let close = Frame::new_with_payload(OpCode::Close, &payload);
+        self.write(close).await
+    }
 }

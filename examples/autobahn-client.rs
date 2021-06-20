@@ -2,13 +2,15 @@ use log::*;
 use ws_client::{
     errors::WsError,
     frame::{Frame, OpCode},
-    ClientBuilder,
+    ConnBuilder,
 };
 
 const AGENT: &str = "ws-client";
 
 async fn get_case_count() -> Result<usize, WsError> {
-    let mut client = ClientBuilder::new("ws://localhost:9001/getCaseCount").build()?;
+    let mut client = ConnBuilder::new("ws://localhost:9001/getCaseCount")
+        .build()
+        .await?;
     client.connect().await?;
     let frame = client.read_frame().await?;
     let unmask_data = frame.payload_data_unmask();
@@ -17,26 +19,29 @@ async fn get_case_count() -> Result<usize, WsError> {
         .parse::<usize>()
         .unwrap();
     client.read_frame().await?;
-    client.close().await?;
+    client.close(1001, "".to_string()).await?;
     Ok(count)
 }
 
 async fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
     let url = format!("ws://localhost:9001/runCase?case={}&agent={}", case, AGENT);
-    let mut client = ClientBuilder::new(&url).build()?;
+    let mut client = ConnBuilder::new(&url).build().await?;
     client.connect().await?;
-    let normal_close = loop {
+    loop {
         let frame = client.read_frame().await?;
         match frame.opcode() {
             OpCode::Text => {
                 let payload = frame.payload_data_unmask();
                 match String::from_utf8(payload.to_vec()) {
                     Ok(_) => {
-                        let echo = Frame::new_with_payload(frame.opcode(), &payload);
-                        client.write_frame(echo).await?;
+                        let echo = Frame::new_with_payload(OpCode::Text, &payload);
+                        client.write_frame(echo).await?
                     }
-                    Err(_) => break false,
+                    Err(_) => {
+                        client.close(1007, "invalid utf-8 text".to_string()).await?;
+                        return Err(WsError::ProtocolError("invalid utf-8 text".to_string()));
+                    }
                 }
             }
             OpCode::Binary => {
@@ -44,40 +49,43 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                 echo.set_payload(&frame.payload_data_unmask());
                 client.write_frame(echo).await?;
             }
-            OpCode::Ping => {
-                if frame.payload_data().len() > 125 {
-                    break false;
+            OpCode::Close => {
+                let payload = frame.payload_data_unmask();
+                if payload.is_empty() {
+                    break;
                 } else {
-                    let mut echo = Frame::new_with_opcode(OpCode::Pong);
-                    echo.set_payload(&frame.payload_data_unmask());
-                    client.write_frame(echo).await?;
+                    if let Err(_) = String::from_utf8(payload[2..].to_vec()) {
+                        client.close(1007, "invalid utf-8 text".to_string()).await?;
+                        return Err(WsError::ProtocolError("invalid utf-8 text".to_string()));
+                    } else {
+                        break;
+                    }
                 }
             }
-            OpCode::Pong => {}
-            OpCode::Close => break true,
-            OpCode::ReservedControl | OpCode::ReservedNonControl => {
-                break false;
+            OpCode::Ping => {
+                let mut echo = Frame::new_with_opcode(OpCode::Pong);
+                echo.set_payload(&frame.payload_data_unmask());
+                client.write_frame(echo).await?;
             }
-            _ => {
-                error!("unexpected frame {:?}", frame);
+            OpCode::Pong => {}
+            OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
+                unreachable!()
             }
         }
-    };
-    if normal_close {
-        client.close().await
-    } else {
-        client.close_with_reason(1002, "").await
     }
+    client.close(1000, "".to_string()).await?;
+    Ok(())
 }
 
 async fn update_report() -> Result<(), WsError> {
-    let mut client = ClientBuilder::new(&format!(
+    let mut client = ConnBuilder::new(&format!(
         "ws://localhost:9001/updateReports?agent={}",
         AGENT
     ))
-    .build()?;
+    .build()
+    .await?;
     client.connect().await?;
-    client.close().await
+    client.close(1000, "".to_string()).await
 }
 
 #[tokio::main]

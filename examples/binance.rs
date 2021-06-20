@@ -1,5 +1,5 @@
 use structopt::StructOpt;
-use ws_client::ClientBuilder;
+use ws_client::ConnBuilder;
 
 /// websocket client connect to binance futures websocket
 #[derive(StructOpt)]
@@ -17,7 +17,7 @@ async fn main() -> Result<(), ()> {
     pretty_env_logger::init();
     let args = Args::from_args();
     let channels = args.channels.join("/");
-    let mut builder = ClientBuilder::new(&format!(
+    let mut builder = ConnBuilder::new(&format!(
         "wss://fstream.binance.com/stream?streams={}",
         channels
     ));

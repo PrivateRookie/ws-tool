@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::{frame::OpCode, ConnectionState};
+
 #[derive(Debug, Error)]
 pub enum WsError {
     #[error("invalid uri `{0}`")]
@@ -24,6 +26,10 @@ pub enum WsError {
     ProtocolError(String),
     #[error("proxy error `{0}`")]
     ProxyError(String),
+    #[error("io on invalid connection state {0:?}")]
+    InvalidConnState(ConnectionState),
+    #[error("unsupported frame {0:?}")]
+    UnsupportedFrame(OpCode),
 }
 
 #[derive(Debug, Error)]
@@ -39,4 +45,3 @@ pub enum ProtocolError {
     #[error("mismatch data len, expect {0}, got {1}")]
     MisMatchDataLen(usize, usize),
 }
-
