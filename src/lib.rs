@@ -1,10 +1,7 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
-use std::io::BufReader;
+use std::fmt::Debug;
 use std::path::PathBuf;
-use std::{fmt::Debug, sync::Arc};
 
-use async_trait::async_trait;
 use bytes::BytesMut;
 use frame::Frame;
 use frame::OpCode;
@@ -12,14 +9,9 @@ use log::trace;
 use protocol::perform_handshake;
 use protocol::read_frame;
 use protocol::write_frame;
-use sha1::Digest;
 use stream::WsStream;
 use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-
-use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
-use webpki::DNSNameRef;
 
 pub mod errors;
 pub mod frame;
@@ -30,9 +22,6 @@ use errors::WsError;
 
 use crate::protocol::wrap_tls;
 use crate::protocol::Mode;
-
-const BUF_SIZE: usize = 4 * 1024;
-const GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// websocket connection state
 #[derive(Debug, Clone, PartialEq, Eq)]
