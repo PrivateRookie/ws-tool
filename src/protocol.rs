@@ -4,6 +4,7 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
+use crate::errors::ProtocolError;
 use crate::frame::Frame;
 use crate::stream::WsStream;
 use bytes::BytesMut;
@@ -331,9 +332,8 @@ pub async fn read_frame<S: AsyncReadExt + Unpin>(
             source.extend_from_slice(&len_bytes);
             Ok(u64::from_be_bytes(len_bytes) as usize)
         }
-        _ => Err(WsError::ProtocolError(format!(
-            "invalid leading len {}",
-            leading_len
+        _ => Err(WsError::ProtocolError(ProtocolError::InsufficientLen(
+            leading_len as usize,
         ))),
     }?;
     let start_idx = source.len();
@@ -343,7 +343,7 @@ pub async fn read_frame<S: AsyncReadExt + Unpin>(
         .read_exact(&mut source[start_idx..])
         .await
         .map_err(|e| WsError::IOError(e.to_string()))?;
-    let frame = Frame::from_bytes(source).map_err(|e| WsError::ProtocolError(e.to_string()))?;
+    let frame = Frame::from_bytes(source).map_err(|e| WsError::ProtocolError(e))?;
     Ok((frame, new_size))
 }
 

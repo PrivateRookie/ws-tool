@@ -18,7 +18,7 @@ pub mod frame;
 pub mod protocol;
 pub mod proxy;
 pub mod stream;
-use errors::WsError;
+use errors::{ProtocolError, WsError};
 
 use crate::protocol::wrap_tls;
 use crate::protocol::Mode;
@@ -245,12 +245,17 @@ impl Client {
             match opcode {
                 OpCode::Continue => {
                     if !fragmented {
-                        let reason = "missing first fragmented frame".to_string();
-                        self.close(1002, reason.clone()).await?;
+                        let reason = ProtocolError::MissInitialFragmentedFrame;
+                        self.close(1002, reason.to_string()).await?;
                         return Err(WsError::ProtocolError(reason));
                     }
                     fragmented_data.extend_from_slice(&frame.payload_data_unmask());
                     if frame.fin() {
+                        if let Err(_) = String::from_utf8(fragmented_data.to_vec()) {
+                            let reason = ProtocolError::InvalidUtf8;
+                            self.close(1007, reason.to_string()).await?;
+                            return Err(WsError::ProtocolError(reason));
+                        }
                         let completed_frame =
                             Frame::new_with_payload(fragmented_type, &fragmented_data);
                         return Ok(completed_frame);
@@ -258,34 +263,69 @@ impl Client {
                 }
                 OpCode::Text | OpCode::Binary => {
                     if fragmented {
-                        let reason = "not continue frame after first fragmented frame".to_string();
-                        self.close(1002, reason.clone()).await?;
+                        let reason = ProtocolError::NotContinueFrameAfterFragmented;
+                        self.close(1002, reason.to_string()).await?;
                         return Err(WsError::ProtocolError(reason));
                     }
                     if !frame.fin() {
                         fragmented = true;
-                        fragmented_type = opcode;
-                        fragmented_data.extend_from_slice(&frame.payload_data_unmask());
+                        fragmented_type = opcode.clone();
+                        let payload = frame.payload_data_unmask();
+                        fragmented_data.extend_from_slice(&payload);
                     } else {
+                        if opcode == OpCode::Text {
+                            if let Err(_) = String::from_utf8(frame.payload_data_unmask().to_vec())
+                            {
+                                let reason = ProtocolError::InvalidUtf8;
+                                self.close(1007, reason.to_string()).await?;
+                                return Err(WsError::ProtocolError(reason));
+                            }
+                        }
                         return Ok(frame);
                     }
                 }
                 OpCode::Close | OpCode::Ping | OpCode::Pong => {
                     if !frame.fin() {
-                        let reason = "control frame can not be fragmented".to_string();
-                        self.close(1002, reason.clone()).await?;
+                        let reason = ProtocolError::FragmentedControlFrame;
+                        self.close(1002, reason.to_string()).await?;
                         return Err(WsError::ProtocolError(reason));
                     }
                     let payload_len = frame.payload_len();
                     if payload_len > 125 {
-                        let reason = format!("control frame is too big {}", payload_len);
-                        self.close(1002, reason.clone()).await?;
+                        let reason = ProtocolError::ControlFrameTooBig(payload_len as usize);
+                        self.close(1002, reason.to_string()).await?;
                         return Err(WsError::ProtocolError(reason));
                     }
-                    if opcode == OpCode::Close && payload_len == 1 {
-                        let reason = format!("invalid close frame payload len {}", payload_len);
-                        self.close(1002, reason.clone()).await?;
-                        return Err(WsError::ProtocolError(reason));
+                    if opcode == OpCode::Close {
+                        if payload_len == 1 {
+                            let reason = ProtocolError::InvalidCloseFramePayload;
+                            self.close(1002, reason.to_string()).await?;
+                            return Err(WsError::ProtocolError(reason));
+                        }
+                        if payload_len >= 2 {
+                            let payload = frame.payload_data();
+
+                            // check close code
+                            let mut code_byte = [0u8; 2];
+                            code_byte.copy_from_slice(&payload[..2]);
+                            let code = u16::from_be_bytes(code_byte);
+                            if code < 1000
+                                || (code >= 1004 && code <= 1006)
+                                || (code >= 1015 && code <= 2999)
+                                || code >= 5000
+                            {
+                                let reason = ProtocolError::InvalidCloseCode(code);
+                                self.close(1002, reason.to_string()).await?;
+                                return Err(WsError::ProtocolError(reason));
+                            }
+
+                            // utf-8 validation
+                            if let Err(_) = String::from_utf8(payload[2..].to_vec()) {
+                                let reason = ProtocolError::InvalidUtf8;
+                                self.close(1007, reason.to_string()).await?;
+                                return Err(WsError::ProtocolError(reason));
+                            }
+                        }
                     }
                     if opcode == OpCode::Close || !fragmented {
                         return Ok(frame);

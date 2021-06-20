@@ -33,16 +33,8 @@ async fn run_test(case: usize) -> Result<(), WsError> {
         match frame.opcode() {
             OpCode::Text => {
                 let payload = frame.payload_data_unmask();
-                match String::from_utf8(payload.to_vec()) {
-                    Ok(_) => {
-                        let echo = Frame::new_with_payload(OpCode::Text, &payload);
-                        client.write_frame(echo).await?
-                    }
-                    Err(_) => {
-                        client.close(1007, "invalid utf-8 text".to_string()).await?;
-                        return Err(WsError::ProtocolError("invalid utf-8 text".to_string()));
-                    }
-                }
+                let echo = Frame::new_with_payload(OpCode::Text, &payload);
+                client.write_frame(echo).await?
             }
             OpCode::Binary => {
                 let mut echo = Frame::new_with_opcode(frame.opcode());
@@ -50,17 +42,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                 client.write_frame(echo).await?;
             }
             OpCode::Close => {
-                let payload = frame.payload_data_unmask();
-                if payload.is_empty() {
-                    break;
-                } else {
-                    if let Err(_) = String::from_utf8(payload[2..].to_vec()) {
-                        client.close(1007, "invalid utf-8 text".to_string()).await?;
-                        return Err(WsError::ProtocolError("invalid utf-8 text".to_string()));
-                    } else {
-                        break;
-                    }
-                }
+                break;
             }
             OpCode::Ping => {
                 let mut echo = Frame::new_with_opcode(OpCode::Pong);

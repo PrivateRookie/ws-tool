@@ -27,7 +27,7 @@ async fn main() -> Result<(), ()> {
     if let Some(proxy) = args.proxy {
         builder = builder.proxy(&proxy)
     }
-    let mut client = builder.build().unwrap();
+    let mut client = builder.build().await.unwrap();
     client.connect().await.unwrap();
 
     let mut input = String::new();
@@ -49,6 +49,6 @@ async fn main() -> Result<(), ()> {
         }
         input.clear()
     }
-    client.close().await.unwrap();
+    client.close(1000, "".to_string()).await.unwrap();
     return Ok(());
 }
