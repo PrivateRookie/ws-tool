@@ -39,8 +39,8 @@ impl FromStr for Proxy {
             .map_err(|e| WsError::InvalidProxy(format!("{} {}", s, e.to_string())))?;
         let socket = socket_iter
             .next()
-            .ok_or(WsError::InvalidProxy(format!("{} empty proxy socket", s)))?;
-        Ok(Self { schema, socket })
+            .ok_or_else(|| WsError::InvalidProxy(format!("{} empty proxy socket", s)))?;
+        Ok(Self { socket, schema })
     }
 }
 

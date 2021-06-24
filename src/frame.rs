@@ -95,36 +95,43 @@ pub(crate) fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), Protoco
                 return Err(ProtocolError::InsufficientLen(source.len()));
             }
             let mut arr = [0u8; 8];
-            for idx in 0..8 {
-                arr[idx] = source[idx + 2];
-            }
+            arr[..8].copy_from_slice(&source[2..(8 + 2)]);
             Ok((1 + 8, usize::from_be_bytes(arr)))
         }
         _ => Err(ProtocolError::InvalidLeadingLen(len)),
     }
 }
 
-/// websocket data frame
-#[derive(Clone)]
-pub struct Frame {
-    raw: BytesMut,
+pub trait FrameCodec {
+    fn encode(&mut self, frame: Frame) -> BytesMut;
+    fn decode(&mut self, source: BytesMut) -> Result<Frame, ProtocolError>;
 }
 
-impl Frame {
-    /// simply copy source bytes, don't run any check
-    pub fn from_bytes_uncheck(source: &[u8]) -> Self {
-        let raw = BytesMut::from(source);
-        Self { raw }
+/// default impl of frame parser
+#[derive(Debug, Clone)]
+pub struct DefaultFrameCodec {
+    /// if `true` raise protocol error when rsv bits are not 000
+    pub check_rsv: bool,
+}
+
+impl Default for DefaultFrameCodec {
+    fn default() -> Self {
+        Self { check_rsv: true }
+    }
+}
+
+impl FrameCodec for DefaultFrameCodec {
+    fn encode(&mut self, frame: Frame) -> BytesMut {
+        frame.0
     }
 
-    /// check source len, fin bit, opcode, payload len etc
-    pub fn from_bytes(source: BytesMut) -> Result<Self, ProtocolError> {
+    fn decode(&mut self, source: BytesMut) -> Result<Frame, ProtocolError> {
         if source.len() < 2 {
             return Err(ProtocolError::InsufficientLen(source.len()));
         }
         // TODO check nonzero value according to extension negotiation
         let leading_bits = source[0] >> 4;
-        if !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
+        if self.check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
             return Err(ProtocolError::InvalidLeadingBits(leading_bits));
         }
         parse_opcode(source[0]).map_err(ProtocolError::InvalidOpcode)?;
@@ -137,17 +144,23 @@ impl Frame {
         if expected_len != source.len() {
             return Err(ProtocolError::MisMatchDataLen(expected_len, source.len()));
         }
-        Ok(Frame { raw: source })
+        Ok(Frame(source))
     }
+}
 
+/// websocket data frame
+#[derive(Clone)]
+pub struct Frame(BytesMut);
+
+impl Frame {
     #[inline]
     fn get_bit(&self, byte_idx: usize, bit_idx: usize) -> bool {
-        get_bit(&self.raw, byte_idx, bit_idx)
+        get_bit(&self.0, byte_idx, bit_idx)
     }
 
     #[inline]
     fn set_bit(&mut self, byte_idx: usize, bit_idx: usize, val: bool) {
-        set_bit(&mut self.raw, byte_idx, bit_idx, val)
+        set_bit(&mut self.0, byte_idx, bit_idx, val)
     }
 
     #[inline]
@@ -192,14 +205,14 @@ impl Frame {
 
     /// return frame opcode
     pub fn opcode(&self) -> OpCode {
-        parse_opcode(self.raw[0])
+        parse_opcode(self.0[0])
             .map_err(|code| format!("unexpected opcode {}", code))
             .unwrap()
     }
 
     fn set_opcode(&mut self, code: OpCode) {
-        let leading_bits = (self.raw[0] >> 4) << 4;
-        self.raw[0] = leading_bits | code.as_u8()
+        let leading_bits = (self.0[0] >> 4) << 4;
+        self.0[0] = leading_bits | code.as_u8()
     }
 
     #[inline]
@@ -209,21 +222,19 @@ impl Frame {
 
     #[inline]
     fn payload_len_with_occ(&self) -> (usize, u64) {
-        let mut len = self.raw[1];
+        let mut len = self.0[1];
         len = (len << 1) >> 1;
         match len {
             0..=125 => (1, len as u64),
             126 => {
                 let mut arr = [0u8; 2];
-                arr[0] = self.raw[2];
-                arr[1] = self.raw[3];
+                arr[0] = self.0[2];
+                arr[1] = self.0[3];
                 (1 + 2, u16::from_be_bytes(arr) as u64)
             }
             127 => {
                 let mut arr = [0u8; 8];
-                for idx in 0..8 {
-                    arr[idx] = self.raw[idx + 2];
-                }
+                arr[..8].copy_from_slice(&self.0[2..(8 + 2)]);
                 (1 + 8, u64::from_be_bytes(arr))
             }
             _ => unreachable!(),
@@ -235,28 +246,26 @@ impl Frame {
     }
 
     fn set_payload_len(&mut self, len: u64) -> usize {
-        let mut leading_byte = self.raw[1];
+        let mut leading_byte = self.0[1];
         match len {
             0..=125 => {
                 leading_byte &= 128;
-                self.raw[1] = leading_byte | (len as u8);
+                self.0[1] = leading_byte | (len as u8);
                 1
             }
             126..=65535 => {
                 leading_byte &= 128;
-                self.raw[1] = leading_byte | 126;
+                self.0[1] = leading_byte | 126;
                 let len_arr = (len as u16).to_be_bytes();
-                self.raw[2] = len_arr[0];
-                self.raw[3] = len_arr[1];
+                self.0[2] = len_arr[0];
+                self.0[3] = len_arr[1];
                 3
             }
             _ => {
                 leading_byte &= 128;
-                self.raw[1] = leading_byte | 127;
+                self.0[1] = leading_byte | 127;
                 let len_arr = (len as u64).to_be_bytes();
-                for idx in 0..8 {
-                    self.raw[idx + 2] = len_arr[idx];
-                }
+                self.0[2..10].copy_from_slice(&len_arr[..8]);
                 9
             }
         }
@@ -266,9 +275,7 @@ impl Frame {
         if self.mask() {
             let len_occupied = self.payload_len_with_occ().0;
             let mut arr = [0u8; 4];
-            for idx in 0..4 {
-                arr[idx] = self.raw[1 + len_occupied + idx];
-            }
+            arr[..4].copy_from_slice(&self.0[(1 + len_occupied)..(4 + 1 + len_occupied)]);
             Some(arr)
         } else {
             None
@@ -279,7 +286,7 @@ impl Frame {
         if self.mask() {
             let masking_key: [u8; 4] = rand::random();
             let (len_occupied, _) = self.payload_len_with_occ();
-            self.raw[(1 + len_occupied)..(5 + len_occupied)].copy_from_slice(&masking_key);
+            self.0[(1 + len_occupied)..(5 + len_occupied)].copy_from_slice(&masking_key);
             Some(masking_key)
         } else {
             None
@@ -309,27 +316,29 @@ impl Frame {
         if self.mask() {
             start_idx += 4;
         }
-        &self.raw[start_idx..start_idx + (len as usize)]
+        &self.0[start_idx..start_idx + (len as usize)]
+    }
+}
+
+impl Default for Frame {
+    fn default() -> Self {
+        let mut raw = BytesMut::with_capacity(200);
+        raw.extend_from_slice(&DEFAULT_FRAME);
+        Self(raw)
     }
 }
 
 /// helper construct methods
 impl Frame {
-    pub fn new() -> Self {
-        let mut raw = BytesMut::with_capacity(200);
-        raw.extend_from_slice(&DEFAULT_FRAME);
-        Self { raw }
-    }
-
     // TODO should init with const array to avoid computing?
     pub fn new_with_opcode(opcode: OpCode) -> Self {
-        let mut frame = Frame::new();
+        let mut frame = Frame::default();
         frame.set_opcode(opcode);
         frame
     }
 
     pub fn new_with_payload(opcode: OpCode, payload: &[u8]) -> Self {
-        let mut frame = Frame::new();
+        let mut frame = Frame::default();
         frame.set_opcode(opcode);
         frame.set_payload(payload);
         frame
@@ -349,16 +358,16 @@ impl Frame {
             let masking_key = self.set_masking_key().unwrap();
             start_idx += 4;
             end_idx += 4;
-            self.raw.resize(end_idx, 0x0);
+            self.0.resize(end_idx, 0x0);
             let data = payload
                 .iter()
                 .enumerate()
                 .map(|(idx, v)| v ^ masking_key[idx % 4])
                 .collect::<Vec<u8>>();
-            self.raw[start_idx..end_idx].copy_from_slice(&data);
+            self.0[start_idx..end_idx].copy_from_slice(&data);
         } else {
-            self.raw.resize(end_idx, 0x0);
-            self.raw[start_idx..end_idx].copy_from_slice(payload)
+            self.0.resize(end_idx, 0x0);
+            self.0[start_idx..end_idx].copy_from_slice(payload)
         }
     }
 
@@ -368,7 +377,7 @@ impl Frame {
         if self.mask() {
             end += 4
         }
-        &self.raw[..end]
+        &self.0[..end]
     }
 }
 
@@ -377,7 +386,7 @@ impl Debug for Frame {
         writeln!(
             f,
             "<Frame {:b} {:?} {}>",
-            self.raw[0] >> 4,
+            self.0[0] >> 4,
             self.opcode(),
             self.payload_len()
         )?;

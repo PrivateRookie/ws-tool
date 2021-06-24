@@ -3,8 +3,9 @@ use std::fmt::Debug;
 use std::path::PathBuf;
 
 use bytes::BytesMut;
-use frame::Frame;
+use config::WebsocketConfig;
 use frame::OpCode;
+use frame::{DefaultFrameCodec, Frame};
 use log::trace;
 use protocol::perform_handshake;
 use protocol::read_frame;
@@ -13,6 +14,7 @@ use stream::WsStream;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 
+pub mod config;
 pub mod errors;
 pub mod frame;
 pub mod protocol;
@@ -41,8 +43,8 @@ pub enum ConnectionState {
 pub struct ConnBuilder {
     uri: String,
     proxy_uri: Option<String>,
-    protocols: HashSet<String>,
-    extensions: HashSet<String>,
+    protocols: Vec<String>,
+    extensions: Vec<String>,
     certs: HashSet<PathBuf>,
 }
 
@@ -51,8 +53,8 @@ impl ConnBuilder {
         Self {
             uri: uri.to_string(),
             proxy_uri: None,
-            protocols: HashSet::new(),
-            extensions: HashSet::new(),
+            protocols: Vec::new(),
+            extensions: Vec::new(),
             certs: HashSet::new(),
         }
     }
@@ -67,26 +69,26 @@ impl ConnBuilder {
 
     /// add protocols
     pub fn protocol(mut self, protocol: String) -> Self {
-        self.protocols.insert(protocol);
+        self.protocols.push(protocol);
         self
     }
 
     /// set extension in handshake http header
     ///
     /// **NOTE** it will clear protocols set by `protocol` method
-    pub fn protocols(self, protocols: HashSet<String>) -> Self {
+    pub fn protocols(self, protocols: Vec<String>) -> Self {
         Self { protocols, ..self }
     }
     /// add protocols
     pub fn extension(mut self, extension: String) -> Self {
-        self.extensions.insert(extension);
+        self.extensions.push(extension);
         self
     }
 
     /// set extension in handshake http header
     ///
     /// **NOTE** it will clear protocols set by `protocol` method
-    pub fn extensions(self, extensions: HashSet<String>) -> Self {
+    pub fn extensions(self, extensions: Vec<String>) -> Self {
         Self { extensions, ..self }
     }
 
@@ -102,7 +104,7 @@ impl ConnBuilder {
         Self { certs, ..self }
     }
 
-    pub async fn build(&self) -> Result<Client, WsError> {
+    pub async fn build(&self) -> Result<Connection, WsError> {
         let Self {
             uri,
             proxy_uri,
@@ -120,7 +122,7 @@ impl ConnBuilder {
                 _ => Err(WsError::InvalidUri(format!("invalid schema {}", schema))),
             }
         } else {
-            Err(WsError::InvalidUri(format!("missing ws or wss schema")))
+            Err(WsError::InvalidUri("missing ws or wss schema".to_string()))
         }?;
         if mode == Mode::WS && !certs.is_empty() {
             log::warn!("setting tls cert has no effect on insecure ws")
@@ -130,10 +132,9 @@ impl ConnBuilder {
             None => None,
         };
 
-        let host = uri.host().ok_or(WsError::InvalidUri(format!(
-            "can not find host {}",
-            self.uri
-        )))?;
+        let host = uri
+            .host()
+            .ok_or_else(|| WsError::InvalidUri(format!("can not find host {}", self.uri)))?;
         let port = match uri.port_u16() {
             Some(port) => port,
             None => mode.default_port(),
@@ -156,10 +157,11 @@ impl ConnBuilder {
                 WsStream::Tls(tls_stream)
             }
         };
-        Ok(Client {
+        Ok(Connection {
             uri,
             mode,
             stream,
+            codec: DefaultFrameCodec::default(),
             state: ConnectionState::Created,
             certs: certs.clone(),
             handshake_remaining: BytesMut::with_capacity(0),
@@ -172,33 +174,24 @@ impl ConnBuilder {
 
 /// websocket client, use ConnBuilder to construct new client
 #[derive(Debug)]
-pub struct Client {
+pub struct Connection {
     uri: http::Uri,
     mode: Mode,
+    codec: DefaultFrameCodec,
     stream: stream::WsStream,
     certs: HashSet<PathBuf>,
     state: ConnectionState,
     handshake_remaining: BytesMut,
     proxy: Option<proxy::Proxy>,
-    protocols: HashSet<String>,
-    extensions: HashSet<String>,
+    protocols: Vec<String>,
+    extensions: Vec<String>,
 }
 
-impl Client {
-    pub async fn connect(&mut self) -> Result<protocol::HandshakeResponse, WsError> {
+impl Connection {
+    pub async fn handshake(&mut self) -> Result<protocol::HandshakeResponse, WsError> {
         self.state = ConnectionState::HandShaking;
-        let protocols = self
-            .protocols
-            .iter()
-            .map(|p| p.to_string())
-            .collect::<Vec<String>>()
-            .join(" ");
-        let extensions = self
-            .extensions
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<String>>()
-            .join(" ");
+        let protocols = self.protocols.join(" ");
+        let extensions = self.extensions.join(" ");
 
         let (resp, remaining_bytes) = perform_handshake(
             &mut self.stream,
@@ -216,10 +209,12 @@ impl Client {
 
     async fn read(&mut self) -> Result<Frame, WsError> {
         let frame = if self.handshake_remaining.is_empty() {
-            read_frame(&mut self.stream).await.map(|(frame, _)| frame)
+            read_frame(&mut self.codec, &mut self.stream)
+                .await
+                .map(|(frame, _)| frame)
         } else {
             let mut stream = self.handshake_remaining.chain(&mut self.stream);
-            let (frame, count) = read_frame(&mut stream).await?;
+            let (frame, count) = read_frame(&mut self.codec, &mut stream).await?;
             let start_idx = count.min(self.handshake_remaining.len());
             self.handshake_remaining = BytesMut::from(&self.handshake_remaining[start_idx..]);
             Ok(frame)
@@ -229,7 +224,7 @@ impl Client {
     }
 
     async fn write(&mut self, frame: Frame) -> Result<(), WsError> {
-        write_frame(&mut self.stream, frame).await
+        write_frame(&mut self.codec, &mut self.stream, frame).await
     }
 
     pub async fn read_frame(&mut self) -> Result<Frame, WsError> {
@@ -251,7 +246,7 @@ impl Client {
                     }
                     fragmented_data.extend_from_slice(&frame.payload_data_unmask());
                     if frame.fin() {
-                        if let Err(_) = String::from_utf8(fragmented_data.to_vec()) {
+                        if String::from_utf8(fragmented_data.to_vec()).is_err() {
                             let reason = ProtocolError::InvalidUtf8;
                             self.close(1007, reason.to_string()).await?;
                             return Err(WsError::ProtocolError(reason));
@@ -273,13 +268,12 @@ impl Client {
                         let payload = frame.payload_data_unmask();
                         fragmented_data.extend_from_slice(&payload);
                     } else {
-                        if opcode == OpCode::Text {
-                            if let Err(_) = String::from_utf8(frame.payload_data_unmask().to_vec())
-                            {
-                                let reason = ProtocolError::InvalidUtf8;
-                                self.close(1007, reason.to_string()).await?;
-                                return Err(WsError::ProtocolError(reason));
-                            }
+                        if opcode == OpCode::Text
+                            && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
+                        {
+                            let reason = ProtocolError::InvalidUtf8;
+                            self.close(1007, reason.to_string()).await?;
+                            return Err(WsError::ProtocolError(reason));
                         }
                         return Ok(frame);
                     }
@@ -310,8 +304,8 @@ impl Client {
                             code_byte.copy_from_slice(&payload[..2]);
                             let code = u16::from_be_bytes(code_byte);
                             if code < 1000
-                                || (code >= 1004 && code <= 1006)
-                                || (code >= 1015 && code <= 2999)
+                                || (1004..=1006).contains(&code)
+                                || (1015..=2999).contains(&code)
                                 || code >= 5000
                             {
                                 let reason = ProtocolError::InvalidCloseCode(code);
@@ -320,7 +314,7 @@ impl Client {
                             }
 
                             // utf-8 validation
-                            if let Err(_) = String::from_utf8(payload[2..].to_vec()) {
+                            if String::from_utf8(payload[2..].to_vec()).is_err() {
                                 let reason = ProtocolError::InvalidUtf8;
                                 self.close(1007, reason.to_string()).await?;
                                 return Err(WsError::ProtocolError(reason));
@@ -360,4 +354,9 @@ impl Client {
         let close = Frame::new_with_payload(OpCode::Close, &payload);
         self.write(close).await
     }
+}
+
+pub struct Client {
+    pub conn: Connection,
+    pub config: WebsocketConfig,
 }

@@ -11,7 +11,7 @@ async fn get_case_count() -> Result<usize, WsError> {
     let mut client = ConnBuilder::new("ws://localhost:9001/getCaseCount")
         .build()
         .await?;
-    client.connect().await?;
+    client.handshake().await?;
     let frame = client.read_frame().await?;
     let unmask_data = frame.payload_data_unmask();
     let count = String::from_utf8(unmask_data.to_vec())
@@ -27,7 +27,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
     let url = format!("ws://localhost:9001/runCase?case={}&agent={}", case, AGENT);
     let mut client = ConnBuilder::new(&url).build().await?;
-    client.connect().await?;
+    client.handshake().await?;
     loop {
         let frame = client.read_frame().await?;
         match frame.opcode() {
@@ -66,7 +66,7 @@ async fn update_report() -> Result<(), WsError> {
     ))
     .build()
     .await?;
-    client.connect().await?;
+    client.handshake().await?;
     client.close(1000, "".to_string()).await
 }
 

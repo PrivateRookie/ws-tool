@@ -1,5 +1,7 @@
 {
     "cSpell.words": [
+        "NODELAY",
+        "Nagle",
         "httparse",
         "rustls",
         "thiserror",

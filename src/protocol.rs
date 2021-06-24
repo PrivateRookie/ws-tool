@@ -6,6 +6,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use crate::errors::ProtocolError;
 use crate::frame::Frame;
+use crate::frame::FrameCodec;
 use crate::stream::WsStream;
 use bytes::BytesMut;
 use sha1::Digest;
@@ -262,12 +263,12 @@ pub async fn perform_handshake(
     let mut resp = httparse::Response::new(&mut headers);
     let parse_status = resp
         .parse(&read_bytes)
-        .map_err(|_| WsError::HandShakeFailed(format!("invalid response")))?;
+        .map_err(|_| WsError::HandShakeFailed("invalid response".to_string()))?;
     let header_len = match parse_status {
         httparse::Status::Complete(len) => Ok(len),
-        httparse::Status::Partial => Err(WsError::HandShakeFailed(format!(
-            "incomplete handshake response"
-        ))),
+        httparse::Status::Partial => Err(WsError::HandShakeFailed(
+            "incomplete handshake response".to_string(),
+        )),
     }?;
     if resp.code.unwrap_or_default() != 101 {
         return Err(WsError::HandShakeFailed(format!(
@@ -276,14 +277,14 @@ pub async fn perform_handshake(
         )));
     }
     for header in resp.headers.iter() {
-        if header.name.to_lowercase() == "sec-websocket-accept" {
-            if header.value != accept_key.as_bytes() {
-                return Err(WsError::HandShakeFailed(format!(
-                    "mismatch key, expect {:?}, got {:?}",
-                    accept_key.as_bytes(),
-                    header.value
-                )));
-            }
+        if header.name.to_lowercase() == "sec-websocket-accept"
+            && header.value != accept_key.as_bytes()
+        {
+            return Err(WsError::HandShakeFailed(format!(
+                "mismatch key, expect {:?}, got {:?}",
+                accept_key.as_bytes(),
+                header.value
+            )));
         }
     }
     let mut handshake_resp = HandshakeResponse {
@@ -301,7 +302,8 @@ pub async fn perform_handshake(
     Ok((handshake_resp, BytesMut::from(&read_bytes[header_len..])))
 }
 
-pub async fn read_frame<S: AsyncReadExt + Unpin>(
+pub async fn read_frame<S: AsyncReadExt + Unpin, C: FrameCodec>(
+    codec: &mut C,
     stream: &mut S,
 ) -> Result<(Frame, usize), WsError> {
     let mut source = BytesMut::with_capacity(BUF_SIZE / 4);
@@ -343,16 +345,17 @@ pub async fn read_frame<S: AsyncReadExt + Unpin>(
         .read_exact(&mut source[start_idx..])
         .await
         .map_err(|e| WsError::IOError(e.to_string()))?;
-    let frame = Frame::from_bytes(source).map_err(|e| WsError::ProtocolError(e))?;
+    let frame = codec.decode(source).map_err(WsError::ProtocolError)?;
     Ok((frame, new_size))
 }
 
-pub async fn write_frame<S: AsyncWriteExt + Unpin>(
+pub async fn write_frame<S: AsyncWriteExt + Unpin, C: FrameCodec>(
+    codec: &mut C,
     stream: &mut S,
     frame: Frame,
 ) -> Result<(), WsError> {
     stream
-        .write_all(frame.as_bytes())
+        .write_all(&codec.encode(frame))
         .await
         .map_err(|e| WsError::IOError(e.to_string()))?;
     Ok(())

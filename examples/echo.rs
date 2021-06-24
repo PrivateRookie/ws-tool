@@ -28,7 +28,7 @@ async fn main() -> Result<(), ()> {
         builder = builder.proxy(&proxy)
     }
     let mut client = builder.build().await.unwrap();
-    client.connect().await.unwrap();
+    client.handshake().await.unwrap();
 
     let mut input = String::new();
     loop {
@@ -38,7 +38,7 @@ async fn main() -> Result<(), ()> {
         if &input == "quit\n" {
             break;
         }
-        let mut frame = Frame::new();
+        let mut frame = Frame::default();
         frame.set_payload(input.trim().as_bytes());
         client.write_frame(frame).await.unwrap();
         let resp = client.read_frame().await.unwrap();

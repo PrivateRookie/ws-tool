@@ -25,7 +25,7 @@ async fn main() -> Result<(), ()> {
         builder = builder.proxy(&proxy)
     }
     let mut client = builder.build().await.unwrap();
-    client.connect().await.unwrap();
+    client.handshake().await.unwrap();
 
     loop {
         let resp = client.read_frame().await.unwrap();
