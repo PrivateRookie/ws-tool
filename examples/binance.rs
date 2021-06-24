@@ -1,5 +1,5 @@
 use structopt::StructOpt;
-use ws_client::ConnBuilder;
+use ws_tool::ConnBuilder;
 
 /// websocket client connect to binance futures websocket
 #[derive(StructOpt)]

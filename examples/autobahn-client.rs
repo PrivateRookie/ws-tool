@@ -1,11 +1,11 @@
 use log::*;
-use ws_client::{
+use ws_tool::{
     errors::WsError,
     frame::{Frame, OpCode},
     ConnBuilder,
 };
 
-const AGENT: &str = "ws-client";
+const AGENT: &str = "ws-tool-client";
 
 async fn get_case_count() -> Result<usize, WsError> {
     let mut client = ConnBuilder::new("ws://localhost:9001/getCaseCount")

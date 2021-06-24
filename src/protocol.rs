@@ -61,7 +61,7 @@ pub enum StatusCode {
 
     /// 1007 indicates that an endpoint is terminating the connection
     /// because it has received data within a message that was not
-    /// consistent with the type of the message (e.g., non-UTF-8 [RFC3629]
+    /// consistent with the type of the message (e.g., non-UTF-8 \[RFC3629\]
     /// data within a text message).
     C1007,
 

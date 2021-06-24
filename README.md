@@ -1,6 +1,6 @@
-# ws-client
+# ws-tool
 
-a simple websocket client.
+an easy to use websocket tool.
 
 features:
 
@@ -13,7 +13,7 @@ features:
 **basic usage**
 
 ```rust
-use ws_client::{frame::Frame, ClientBuilder};
+use ws_tool::{frame::Frame, ClientBuilder};
 let mut client = ClientBuilder::new("wss://privaterookie.com").proxy("socks5://proxy:proxy_port").build().await.unwrap();
 client.connect().await.unwrap();
 client.read_frame().await.unwrap();

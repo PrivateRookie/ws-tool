@@ -1,7 +1,7 @@
 use std::{io::Write, path::PathBuf};
 
 use structopt::StructOpt;
-use ws_client::{frame::Frame, ConnBuilder};
+use ws_tool::{frame::Frame, ConnBuilder};
 
 /// websocket client demo with raw frame
 #[derive(StructOpt)]

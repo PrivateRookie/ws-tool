@@ -14,12 +14,19 @@ use stream::WsStream;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 
+/// client config
 pub mod config;
+/// websocket error definitions
 pub mod errors;
+/// websocket transport unit
 pub mod frame;
+/// build connection & read/write frame utils
 pub mod protocol;
+/// connection proxy support
 pub mod proxy;
+/// stream definition
 pub mod stream;
+
 use errors::{ProtocolError, WsError};
 
 use crate::protocol::wrap_tls;

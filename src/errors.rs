@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use crate::{frame::OpCode, ConnectionState};
 
+/// errors during handshake, read/write frame
 #[derive(Debug, Error)]
 pub enum WsError {
     #[error("invalid uri `{0}`")]
@@ -32,6 +33,7 @@ pub enum WsError {
     UnsupportedFrame(OpCode),
 }
 
+/// errors during decode frame from bytes
 #[derive(Debug, Error)]
 pub enum ProtocolError {
     #[error("insufficient data len {0}")]

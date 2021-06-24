@@ -1,8 +1,15 @@
 [package]
-name = "ws-client"
+name = "ws-tool"
 version = "0.2.0"
 authors = ["PrivateRookie <996514515@qq.com>"]
 edition = "2018"
+description = "an easy to use websocket tool"
+license-file = "LICENSE"
+readme = "README.md"
+homepage = "https://github.com/PrivateRookie/ws-tool"
+repository = "https://github.com/PrivateRookie/ws-tool"
+keywords = ["websocket", "proxy", "network"]
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
