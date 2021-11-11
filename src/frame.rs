@@ -1,5 +1,6 @@
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use std::{fmt::Debug, ops::Deref};
+use tokio_util::codec::{Decoder, Encoder};
 
 use crate::errors::ProtocolError;
 
@@ -99,6 +100,59 @@ pub(crate) fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), Protoco
             Ok((1 + 8, usize::from_be_bytes(arr)))
         }
         _ => Err(ProtocolError::InvalidLeadingLen(len)),
+    }
+}
+
+pub struct FrameEncoder {}
+
+impl Encoder<Frame> for FrameEncoder {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.extend_from_slice(&item.0);
+        Ok(())
+    }
+}
+
+pub struct FrameDecoder {
+    pub check_rsv: bool,
+}
+
+impl Decoder for FrameDecoder {
+    type Item = Frame;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.len() < 2 {
+            return Ok(None);
+        }
+        // TODO check nonzero value according to extension negotiation
+        let leading_bits = src[0] >> 4;
+        if self.check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                ProtocolError::InvalidLeadingBits(leading_bits),
+            ));
+        }
+        parse_opcode(src[0])
+            .map_err(ProtocolError::InvalidOpcode)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let (payload_len, len_occ_bytes) = parse_payload_len(src.deref())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let mut expected_len = 1 + len_occ_bytes + payload_len;
+        let mask = get_bit(&src, 1, 0);
+        if mask {
+            expected_len += 4;
+        }
+        if expected_len > src.len() {
+            src.reserve(expected_len - src.len() + 1);
+            Ok(None)
+        } else {
+            let mut data = BytesMut::with_capacity(expected_len);
+            data.copy_from_slice(&src[..expected_len]);
+            src.advance(expected_len);
+            Ok(Some(Frame(data)))
+        }
     }
 }
 

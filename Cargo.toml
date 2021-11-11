@@ -15,7 +15,8 @@ keywords = ["websocket", "proxy", "network"]
 
 [dependencies]
 http = "0.2"
-tokio = { version="1", features=["rt", "net", "io-util"] }
+tokio = { version = "1", features = ["rt", "net", "io-util"] }
+tokio-util = { version = "0.6", features = ["codec"] }
 tokio-rustls = "0.22"
 webpki = "0.21"
 webpki-roots = "0.21"
@@ -28,10 +29,10 @@ rcgen = "0.8"
 httparse = "1.4"
 sha-1 = "0.9"
 tokio-socks = "0.5"
-async-http-proxy = { version="1", features=["runtime-tokio"] }
+async-http-proxy = { version = "1", features = ["runtime-tokio"] }
 
 [dev-dependencies]
-tokio = { version="1", features=["full"] }
+tokio = { version = "1", features = ["full"] }
 pretty_env_logger = "0.4.0"
 structopt = "0.3"
 rcgen = "0.8"
