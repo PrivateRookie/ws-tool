@@ -4,14 +4,14 @@ use std::path::PathBuf;
 
 use bytes::BytesMut;
 use config::WebsocketConfig;
-use frame::OpCode;
 use frame::{DefaultFrameCodec, Frame};
+use frame::{FrameDecoder, FrameEncoder, OpCode};
 use log::trace;
 use protocol::perform_handshake;
 use protocol::read_frame;
 use protocol::write_frame;
 use stream::WsStream;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 
 /// client config
@@ -28,6 +28,7 @@ pub mod proxy;
 pub mod stream;
 
 use errors::{ProtocolError, WsError};
+use tokio_util::codec::{FramedRead, FramedWrite};
 
 use crate::protocol::wrap_tls;
 use crate::protocol::Mode;
@@ -360,6 +361,35 @@ impl Connection {
         payload.extend_from_slice(reason.as_bytes());
         let close = Frame::new_with_payload(OpCode::Close, &payload);
         self.write(close).await
+    }
+
+    pub fn split(
+        self,
+    ) -> (
+        FramedRead<ReadHalf<WsStream>, FrameDecoder>,
+        FramedWrite<WriteHalf<WsStream>, FrameEncoder>,
+    ) {
+        if self.state != ConnectionState::Running {
+            panic!("should split after connection is running");
+        }
+        let Self {
+            stream,
+            handshake_remaining,
+            ..
+        } = self;
+        let (read_stream, write_stream) = tokio::io::split(stream);
+        let frame_r = FramedRead::new(
+            read_stream,
+            FrameDecoder {
+                check_rsv: true,
+                handshake_remaining,
+                fragmented: false,
+                fragmented_data: BytesMut::new(),
+                fragmented_type: OpCode::Text,
+            },
+        );
+        let frame_w = FramedWrite::new(write_stream, FrameEncoder {});
+        (frame_r, frame_w)
     }
 }
 
