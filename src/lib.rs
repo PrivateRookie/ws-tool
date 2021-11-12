@@ -3,13 +3,9 @@ use std::fmt::Debug;
 use std::path::PathBuf;
 
 use bytes::BytesMut;
-use config::WebsocketConfig;
-use frame::{DefaultFrameCodec, Frame};
-use frame::{FrameDecoder, FrameEncoder, OpCode};
+use frame::{Frame, FrameDecoder, FrameEncoder, OpCode, FrameCodec};
 use log::trace;
 use protocol::perform_handshake;
-use protocol::read_frame;
-use protocol::write_frame;
 use stream::WsStream;
 use tokio::io::{AsyncReadExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -169,7 +165,7 @@ impl ConnBuilder {
             uri,
             mode,
             stream,
-            codec: DefaultFrameCodec::default(),
+            codec: FrameCodec::default(),
             state: ConnectionState::Created,
             certs: certs.clone(),
             handshake_remaining: BytesMut::with_capacity(0),
@@ -185,7 +181,7 @@ impl ConnBuilder {
 pub struct Connection {
     uri: http::Uri,
     mode: Mode,
-    codec: DefaultFrameCodec,
+    codec: FrameCodec,
     stream: stream::WsStream,
     certs: HashSet<PathBuf>,
     state: ConnectionState,
@@ -391,9 +387,4 @@ impl Connection {
         let frame_w = FramedWrite::new(write_stream, FrameEncoder {});
         (frame_r, frame_w)
     }
-}
-
-pub struct Client {
-    pub conn: Connection,
-    pub config: WebsocketConfig,
 }

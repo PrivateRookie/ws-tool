@@ -6,7 +6,6 @@ use std::{fmt::Debug, sync::Arc};
 
 use crate::errors::ProtocolError;
 use crate::frame::Frame;
-use crate::frame::FrameCodec;
 use crate::stream::WsStream;
 use bytes::BytesMut;
 use sha1::Digest;
@@ -300,63 +299,4 @@ pub async fn perform_handshake(
     });
     log::debug!("protocol handshake complete");
     Ok((handshake_resp, BytesMut::from(&read_bytes[header_len..])))
-}
-
-pub async fn read_frame<S: AsyncReadExt + Unpin, C: FrameCodec>(
-    codec: &mut C,
-    stream: &mut S,
-) -> Result<(Frame, usize), WsError> {
-    let mut source = BytesMut::with_capacity(BUF_SIZE / 4);
-    let mut leading_bytes = [0u8; 2];
-    stream
-        .read_exact(&mut leading_bytes)
-        .await
-        .map_err(|e| WsError::IOError(e.to_string()))?;
-    source.extend_from_slice(&leading_bytes);
-    let leading_len = (leading_bytes[1] << 1) >> 1;
-    let payload_len: usize = match leading_len {
-        0..=125 => Ok(leading_len as usize),
-        126 => {
-            let mut len_bytes = [0u8; 2];
-            stream
-                .read_exact(&mut len_bytes)
-                .await
-                .map_err(|e| WsError::IOError(e.to_string()))?;
-            source.extend_from_slice(&len_bytes);
-            Ok(u16::from_be_bytes(len_bytes) as usize)
-        }
-        127 => {
-            let mut len_bytes = [0u8; 8];
-            stream
-                .read_exact(&mut len_bytes)
-                .await
-                .map_err(|e| WsError::IOError(e.to_string()))?;
-            source.extend_from_slice(&len_bytes);
-            Ok(u64::from_be_bytes(len_bytes) as usize)
-        }
-        _ => Err(WsError::ProtocolError(ProtocolError::InsufficientLen(
-            leading_len as usize,
-        ))),
-    }?;
-    let start_idx = source.len();
-    let new_size = start_idx + payload_len;
-    source.resize(new_size, 0);
-    stream
-        .read_exact(&mut source[start_idx..])
-        .await
-        .map_err(|e| WsError::IOError(e.to_string()))?;
-    let frame = codec.decode(source).map_err(WsError::ProtocolError)?;
-    Ok((frame, new_size))
-}
-
-pub async fn write_frame<S: AsyncWriteExt + Unpin, C: FrameCodec>(
-    codec: &mut C,
-    stream: &mut S,
-    frame: Frame,
-) -> Result<(), WsError> {
-    stream
-        .write_all(&codec.encode(frame))
-        .await
-        .map_err(|e| WsError::IOError(e.to_string()))?;
-    Ok(())
 }
