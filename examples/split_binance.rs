@@ -2,13 +2,10 @@ use futures::SinkExt;
 use structopt::StructOpt;
 use tokio::{
     fs::File,
-    io::{
-        stdin, AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufStream,
-        ReadHalf, WriteHalf,
-    },
+    io::{stdin, AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf},
 };
 use tokio_stream::StreamExt;
-use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
+use tokio_util::codec::{FramedRead, FramedWrite};
 use ws_tool::{
     frame::{Frame, FrameDecoder, FrameEncoder},
     stream::WsStream,
@@ -52,7 +49,8 @@ async fn read_msg(read: FramedRead<ReadHalf<WsStream>, FrameDecoder>) {
     let mut read = read;
     let mut file = File::create("output.json").await.unwrap();
     while let Some(Ok(frame)) = read.next().await {
-        let msg = String::from_utf8(frame.payload_data_unmask().to_vec()).unwrap();
+        let b = frame.payload_data_unmask();
+        let msg = String::from_utf8_lossy(&b);
         file.write_all(msg.as_bytes()).await.unwrap();
         file.flush().await.unwrap();
         // println!("{}", msg.trim());

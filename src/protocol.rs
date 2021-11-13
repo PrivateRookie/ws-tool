@@ -1,16 +1,12 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
-use crate::errors::ProtocolError;
-use crate::frame::Frame;
 use crate::stream::WsStream;
 use bytes::BytesMut;
 use sha1::Digest;
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
@@ -18,7 +14,6 @@ use webpki::DNSNameRef;
 
 use crate::errors::WsError;
 
-const BUF_SIZE: usize = 4 * 1024;
 const GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// close status code to indicate reason for closure
@@ -175,6 +170,7 @@ fn cal_accept_key(source: &str) -> String {
     base64::encode(&sha1.finalize())
 }
 
+#[derive(Debug)]
 pub struct HandshakeResponse {
     pub code: u8,
     pub reason: String,
@@ -297,6 +293,9 @@ pub async fn perform_handshake(
             String::from_utf8_lossy(header.value).to_string(),
         );
     });
-    log::debug!("protocol handshake complete");
+    log::debug!(
+        "protocol handshake complete, remaining bytes {}",
+        read_bytes.len() - header_len
+    );
     Ok((handshake_resp, BytesMut::from(&read_bytes[header_len..])))
 }

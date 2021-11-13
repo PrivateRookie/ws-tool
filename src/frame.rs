@@ -397,7 +397,7 @@ impl FrameDecoder {
             tmp.extend_from_slice(&self.handshake_remaining);
             tmp.extend_from_slice(src);
             src.clear();
-            src.copy_from_slice(&tmp);
+            src.extend_from_slice(&tmp);
         }
 
         if src.len() < 2 {
@@ -574,7 +574,7 @@ impl Encoder<Frame> for FrameCodec {
     type Error = IOError;
 
     fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        self.encode(item, dst)
+        self.encoder.encode(item, dst)
     }
 }
 

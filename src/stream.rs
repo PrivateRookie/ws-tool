@@ -3,14 +3,12 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_rustls::client::TlsStream;
-use tokio_stream::Stream;
 
 #[derive(Debug)]
 pub enum WsStream {
     Plain(TcpStream),
     Tls(TlsStream<TcpStream>),
 }
-
 
 impl AsyncRead for WsStream {
     fn poll_read(

@@ -40,8 +40,8 @@ async fn main() -> Result<(), ()> {
         }
         let mut frame = Frame::default();
         frame.set_payload(input.trim().as_bytes());
-        client.write_frame(frame).await.unwrap();
-        let resp = client.read_frame().await.unwrap();
+        client.write(frame).await.unwrap();
+        let resp = client.read().await.unwrap().unwrap();
         let msg = String::from_utf8(resp.payload_data_unmask().to_vec()).unwrap();
         println!("[RECV] > {}", msg.trim());
         if &msg == "quit" {
