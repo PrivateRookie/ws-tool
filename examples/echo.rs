@@ -1,7 +1,10 @@
 use std::{io::Write, path::PathBuf};
 
 use structopt::StructOpt;
-use ws_tool::{frame::Frame, ConnBuilder};
+use ws_tool::{
+    frame::{Frame, OpCode},
+    ConnBuilder,
+};
 
 /// websocket client demo with raw frame
 #[derive(StructOpt)]
@@ -42,6 +45,16 @@ async fn main() -> Result<(), ()> {
         frame.set_payload(input.trim().as_bytes());
         client.write(frame).await.unwrap();
         let resp = client.read().await.unwrap().unwrap();
+        if resp.opcode() == OpCode::Ping {
+            client
+                .write(Frame::new_with_payload(
+                    OpCode::Pong,
+                    &resp.payload_data_unmask(),
+                ))
+                .await
+                .unwrap();
+            continue;
+        }
         let msg = String::from_utf8(resp.payload_data_unmask().to_vec()).unwrap();
         println!("[RECV] > {}", msg.trim());
         if &msg == "quit" {

@@ -194,6 +194,8 @@ impl Connection {
         self.state = ConnectionState::HandShaking;
         let protocols = self.protocols.join(" ");
         let extensions = self.extensions.join(" ");
+        let stream = self.framed.get_mut();
+        stream.set_nodelay();
         let (resp, remaining_bytes) = perform_handshake(
             self.framed.get_mut(),
             &self.mode,
@@ -242,7 +244,6 @@ impl Connection {
     }
 
     pub async fn close(&mut self, code: u16, reason: String) -> IOResult<()> {
-        log::info!("try to close connection");
         self.state = ConnectionState::Closing;
         let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
         payload.extend_from_slice(&code.to_be_bytes());

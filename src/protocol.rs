@@ -293,9 +293,6 @@ pub async fn perform_handshake(
             String::from_utf8_lossy(header.value).to_string(),
         );
     });
-    log::debug!(
-        "protocol handshake complete, remaining bytes {}",
-        read_bytes.len() - header_len
-    );
+    log::debug!("protocol handshake complete");
     Ok((handshake_resp, BytesMut::from(&read_bytes[header_len..])))
 }

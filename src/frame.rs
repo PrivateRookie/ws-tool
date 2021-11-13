@@ -397,6 +397,7 @@ impl FrameDecoder {
             tmp.extend_from_slice(&self.handshake_remaining);
             tmp.extend_from_slice(src);
             src.clear();
+            self.handshake_remaining.clear();
             src.extend_from_slice(&tmp);
         }
 
