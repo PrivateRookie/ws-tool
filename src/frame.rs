@@ -372,7 +372,6 @@ impl Encoder<Frame> for FrameEncoder {
 #[derive(Debug, Clone)]
 pub struct FrameDecoder {
     pub check_rsv: bool,
-    pub handshake_remaining: BytesMut,
     pub fragmented: bool,
     pub fragmented_data: BytesMut,
     pub fragmented_type: OpCode,
@@ -382,7 +381,6 @@ impl Default for FrameDecoder {
     fn default() -> Self {
         Self {
             check_rsv: true,
-            handshake_remaining: Default::default(),
             fragmented: false,
             fragmented_data: Default::default(),
             fragmented_type: OpCode::Text,
@@ -392,15 +390,6 @@ impl Default for FrameDecoder {
 
 impl FrameDecoder {
     fn decode_single(&mut self, src: &mut BytesMut) -> Result<Option<Frame>, IOError> {
-        if !self.handshake_remaining.is_empty() {
-            let mut tmp = BytesMut::with_capacity(src.len() + self.handshake_remaining.len());
-            tmp.extend_from_slice(&self.handshake_remaining);
-            tmp.extend_from_slice(src);
-            src.clear();
-            self.handshake_remaining.clear();
-            src.extend_from_slice(&tmp);
-        }
-
         if src.len() < 2 {
             return Ok(None);
         }

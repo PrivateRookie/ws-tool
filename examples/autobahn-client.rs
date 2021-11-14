@@ -1,5 +1,5 @@
 use log::*;
-use std::{io::Result as IOResult, time::Duration};
+use std::io::Result as IOResult;
 use ws_tool::{
     frame::{Frame, OpCode},
     ConnBuilder,
@@ -31,7 +31,6 @@ async fn run_test(case: usize) -> IOResult<()> {
     client.handshake().await.unwrap();
     loop {
         if let Some(maybe_frame) = client.read().await {
-            log::debug!("case {} {:?}", case, maybe_frame);
             match maybe_frame {
                 Ok(frame) => match frame.opcode() {
                     OpCode::Text | OpCode::Binary => {

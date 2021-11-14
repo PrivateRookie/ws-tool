@@ -196,7 +196,7 @@ impl Connection {
         let extensions = self.extensions.join(" ");
         let stream = self.framed.get_mut();
         stream.set_nodelay();
-        let (resp, remaining_bytes) = perform_handshake(
+        let resp = perform_handshake(
             self.framed.get_mut(),
             &self.mode,
             &self.uri,
@@ -205,7 +205,6 @@ impl Connection {
             13,
         )
         .await?;
-        self.framed.codec_mut().decoder.handshake_remaining = remaining_bytes;
         self.state = ConnectionState::Running;
         Ok(resp)
     }

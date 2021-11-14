@@ -187,7 +187,7 @@ pub async fn perform_handshake(
     protocols: String,
     extensions: String,
     version: u8,
-) -> Result<(HandshakeResponse, BytesMut), WsError> {
+) -> Result<HandshakeResponse, WsError> {
     let key = gen_key();
     let accept_key = cal_accept_key(&key);
 
@@ -240,7 +240,7 @@ pub async fn perform_handshake(
         .await
         .map_err(|e| WsError::IOError(e.to_string()))?;
     let mut read_bytes = BytesMut::with_capacity(1024);
-    let mut buf: [u8; 1024] = [0; 1024];
+    let mut buf: [u8; 1] = [0; 1];
     loop {
         let num = stream
             .read(&mut buf)
@@ -256,15 +256,9 @@ pub async fn perform_handshake(
     }
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut resp = httparse::Response::new(&mut headers);
-    let parse_status = resp
+    let _parse_status = resp
         .parse(&read_bytes)
         .map_err(|_| WsError::HandShakeFailed("invalid response".to_string()))?;
-    let header_len = match parse_status {
-        httparse::Status::Complete(len) => Ok(len),
-        httparse::Status::Partial => Err(WsError::HandShakeFailed(
-            "incomplete handshake response".to_string(),
-        )),
-    }?;
     if resp.code.unwrap_or_default() != 101 {
         return Err(WsError::HandShakeFailed(format!(
             "expect 101 response, got {:?} {:?}",
@@ -294,5 +288,5 @@ pub async fn perform_handshake(
         );
     });
     log::debug!("protocol handshake complete");
-    Ok((handshake_resp, BytesMut::from(&read_bytes[header_len..])))
+    Ok(handshake_resp)
 }
