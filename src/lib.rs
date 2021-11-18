@@ -7,6 +7,7 @@ use bytes::BytesMut;
 use frame::{Frame, FrameCodec, FrameDecoder, FrameEncoder, OpCode};
 use futures::SinkExt;
 use futures::StreamExt;
+use protocol::handle_handshake;
 use protocol::perform_handshake;
 use stream::WsStream;
 use tokio::io::{ReadHalf, WriteHalf};
@@ -272,12 +273,84 @@ impl Connection {
 #[derive(Debug)]
 pub struct Server {
     pub framed: Framed<stream::WsStream, FrameCodec>,
+    pub state: ConnectionState,
     pub protocols: Vec<String>,
     pub extensions: Vec<String>,
 }
 
 impl Server {
-    pub async fn handle_handshake(&mut self) -> IOResult<()> {
-        todo!()
+    pub fn from_stream(stream: TcpStream) -> Self {
+        Self {
+            state: ConnectionState::Created,
+            framed: Framed::new(WsStream::Plain(stream), FrameCodec::default()),
+            protocols: vec![],
+            extensions: vec![],
+        }
+    }
+
+    pub async fn handle_handshake(&mut self) -> Result<(), WsError> {
+        let stream = self.framed.get_mut();
+        handle_handshake(stream).await?;
+        self.state = ConnectionState::Running;
+        Ok(())
+    }
+
+    pub async fn read(&mut self) -> Option<IOResult<Frame>> {
+        match self.framed.next().await {
+            Some(maybe_frame) => {
+                let msg = match maybe_frame {
+                    Ok(frame) => Ok(frame),
+                    Err(err) => {
+                        let ret = match self.close(1002, err.to_string()).await {
+                            Ok(_) => Err(err),
+                            Err(_) => Err(std::io::Error::new(
+                                std::io::ErrorKind::ConnectionAborted,
+                                "send close failed",
+                            )),
+                        };
+                        self.state = ConnectionState::Closed;
+                        ret
+                    }
+                };
+                Some(msg)
+            }
+            None => None,
+        }
+    }
+
+    pub async fn write(&mut self, item: Frame) -> IOResult<()> {
+        if self.state != ConnectionState::Running {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "connection closed",
+            ));
+        }
+        self.framed.send(item).await
+    }
+
+    pub async fn close(&mut self, code: u16, reason: String) -> IOResult<()> {
+        self.state = ConnectionState::Closing;
+        let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
+        payload.extend_from_slice(&code.to_be_bytes());
+        payload.extend_from_slice(reason.as_bytes());
+        let close = Frame::new_with_payload(OpCode::Close, &payload);
+        self.framed.send(close).await
+    }
+
+    pub fn split(
+        self,
+    ) -> (
+        FramedRead<ReadHalf<WsStream>, FrameDecoder>,
+        FramedWrite<WriteHalf<WsStream>, FrameEncoder>,
+    ) {
+        if self.state != ConnectionState::Running {
+            panic!("should split after connection is running");
+        }
+        let Self { framed, .. } = self;
+        let parts = framed.into_parts();
+        let (read_stream, write_stream) = tokio::io::split(parts.io);
+        let frame_r = FramedRead::new(read_stream, parts.codec.decoder);
+        let frame_w = FramedWrite::new(write_stream, parts.codec.encoder);
+        (frame_r, frame_w)
     }
 }
