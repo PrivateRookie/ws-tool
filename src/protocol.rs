@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
 use crate::stream::WsStream;
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use sha1::Digest;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -289,4 +289,64 @@ pub async fn perform_handshake(
     });
     log::debug!("protocol handshake complete");
     Ok(handshake_resp)
+}
+
+pub async fn handle_handshake(stream: &mut WsStream) -> Result<(), WsError> {
+    let mut req_bytes = BytesMut::with_capacity(1024);
+    let mut buf = [0u8];
+    loop {
+        stream
+            .read_exact(&mut buf)
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?;
+        req_bytes.put_u8(buf[0]);
+        if req_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']) {
+            break;
+        }
+    }
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+    let _parse_status = req
+        .parse(&req_bytes)
+        .map_err(|_| WsError::HandShakeFailed("invalid request".to_string()))?;
+    let mut key = String::new();
+    let mut accept_key = String::new();
+    let mut contain_upgrade = false;
+    for header in req.headers.iter() {
+        if header.name.to_lowercase() == "upgrade" {
+            contain_upgrade = String::from_utf8(header.value.to_vec())
+                .map(|s| s.to_lowercase() == "websocket")
+                .unwrap_or_default();
+        }
+        if header.name.to_lowercase() == "sec-websocket-key" {
+            key = String::from_utf8(header.value.to_vec()).unwrap_or_default();
+            accept_key = cal_accept_key(&key);
+        }
+    }
+    if !contain_upgrade {
+        let resp = "HTTP/1.1 400 Bad Request\r\n\r\nmissing upgrade header or invalid header value";
+        stream
+            .write_all(resp.as_bytes())
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?;
+    } else if key.is_empty() {
+        let resp = "HTTP/1.1  400 Bad Request\r\n\r\nmissing sec-websocket-key or key is empty";
+        stream
+            .write_all(resp.as_bytes())
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?;
+    } else {
+        let resp_lines = vec![
+            "HTTP/1.1 101 Switching Protocols".to_string(),
+            "upgrade: websocket".to_string(),
+            "connection: upgrade".to_string(),
+            format!("Sec-WebSocket-Accept: {}", accept_key),
+            "\r\n".to_string(),
+        ];
+        stream
+            .write_all(resp_lines.join("\r\n").as_bytes())
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?
+    }
+    Ok(())
 }

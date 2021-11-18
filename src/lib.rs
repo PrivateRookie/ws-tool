@@ -268,3 +268,16 @@ impl Connection {
         (frame_r, frame_w)
     }
 }
+
+#[derive(Debug)]
+pub struct Server {
+    pub framed: Framed<stream::WsStream, FrameCodec>,
+    pub protocols: Vec<String>,
+    pub extensions: Vec<String>,
+}
+
+impl Server {
+    pub async fn handle_handshake(&mut self) -> IOResult<()> {
+        todo!()
+    }
+}
