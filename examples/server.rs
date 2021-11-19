@@ -1,5 +1,5 @@
 use structopt::StructOpt;
-use ws_tool::{frame::Frame, ConnBuilder, Server};
+use ws_tool::{frame::OpCode, Server};
 
 /// websocket client connect to binance futures websocket
 #[derive(StructOpt)]
@@ -26,11 +26,14 @@ async fn main() -> Result<(), ()> {
         server.handle_handshake().await.unwrap();
         while let Some(x) = server.read().await {
             let frame = x.unwrap();
+            if frame.opcode() == OpCode::Close {
+                log::info!("client close");
+                break;
+            }
             let payload = frame.payload_data_unmask();
-            let frame = Frame::new_with_payload(
-                ws_tool::frame::OpCode::Text,
-                format!("hello {}", String::from_utf8(payload.to_vec()).unwrap()).as_bytes(),
-            );
+            let mut frame = ws_tool::frame::Frame::new_with_opcode(ws_tool::frame::OpCode::Text);
+            frame.set_mask(false);
+            frame.set_payload(String::from_utf8(payload.to_vec()).unwrap().as_bytes());
             server.write(frame).await.unwrap();
         }
     }

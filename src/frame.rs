@@ -69,12 +69,11 @@ fn get_bit(source: &[u8], byte_idx: usize, bit_idx: usize) -> bool {
 #[inline]
 fn set_bit(source: &mut [u8], byte_idx: usize, bit_idx: usize, val: bool) {
     let b = source[byte_idx];
-    let op = if val {
-        1 << (7 - bit_idx)
+    if val {
+        source[byte_idx] = b | 1 << (7 - bit_idx)
     } else {
-        u8::MAX - (1 << (7 - bit_idx))
-    };
-    source[byte_idx] = b | op
+        source[byte_idx] = b & !(1 << (7 - bit_idx))
+    }
 }
 
 pub(crate) fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
@@ -177,7 +176,7 @@ impl Frame {
 
     #[inline]
     pub fn set_mask(&mut self, mask: bool) {
-        self.set_bit(1, 1, mask)
+        self.set_bit(1, 0, mask);
     }
 
     #[inline]
@@ -501,7 +500,8 @@ impl Decoder for FrameDecoder {
                             return Err(IOError::new(InvalidData, reason));
                         }
                         if payload_len >= 2 {
-                            let payload = frame.payload_data();
+                            let payload = frame.payload_data_unmask();
+                            log::debug!("{:?}", payload);
 
                             // check close code
                             let mut code_byte = [0u8; 2];
