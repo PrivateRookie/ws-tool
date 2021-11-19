@@ -176,6 +176,11 @@ impl Frame {
     }
 
     #[inline]
+    pub fn set_mask(&mut self, mask: bool) {
+        self.set_bit(1, 1, mask)
+    }
+
+    #[inline]
     fn payload_len_with_occ(&self) -> (usize, u64) {
         let mut len = self.0[1];
         len = (len << 1) >> 1;
