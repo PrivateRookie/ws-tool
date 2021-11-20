@@ -1,17 +1,12 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::{fmt::Debug, sync::Arc};
 
-use crate::errors::ProtocolError;
-use crate::frame::Frame;
-use crate::frame::FrameCodec;
 use crate::stream::WsStream;
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use sha1::Digest;
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
@@ -19,7 +14,6 @@ use webpki::DNSNameRef;
 
 use crate::errors::WsError;
 
-const BUF_SIZE: usize = 4 * 1024;
 const GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// close status code to indicate reason for closure
@@ -176,6 +170,7 @@ fn cal_accept_key(source: &str) -> String {
     base64::encode(&sha1.finalize())
 }
 
+#[derive(Debug)]
 pub struct HandshakeResponse {
     pub code: u8,
     pub reason: String,
@@ -192,7 +187,7 @@ pub async fn perform_handshake(
     protocols: String,
     extensions: String,
     version: u8,
-) -> Result<(HandshakeResponse, BytesMut), WsError> {
+) -> Result<HandshakeResponse, WsError> {
     let key = gen_key();
     let accept_key = cal_accept_key(&key);
 
@@ -245,31 +240,23 @@ pub async fn perform_handshake(
         .await
         .map_err(|e| WsError::IOError(e.to_string()))?;
     let mut read_bytes = BytesMut::with_capacity(1024);
-    let mut buf: [u8; 1024] = [0; 1024];
+    let mut buf: [u8; 1] = [0; 1];
     loop {
         let num = stream
             .read(&mut buf)
             .await
             .map_err(|e| WsError::IOError(e.to_string()))?;
         read_bytes.extend_from_slice(&buf[..num]);
-        let header_complete = read_bytes
-            .windows(4)
-            .any(|slice| slice == [b'\r', b'\n', b'\r', b'\n']);
+        let header_complete = read_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']);
         if header_complete || num == 0 {
             break;
         }
     }
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut resp = httparse::Response::new(&mut headers);
-    let parse_status = resp
+    let _parse_status = resp
         .parse(&read_bytes)
         .map_err(|_| WsError::HandShakeFailed("invalid response".to_string()))?;
-    let header_len = match parse_status {
-        httparse::Status::Complete(len) => Ok(len),
-        httparse::Status::Partial => Err(WsError::HandShakeFailed(
-            "incomplete handshake response".to_string(),
-        )),
-    }?;
     if resp.code.unwrap_or_default() != 101 {
         return Err(WsError::HandShakeFailed(format!(
             "expect 101 response, got {:?} {:?}",
@@ -299,64 +286,65 @@ pub async fn perform_handshake(
         );
     });
     log::debug!("protocol handshake complete");
-    Ok((handshake_resp, BytesMut::from(&read_bytes[header_len..])))
+    Ok(handshake_resp)
 }
 
-pub async fn read_frame<S: AsyncReadExt + Unpin, C: FrameCodec>(
-    codec: &mut C,
-    stream: &mut S,
-) -> Result<(Frame, usize), WsError> {
-    let mut source = BytesMut::with_capacity(BUF_SIZE / 4);
-    let mut leading_bytes = [0u8; 2];
-    stream
-        .read_exact(&mut leading_bytes)
-        .await
-        .map_err(|e| WsError::IOError(e.to_string()))?;
-    source.extend_from_slice(&leading_bytes);
-    let leading_len = (leading_bytes[1] << 1) >> 1;
-    let payload_len: usize = match leading_len {
-        0..=125 => Ok(leading_len as usize),
-        126 => {
-            let mut len_bytes = [0u8; 2];
-            stream
-                .read_exact(&mut len_bytes)
-                .await
-                .map_err(|e| WsError::IOError(e.to_string()))?;
-            source.extend_from_slice(&len_bytes);
-            Ok(u16::from_be_bytes(len_bytes) as usize)
+pub async fn handle_handshake(stream: &mut WsStream) -> Result<(), WsError> {
+    let mut req_bytes = BytesMut::with_capacity(1024);
+    let mut buf = [0u8];
+    loop {
+        stream
+            .read_exact(&mut buf)
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?;
+        req_bytes.put_u8(buf[0]);
+        if req_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']) {
+            break;
         }
-        127 => {
-            let mut len_bytes = [0u8; 8];
-            stream
-                .read_exact(&mut len_bytes)
-                .await
-                .map_err(|e| WsError::IOError(e.to_string()))?;
-            source.extend_from_slice(&len_bytes);
-            Ok(u64::from_be_bytes(len_bytes) as usize)
+    }
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = httparse::Request::new(&mut headers);
+    let _parse_status = req
+        .parse(&req_bytes)
+        .map_err(|_| WsError::HandShakeFailed("invalid request".to_string()))?;
+    let mut key = String::new();
+    let mut accept_key = String::new();
+    let mut contain_upgrade = false;
+    for header in req.headers.iter() {
+        if header.name.to_lowercase() == "upgrade" {
+            contain_upgrade = String::from_utf8(header.value.to_vec())
+                .map(|s| s.to_lowercase() == "websocket")
+                .unwrap_or_default();
         }
-        _ => Err(WsError::ProtocolError(ProtocolError::InsufficientLen(
-            leading_len as usize,
-        ))),
-    }?;
-    let start_idx = source.len();
-    let new_size = start_idx + payload_len;
-    source.resize(new_size, 0);
-    stream
-        .read_exact(&mut source[start_idx..])
-        .await
-        .map_err(|e| WsError::IOError(e.to_string()))?;
-    let frame = codec.decode(source).map_err(WsError::ProtocolError)?;
-    Ok((frame, new_size))
-}
-
-pub async fn write_frame<S: AsyncWriteExt + Unpin, C: FrameCodec>(
-    codec: &mut C,
-    stream: &mut S,
-    frame: Frame,
-) -> Result<(), WsError> {
-    stream
-        .write_all(&codec.encode(frame))
-        .await
-        .map_err(|e| WsError::IOError(e.to_string()))?;
+        if header.name.to_lowercase() == "sec-websocket-key" {
+            key = String::from_utf8(header.value.to_vec()).unwrap_or_default();
+            accept_key = cal_accept_key(&key);
+        }
+    }
+    if !contain_upgrade {
+        let resp = "HTTP/1.1 400 Bad Request\r\n\r\nmissing upgrade header or invalid header value";
+        stream
+            .write_all(resp.as_bytes())
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?;
+    } else if key.is_empty() {
+        let resp = "HTTP/1.1  400 Bad Request\r\n\r\nmissing sec-websocket-key or key is empty";
+        stream
+            .write_all(resp.as_bytes())
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?;
+    } else {
+        let resp_lines = vec![
+            "HTTP/1.1 101 Switching Protocols".to_string(),
+            "upgrade: websocket".to_string(),
+            "connection: upgrade".to_string(),
+            format!("Sec-WebSocket-Accept: {}", accept_key),
+            "\r\n".to_string(),
+        ];
+        stream
+            .write_all(resp_lines.join("\r\n").as_bytes())
+            .await
+            .map_err(|e| WsError::IOError(e.to_string()))?
+    }
     Ok(())
 }

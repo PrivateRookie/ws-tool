@@ -1,7 +1,6 @@
-use bytes::{Bytes, BytesMut};
-use std::{fmt::Debug, ops::Deref};
-
 use crate::errors::ProtocolError;
+use bytes::{Bytes, BytesMut};
+use std::fmt::Debug;
 
 const DEFAULT_FRAME: [u8; 14] = [0b10000001, 0b10000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
@@ -44,7 +43,7 @@ impl OpCode {
 }
 
 #[inline]
-fn parse_opcode(val: u8) -> Result<OpCode, u8> {
+pub(crate) fn parse_opcode(val: u8) -> Result<OpCode, u8> {
     let val = val << 4;
     match val {
         0 => Ok(OpCode::Continue),
@@ -60,20 +59,19 @@ fn parse_opcode(val: u8) -> Result<OpCode, u8> {
 }
 
 #[inline]
-fn get_bit(source: &[u8], byte_idx: usize, bit_idx: usize) -> bool {
+pub(crate) fn get_bit(source: &[u8], byte_idx: usize, bit_idx: usize) -> bool {
     let b: u8 = source[byte_idx];
     1 & (b >> (7 - bit_idx)) != 0
 }
 
 #[inline]
-fn set_bit(source: &mut [u8], byte_idx: usize, bit_idx: usize, val: bool) {
+pub(crate) fn set_bit(source: &mut [u8], byte_idx: usize, bit_idx: usize, val: bool) {
     let b = source[byte_idx];
-    let op = if val {
-        1 << (7 - bit_idx)
+    if val {
+        source[byte_idx] = b | 1 << (7 - bit_idx)
     } else {
-        u8::MAX - (1 << (7 - bit_idx))
-    };
-    source[byte_idx] = b | op
+        source[byte_idx] = b & !(1 << (7 - bit_idx))
+    }
 }
 
 pub(crate) fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
@@ -102,55 +100,9 @@ pub(crate) fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), Protoco
     }
 }
 
-pub trait FrameCodec {
-    fn encode(&mut self, frame: Frame) -> BytesMut;
-    fn decode(&mut self, source: BytesMut) -> Result<Frame, ProtocolError>;
-}
-
-/// default impl of frame parser
-#[derive(Debug, Clone)]
-pub struct DefaultFrameCodec {
-    /// if `true` raise protocol error when rsv bits are not 000
-    pub check_rsv: bool,
-}
-
-impl Default for DefaultFrameCodec {
-    fn default() -> Self {
-        Self { check_rsv: true }
-    }
-}
-
-impl FrameCodec for DefaultFrameCodec {
-    fn encode(&mut self, frame: Frame) -> BytesMut {
-        frame.0
-    }
-
-    fn decode(&mut self, source: BytesMut) -> Result<Frame, ProtocolError> {
-        if source.len() < 2 {
-            return Err(ProtocolError::InsufficientLen(source.len()));
-        }
-        // TODO check nonzero value according to extension negotiation
-        let leading_bits = source[0] >> 4;
-        if self.check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
-            return Err(ProtocolError::InvalidLeadingBits(leading_bits));
-        }
-        parse_opcode(source[0]).map_err(ProtocolError::InvalidOpcode)?;
-        let (payload_len, len_occ_bytes) = parse_payload_len(source.deref())?;
-        let mut expected_len = 1 + len_occ_bytes + payload_len;
-        let mask = get_bit(&source, 1, 0);
-        if mask {
-            expected_len += 4;
-        }
-        if expected_len != source.len() {
-            return Err(ProtocolError::MisMatchDataLen(expected_len, source.len()));
-        }
-        Ok(Frame(source))
-    }
-}
-
 /// websocket data frame
 #[derive(Clone)]
-pub struct Frame(BytesMut);
+pub struct Frame(pub(crate) BytesMut);
 
 impl Frame {
     #[inline]
@@ -218,6 +170,13 @@ impl Frame {
     #[inline]
     pub fn mask(&self) -> bool {
         self.get_bit(1, 0)
+    }
+
+    /// **NOTE** if change mask bit after setting payload
+    /// you need to set payload again to adjust data frame
+    #[inline]
+    pub fn set_mask(&mut self, mask: bool) {
+        self.set_bit(1, 0, mask);
     }
 
     #[inline]
@@ -322,6 +281,7 @@ impl Frame {
 
 impl Default for Frame {
     fn default() -> Self {
+        // TODO may adjust to better size
         let mut raw = BytesMut::with_capacity(200);
         raw.extend_from_slice(&DEFAULT_FRAME);
         Self(raw)

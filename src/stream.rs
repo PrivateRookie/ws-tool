@@ -10,6 +10,15 @@ pub enum WsStream {
     Tls(TlsStream<TcpStream>),
 }
 
+impl WsStream {
+    pub fn set_nodelay(&mut self) -> std::io::Result<()> {
+        match self {
+            WsStream::Plain(s) => s.set_nodelay(true),
+            WsStream::Tls(s) => s.get_mut().0.set_nodelay(true),
+        }
+    }
+}
+
 impl AsyncRead for WsStream {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,

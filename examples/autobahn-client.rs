@@ -1,72 +1,79 @@
 use log::*;
+use std::io::Result as IOResult;
 use ws_tool::{
-    errors::WsError,
     frame::{Frame, OpCode},
     ConnBuilder,
 };
 
 const AGENT: &str = "ws-tool-client";
 
-async fn get_case_count() -> Result<usize, WsError> {
-    let mut client = ConnBuilder::new("ws://localhost:9001/getCaseCount")
+async fn get_case_count() -> IOResult<usize> {
+    let mut client = ConnBuilder::new("ws://localhost:9002/getCaseCount")
         .build()
-        .await?;
-    client.handshake().await?;
-    let frame = client.read_frame().await?;
+        .await
+        .unwrap();
+    client.handshake().await.unwrap();
+    let frame = client.read().await.unwrap().unwrap();
     let unmask_data = frame.payload_data_unmask();
     let count = String::from_utf8(unmask_data.to_vec())
         .unwrap()
         .parse::<usize>()
         .unwrap();
-    client.read_frame().await?;
-    client.close(1001, "".to_string()).await?;
+    client.read().await.unwrap().unwrap();
+    client.close(1001, "".to_string()).await.unwrap();
     Ok(count)
 }
 
-async fn run_test(case: usize) -> Result<(), WsError> {
+async fn run_test(case: usize) -> IOResult<()> {
     info!("running test case {}", case);
-    let url = format!("ws://localhost:9001/runCase?case={}&agent={}", case, AGENT);
-    let mut client = ConnBuilder::new(&url).build().await?;
-    client.handshake().await?;
+    let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
+    let mut client = ConnBuilder::new(&url).build().await.unwrap();
+    client.handshake().await.unwrap();
     loop {
-        let frame = client.read_frame().await?;
-        match frame.opcode() {
-            OpCode::Text => {
-                let payload = frame.payload_data_unmask();
-                let echo = Frame::new_with_payload(OpCode::Text, &payload);
-                client.write_frame(echo).await?
+        if let Some(maybe_frame) = client.read().await {
+            match maybe_frame {
+                Ok(frame) => match frame.opcode() {
+                    OpCode::Text | OpCode::Binary => {
+                        let payload = frame.payload_data_unmask();
+                        let echo = Frame::new_with_payload(frame.opcode(), &payload);
+                        client.write(echo).await?;
+                    }
+                    OpCode::Close => {
+                        client.close(1000, "".to_string()).await?;
+                        break;
+                    }
+                    OpCode::Ping => {
+                        let mut echo = Frame::new_with_opcode(OpCode::Pong);
+                        echo.set_payload(&frame.payload_data_unmask());
+                        client.write(echo).await?;
+                    }
+                    OpCode::Pong => {}
+                    OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
+                        unreachable!()
+                    }
+                },
+                Err(e) => {
+                    client.close(1000, e.to_string()).await?;
+                }
             }
-            OpCode::Binary => {
-                let mut echo = Frame::new_with_opcode(frame.opcode());
-                echo.set_payload(&frame.payload_data_unmask());
-                client.write_frame(echo).await?;
-            }
-            OpCode::Close => {
-                break;
-            }
-            OpCode::Ping => {
-                let mut echo = Frame::new_with_opcode(OpCode::Pong);
-                echo.set_payload(&frame.payload_data_unmask());
-                client.write_frame(echo).await?;
-            }
-            OpCode::Pong => {}
-            OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
-                unreachable!()
-            }
+        } else {
+            client.close(1000, "".to_string()).await?;
+            break;
         }
     }
-    client.close(1000, "".to_string()).await?;
+
     Ok(())
 }
 
-async fn update_report() -> Result<(), WsError> {
+async fn update_report() -> IOResult<()> {
     let mut client = ConnBuilder::new(&format!(
-        "ws://localhost:9001/updateReports?agent={}",
+        "ws://localhost:9002/updateReports?agent={}",
         AGENT
     ))
     .build()
-    .await?;
-    client.handshake().await?;
+    .await
+    .unwrap();
+    client.handshake().await.unwrap();
     client.close(1000, "".to_string()).await
 }
 

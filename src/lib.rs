@@ -1,17 +1,17 @@
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::io::Result as IOResult;
 use std::path::PathBuf;
 
+use crate::codec::{FrameCodec, FrameDecoder, FrameEncoder};
+use crate::frame::{Frame, OpCode};
 use bytes::BytesMut;
-use config::WebsocketConfig;
-use frame::OpCode;
-use frame::{DefaultFrameCodec, Frame};
-use log::trace;
+use futures::SinkExt;
+use futures::StreamExt;
+use protocol::handle_handshake;
 use protocol::perform_handshake;
-use protocol::read_frame;
-use protocol::write_frame;
 use stream::WsStream;
-use tokio::io::AsyncReadExt;
+use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 
 /// client config
@@ -27,7 +27,11 @@ pub mod proxy;
 /// stream definition
 pub mod stream;
 
-use errors::{ProtocolError, WsError};
+/// frame codec impl
+pub mod codec;
+
+use errors::WsError;
+use tokio_util::codec::{Framed, FramedRead, FramedWrite};
 
 use crate::protocol::wrap_tls;
 use crate::protocol::Mode;
@@ -167,11 +171,9 @@ impl ConnBuilder {
         Ok(Connection {
             uri,
             mode,
-            stream,
-            codec: DefaultFrameCodec::default(),
+            framed: Framed::new(stream, FrameCodec::default()),
             state: ConnectionState::Created,
             certs: certs.clone(),
-            handshake_remaining: BytesMut::with_capacity(0),
             proxy: ws_proxy,
             protocols: protocols.to_owned(),
             extensions: extensions.to_owned(),
@@ -184,11 +186,9 @@ impl ConnBuilder {
 pub struct Connection {
     uri: http::Uri,
     mode: Mode,
-    codec: DefaultFrameCodec,
-    stream: stream::WsStream,
+    framed: Framed<stream::WsStream, FrameCodec>,
     certs: HashSet<PathBuf>,
     state: ConnectionState,
-    handshake_remaining: BytesMut,
     proxy: Option<proxy::Proxy>,
     protocols: Vec<String>,
     extensions: Vec<String>,
@@ -199,9 +199,8 @@ impl Connection {
         self.state = ConnectionState::HandShaking;
         let protocols = self.protocols.join(" ");
         let extensions = self.extensions.join(" ");
-
-        let (resp, remaining_bytes) = perform_handshake(
-            &mut self.stream,
+        let resp = perform_handshake(
+            self.framed.get_mut(),
             &self.mode,
             &self.uri,
             protocols,
@@ -209,161 +208,151 @@ impl Connection {
             13,
         )
         .await?;
-        self.handshake_remaining = remaining_bytes;
         self.state = ConnectionState::Running;
         Ok(resp)
     }
 
-    async fn read(&mut self) -> Result<Frame, WsError> {
-        let frame = if self.handshake_remaining.is_empty() {
-            read_frame(&mut self.codec, &mut self.stream)
-                .await
-                .map(|(frame, _)| frame)
-        } else {
-            let mut stream = self.handshake_remaining.chain(&mut self.stream);
-            let (frame, count) = read_frame(&mut self.codec, &mut stream).await?;
-            let start_idx = count.min(self.handshake_remaining.len());
-            self.handshake_remaining = BytesMut::from(&self.handshake_remaining[start_idx..]);
-            Ok(frame)
-        }?;
-        trace!("{:?}", frame);
-        Ok(frame)
-    }
-
-    async fn write(&mut self, frame: Frame) -> Result<(), WsError> {
-        write_frame(&mut self.codec, &mut self.stream, frame).await
-    }
-
-    pub async fn read_frame(&mut self) -> Result<Frame, WsError> {
+    pub async fn write(&mut self, item: Frame) -> IOResult<()> {
         if self.state != ConnectionState::Running {
-            return Err(WsError::InvalidConnState(self.state.clone()));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "connection closed",
+            ));
         }
-        let mut fragmented = false;
-        let mut fragmented_data = BytesMut::new();
-        let mut fragmented_type = OpCode::Text;
-        loop {
-            let frame = self.read().await?;
-            let opcode = frame.opcode();
-            match opcode {
-                OpCode::Continue => {
-                    if !fragmented {
-                        let reason = ProtocolError::MissInitialFragmentedFrame;
-                        self.close(1002, reason.to_string()).await?;
-                        return Err(WsError::ProtocolError(reason));
-                    }
-                    fragmented_data.extend_from_slice(&frame.payload_data_unmask());
-                    if frame.fin() {
-                        if String::from_utf8(fragmented_data.to_vec()).is_err() {
-                            let reason = ProtocolError::InvalidUtf8;
-                            self.close(1007, reason.to_string()).await?;
-                            return Err(WsError::ProtocolError(reason));
-                        }
-                        let completed_frame =
-                            Frame::new_with_payload(fragmented_type, &fragmented_data);
-                        return Ok(completed_frame);
-                    }
-                }
-                OpCode::Text | OpCode::Binary => {
-                    if fragmented {
-                        let reason = ProtocolError::NotContinueFrameAfterFragmented;
-                        self.close(1002, reason.to_string()).await?;
-                        return Err(WsError::ProtocolError(reason));
-                    }
-                    if !frame.fin() {
-                        fragmented = true;
-                        fragmented_type = opcode.clone();
-                        let payload = frame.payload_data_unmask();
-                        fragmented_data.extend_from_slice(&payload);
-                    } else {
-                        if opcode == OpCode::Text
-                            && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
-                        {
-                            let reason = ProtocolError::InvalidUtf8;
-                            self.close(1007, reason.to_string()).await?;
-                            return Err(WsError::ProtocolError(reason));
-                        }
-                        return Ok(frame);
-                    }
-                }
-                OpCode::Close | OpCode::Ping | OpCode::Pong => {
-                    if !frame.fin() {
-                        let reason = ProtocolError::FragmentedControlFrame;
-                        self.close(1002, reason.to_string()).await?;
-                        return Err(WsError::ProtocolError(reason));
-                    }
-                    let payload_len = frame.payload_len();
-                    if payload_len > 125 {
-                        let reason = ProtocolError::ControlFrameTooBig(payload_len as usize);
-                        self.close(1002, reason.to_string()).await?;
-                        return Err(WsError::ProtocolError(reason));
-                    }
-                    if opcode == OpCode::Close {
-                        if payload_len == 1 {
-                            let reason = ProtocolError::InvalidCloseFramePayload;
-                            self.close(1002, reason.to_string()).await?;
-                            return Err(WsError::ProtocolError(reason));
-                        }
-                        if payload_len >= 2 {
-                            let payload = frame.payload_data();
+        self.framed.send(item).await
+    }
 
-                            // check close code
-                            let mut code_byte = [0u8; 2];
-                            code_byte.copy_from_slice(&payload[..2]);
-                            let code = u16::from_be_bytes(code_byte);
-                            if code < 1000
-                                || (1004..=1006).contains(&code)
-                                || (1015..=2999).contains(&code)
-                                || code >= 5000
-                            {
-                                let reason = ProtocolError::InvalidCloseCode(code);
-                                self.close(1002, reason.to_string()).await?;
-                                return Err(WsError::ProtocolError(reason));
-                            }
-
-                            // utf-8 validation
-                            if String::from_utf8(payload[2..].to_vec()).is_err() {
-                                let reason = ProtocolError::InvalidUtf8;
-                                self.close(1007, reason.to_string()).await?;
-                                return Err(WsError::ProtocolError(reason));
-                            }
-                        }
+    pub async fn read(&mut self) -> Option<IOResult<Frame>> {
+        match self.framed.next().await {
+            Some(maybe_frame) => {
+                let msg = match maybe_frame {
+                    Ok(frame) => Ok(frame),
+                    Err(err) => {
+                        let ret = match self.close(1002, err.to_string()).await {
+                            Ok(_) => Err(err),
+                            Err(_) => Err(std::io::Error::new(
+                                std::io::ErrorKind::ConnectionAborted,
+                                "send close failed",
+                            )),
+                        };
+                        self.state = ConnectionState::Closed;
+                        ret
                     }
-                    if opcode == OpCode::Close || !fragmented {
-                        return Ok(frame);
-                    } else {
-                        log::debug!("{:?} frame between fragmented data", opcode);
-                        let echo =
-                            Frame::new_with_payload(OpCode::Pong, &frame.payload_data_unmask());
-                        self.write_frame(echo).await?;
-                    }
-                }
-                OpCode::ReservedNonControl | OpCode::ReservedControl => {
-                    self.close(1002, format!("can not handle {:?} frame", opcode))
-                        .await?;
-                    return Err(WsError::UnsupportedFrame(opcode));
-                }
+                };
+                Some(msg)
             }
+            None => None,
         }
     }
 
-    pub async fn write_frame(&mut self, frame: Frame) -> Result<(), WsError> {
-        if self.state != ConnectionState::Running {
-            return Err(WsError::InvalidConnState(self.state.clone()));
-        }
-        self.write(frame).await
-    }
-
-    pub async fn close(&mut self, code: u16, reason: String) -> Result<(), WsError> {
+    pub async fn close(&mut self, code: u16, reason: String) -> IOResult<()> {
         self.state = ConnectionState::Closing;
-        let mut payload = BytesMut::with_capacity(2 + reason.len());
+        let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
         payload.extend_from_slice(&code.to_be_bytes());
         payload.extend_from_slice(reason.as_bytes());
         let close = Frame::new_with_payload(OpCode::Close, &payload);
-        self.write(close).await
+        self.framed.send(close).await
+    }
+
+    pub fn split(
+        self,
+    ) -> (
+        FramedRead<ReadHalf<WsStream>, FrameDecoder>,
+        FramedWrite<WriteHalf<WsStream>, FrameEncoder>,
+    ) {
+        if self.state != ConnectionState::Running {
+            panic!("should split after connection is running");
+        }
+        let Self { framed, .. } = self;
+        let parts = framed.into_parts();
+        let (read_stream, write_stream) = tokio::io::split(parts.io);
+        let frame_r = FramedRead::new(read_stream, parts.codec.decoder);
+        let frame_w = FramedWrite::new(write_stream, parts.codec.encoder);
+        (frame_r, frame_w)
     }
 }
 
-pub struct Client {
-    pub conn: Connection,
-    pub config: WebsocketConfig,
+#[derive(Debug)]
+pub struct Server {
+    pub framed: Framed<stream::WsStream, FrameCodec>,
+    pub state: ConnectionState,
+    pub protocols: Vec<String>,
+    pub extensions: Vec<String>,
+}
+
+impl Server {
+    pub fn from_stream(stream: TcpStream) -> Self {
+        Self {
+            state: ConnectionState::Created,
+            framed: Framed::new(WsStream::Plain(stream), FrameCodec::default()),
+            protocols: vec![],
+            extensions: vec![],
+        }
+    }
+
+    pub async fn handle_handshake(&mut self) -> Result<(), WsError> {
+        let stream = self.framed.get_mut();
+        handle_handshake(stream).await?;
+        self.state = ConnectionState::Running;
+        Ok(())
+    }
+
+    pub async fn read(&mut self) -> Option<IOResult<Frame>> {
+        match self.framed.next().await {
+            Some(maybe_frame) => {
+                let msg = match maybe_frame {
+                    Ok(frame) => Ok(frame),
+                    Err(err) => {
+                        let ret = match self.close(1002, err.to_string()).await {
+                            Ok(_) => Err(err),
+                            Err(_) => Err(std::io::Error::new(
+                                std::io::ErrorKind::ConnectionAborted,
+                                "send close failed",
+                            )),
+                        };
+                        self.state = ConnectionState::Closed;
+                        ret
+                    }
+                };
+                Some(msg)
+            }
+            None => None,
+        }
+    }
+
+    pub async fn write(&mut self, item: Frame) -> IOResult<()> {
+        if self.state != ConnectionState::Running {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "connection closed",
+            ));
+        }
+        self.framed.send(item).await
+    }
+
+    pub async fn close(&mut self, code: u16, reason: String) -> IOResult<()> {
+        self.state = ConnectionState::Closing;
+        let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
+        payload.extend_from_slice(&code.to_be_bytes());
+        payload.extend_from_slice(reason.as_bytes());
+        let close = Frame::new_with_payload(OpCode::Close, &payload);
+        self.framed.send(close).await
+    }
+
+    pub fn split(
+        self,
+    ) -> (
+        FramedRead<ReadHalf<WsStream>, FrameDecoder>,
+        FramedWrite<WriteHalf<WsStream>, FrameEncoder>,
+    ) {
+        if self.state != ConnectionState::Running {
+            panic!("should split after connection is running");
+        }
+        let Self { framed, .. } = self;
+        let parts = framed.into_parts();
+        let (read_stream, write_stream) = tokio::io::split(parts.io);
+        let frame_r = FramedRead::new(read_stream, parts.codec.decoder);
+        let frame_w = FramedWrite::new(write_stream, parts.codec.encoder);
+        (frame_r, frame_w)
+    }
 }

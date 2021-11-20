@@ -27,9 +27,9 @@ async fn main() -> Result<(), ()> {
     let mut client = builder.build().await.unwrap();
     client.handshake().await.unwrap();
 
-    loop {
-        let resp = client.read_frame().await.unwrap();
+    while let Some(Ok(resp)) = client.read().await {
         let msg = String::from_utf8(resp.payload_data_unmask().to_vec()).unwrap();
         println!("{}", msg.trim());
     }
+    Ok(())
 }
