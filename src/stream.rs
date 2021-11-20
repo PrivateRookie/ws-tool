@@ -11,10 +11,10 @@ pub enum WsStream {
 }
 
 impl WsStream {
-    pub fn set_nodelay(&mut self) {
+    pub fn set_nodelay(&mut self) -> std::io::Result<()> {
         match self {
-            WsStream::Plain(s) => s.set_nodelay(true).unwrap(),
-            WsStream::Tls(s) => s.get_mut().0.set_nodelay(true).unwrap(),
+            WsStream::Plain(s) => s.set_nodelay(true),
+            WsStream::Tls(s) => s.get_mut().0.set_nodelay(true),
         }
     }
 }

@@ -1,8 +1,6 @@
 use crate::errors::ProtocolError;
-use bytes::{Buf, Bytes, BytesMut};
-use std::io::{Error as IOError, ErrorKind::InvalidData};
-use std::{fmt::Debug, ops::Deref};
-use tokio_util::codec::{Decoder, Encoder};
+use bytes::{Bytes, BytesMut};
+use std::fmt::Debug;
 
 const DEFAULT_FRAME: [u8; 14] = [0b10000001, 0b10000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
@@ -45,7 +43,7 @@ impl OpCode {
 }
 
 #[inline]
-fn parse_opcode(val: u8) -> Result<OpCode, u8> {
+pub(crate) fn parse_opcode(val: u8) -> Result<OpCode, u8> {
     let val = val << 4;
     match val {
         0 => Ok(OpCode::Continue),
@@ -61,13 +59,13 @@ fn parse_opcode(val: u8) -> Result<OpCode, u8> {
 }
 
 #[inline]
-fn get_bit(source: &[u8], byte_idx: usize, bit_idx: usize) -> bool {
+pub(crate) fn get_bit(source: &[u8], byte_idx: usize, bit_idx: usize) -> bool {
     let b: u8 = source[byte_idx];
     1 & (b >> (7 - bit_idx)) != 0
 }
 
 #[inline]
-fn set_bit(source: &mut [u8], byte_idx: usize, bit_idx: usize, val: bool) {
+pub(crate) fn set_bit(source: &mut [u8], byte_idx: usize, bit_idx: usize, val: bool) {
     let b = source[byte_idx];
     if val {
         source[byte_idx] = b | 1 << (7 - bit_idx)
@@ -104,7 +102,7 @@ pub(crate) fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), Protoco
 
 /// websocket data frame
 #[derive(Clone)]
-pub struct Frame(BytesMut);
+pub struct Frame(pub(crate) BytesMut);
 
 impl Frame {
     #[inline]
@@ -174,6 +172,8 @@ impl Frame {
         self.get_bit(1, 0)
     }
 
+    /// **NOTE** if change mask bit after setting payload
+    /// you need to set payload again to adjust data frame
     #[inline]
     pub fn set_mask(&mut self, mask: bool) {
         self.set_bit(1, 0, mask);
@@ -281,6 +281,7 @@ impl Frame {
 
 impl Default for Frame {
     fn default() -> Self {
+        // TODO may adjust to better size
         let mut raw = BytesMut::with_capacity(200);
         raw.extend_from_slice(&DEFAULT_FRAME);
         Self(raw)
@@ -350,235 +351,5 @@ impl Debug for Frame {
             self.payload_len()
         )?;
         Ok(())
-    }
-}
-
-/// default websocket frame encoder
-#[derive(Debug, Clone)]
-pub struct FrameEncoder {}
-
-impl Default for FrameEncoder {
-    fn default() -> Self {
-        Self {}
-    }
-}
-
-impl Encoder<Frame> for FrameEncoder {
-    type Error = IOError;
-
-    fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.extend_from_slice(&item.0);
-        Ok(())
-    }
-}
-
-/// default websocket frame decoder
-#[derive(Debug, Clone)]
-pub struct FrameDecoder {
-    pub check_rsv: bool,
-    pub fragmented: bool,
-    pub fragmented_data: BytesMut,
-    pub fragmented_type: OpCode,
-}
-
-impl Default for FrameDecoder {
-    fn default() -> Self {
-        Self {
-            check_rsv: true,
-            fragmented: false,
-            fragmented_data: Default::default(),
-            fragmented_type: OpCode::Text,
-        }
-    }
-}
-
-impl FrameDecoder {
-    fn decode_single(&mut self, src: &mut BytesMut) -> Result<Option<Frame>, IOError> {
-        if src.len() < 2 {
-            return Ok(None);
-        }
-        // TODO check nonzero value according to extension negotiation
-        let leading_bits = src[0] >> 4;
-        if self.check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
-            return Err(IOError::new(
-                InvalidData,
-                ProtocolError::InvalidLeadingBits(leading_bits),
-            ));
-        }
-        parse_opcode(src[0])
-            .map_err(|e| IOError::new(InvalidData, ProtocolError::InvalidOpcode(e)))?;
-        let (payload_len, len_occ_bytes) =
-            parse_payload_len(src.deref()).map_err(|e| IOError::new(InvalidData, e))?;
-        let mut expected_len = 1 + len_occ_bytes + payload_len;
-        let mask = get_bit(&src, 1, 0);
-        if mask {
-            expected_len += 4;
-        }
-        if expected_len > src.len() {
-            src.reserve(expected_len - src.len() + 1);
-            Ok(None)
-        } else {
-            let mut data = BytesMut::with_capacity(expected_len);
-            data.extend_from_slice(&src[..expected_len]);
-            src.advance(expected_len);
-            Ok(Some(Frame(data)))
-        }
-    }
-}
-
-impl Decoder for FrameDecoder {
-    type Item = Frame;
-    type Error = IOError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let maybe_frame = self.decode_single(src)?;
-        if let Some(frame) = maybe_frame {
-            let opcode = frame.opcode();
-            match opcode {
-                OpCode::Continue => {
-                    if !self.fragmented {
-                        let reason = ProtocolError::MissInitialFragmentedFrame;
-                        // self.close(1002, reason.to_string()).await?;
-                        return Err(IOError::new(InvalidData, reason));
-                    }
-                    self.fragmented_data
-                        .extend_from_slice(&frame.payload_data_unmask());
-                    if frame.fin() {
-                        if String::from_utf8(self.fragmented_data.to_vec()).is_err() {
-                            let reason = ProtocolError::InvalidUtf8;
-                            // self.close(1007, reason.to_string()).await?;
-                            return Err(IOError::new(InvalidData, reason));
-                        }
-                        let completed_frame = Frame::new_with_payload(
-                            self.fragmented_type.clone(),
-                            &self.fragmented_data,
-                        );
-                        return Ok(Some(completed_frame));
-                    } else {
-                        Ok(None)
-                    }
-                }
-                OpCode::Text | OpCode::Binary => {
-                    if self.fragmented {
-                        let reason = ProtocolError::NotContinueFrameAfterFragmented;
-                        // self.close(1002, reason.to_string()).await?;
-                        return Err(IOError::new(InvalidData, reason));
-                    }
-                    if !frame.fin() {
-                        self.fragmented = true;
-                        self.fragmented_type = opcode.clone();
-                        let payload = frame.payload_data_unmask();
-                        self.fragmented_data.extend_from_slice(&payload);
-                        Ok(None)
-                    } else {
-                        if opcode == OpCode::Text
-                            && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
-                        {
-                            let reason = ProtocolError::InvalidUtf8;
-                            // self.close(1007, reason.to_string()).await?;
-                            return Err(IOError::new(InvalidData, reason));
-                        }
-                        return Ok(Some(frame));
-                    }
-                }
-                OpCode::Close | OpCode::Ping | OpCode::Pong => {
-                    if !frame.fin() {
-                        let reason = ProtocolError::FragmentedControlFrame;
-                        // self.close(1002, reason.to_string()).await?;
-                        return Err(IOError::new(InvalidData, reason));
-                    }
-                    let payload_len = frame.payload_len();
-                    if payload_len > 125 {
-                        let reason = ProtocolError::ControlFrameTooBig(payload_len as usize);
-                        // self.close(1002, reason.to_string()).await?;
-                        return Err(IOError::new(InvalidData, reason));
-                    }
-                    if opcode == OpCode::Close {
-                        if payload_len == 1 {
-                            let reason = ProtocolError::InvalidCloseFramePayload;
-                            // self.close(1002, reason.to_string()).await?;
-                            return Err(IOError::new(InvalidData, reason));
-                        }
-                        if payload_len >= 2 {
-                            let payload = frame.payload_data_unmask();
-                            log::debug!("{:?}", payload);
-
-                            // check close code
-                            let mut code_byte = [0u8; 2];
-                            code_byte.copy_from_slice(&payload[..2]);
-                            let code = u16::from_be_bytes(code_byte);
-                            if code < 1000
-                                || (1004..=1006).contains(&code)
-                                || (1015..=2999).contains(&code)
-                                || code >= 5000
-                            {
-                                let reason = ProtocolError::InvalidCloseCode(code);
-                                // self.close(1002, reason.to_string()).await?;
-                                return Err(IOError::new(InvalidData, reason));
-                            }
-
-                            // utf-8 validation
-                            if String::from_utf8(payload[2..].to_vec()).is_err() {
-                                let reason = ProtocolError::InvalidUtf8;
-                                // self.close(1007, reason.to_string()).await?;
-                                return Err(IOError::new(InvalidData, reason));
-                            }
-                        }
-                    }
-                    if opcode == OpCode::Close || !self.fragmented {
-                        return Ok(Some(frame));
-                    } else {
-                        log::debug!("{:?} frame between self.fragmented data", opcode);
-                        // let echo =
-                        //     Frame::new_with_payload(OpCode::Pong, &frame.payload_data_unmask());
-                        // self.write_frame(echo).await?;
-                        return Ok(Some(frame));
-                    }
-                }
-                OpCode::ReservedNonControl | OpCode::ReservedControl => {
-                    // self.close(1002, format!("can not handle {:?} frame", opcode))
-                    //     .await?;
-                    return Err(IOError::new(
-                        InvalidData,
-                        format!("unsupported frame {:?}", opcode),
-                    ));
-                }
-            }
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FrameCodec {
-    pub encoder: FrameEncoder,
-    pub decoder: FrameDecoder,
-}
-
-impl Default for FrameCodec {
-    fn default() -> Self {
-        Self {
-            encoder: Default::default(),
-            decoder: Default::default(),
-        }
-    }
-}
-
-impl Encoder<Frame> for FrameCodec {
-    type Error = IOError;
-
-    fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        self.encoder.encode(item, dst)
-    }
-}
-
-impl Decoder for FrameCodec {
-    type Item = Frame;
-
-    type Error = IOError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        self.decoder.decode(src)
     }
 }

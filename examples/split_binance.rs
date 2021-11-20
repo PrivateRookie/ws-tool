@@ -7,7 +7,8 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use ws_tool::{
-    frame::{Frame, FrameDecoder, FrameEncoder},
+    codec::{FrameDecoder, FrameEncoder},
+    frame::Frame,
     stream::WsStream,
     ConnBuilder,
 };

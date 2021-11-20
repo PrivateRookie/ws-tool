@@ -247,9 +247,7 @@ pub async fn perform_handshake(
             .await
             .map_err(|e| WsError::IOError(e.to_string()))?;
         read_bytes.extend_from_slice(&buf[..num]);
-        let header_complete = read_bytes
-            .windows(4)
-            .any(|slice| slice == [b'\r', b'\n', b'\r', b'\n']);
+        let header_complete = read_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']);
         if header_complete || num == 0 {
             break;
         }

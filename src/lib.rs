@@ -3,8 +3,9 @@ use std::fmt::Debug;
 use std::io::Result as IOResult;
 use std::path::PathBuf;
 
+use crate::codec::{FrameCodec, FrameDecoder, FrameEncoder};
+use crate::frame::{Frame, OpCode};
 use bytes::BytesMut;
-use frame::{Frame, FrameCodec, FrameDecoder, FrameEncoder, OpCode};
 use futures::SinkExt;
 use futures::StreamExt;
 use protocol::handle_handshake;
@@ -25,6 +26,9 @@ pub mod protocol;
 pub mod proxy;
 /// stream definition
 pub mod stream;
+
+/// frame codec impl
+pub mod codec;
 
 use errors::WsError;
 use tokio_util::codec::{Framed, FramedRead, FramedWrite};
@@ -195,8 +199,6 @@ impl Connection {
         self.state = ConnectionState::HandShaking;
         let protocols = self.protocols.join(" ");
         let extensions = self.extensions.join(" ");
-        let stream = self.framed.get_mut();
-        stream.set_nodelay();
         let resp = perform_handshake(
             self.framed.get_mut(),
             &self.mode,
