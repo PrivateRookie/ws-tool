@@ -136,7 +136,7 @@ impl ConnBuilder {
             Err(WsError::InvalidUri("missing ws or wss schema".to_string()))
         }?;
         if mode == Mode::WS && !certs.is_empty() {
-            log::warn!("setting tls cert has no effect on insecure ws")
+            tracing::warn!("setting tls cert has no effect on insecure ws")
         }
         let ws_proxy: Option<proxy::Proxy> = match proxy_uri {
             Some(uri) => Some(uri.parse()?),
@@ -160,7 +160,7 @@ impl ConnBuilder {
                 ))
             })?,
         };
-        log::debug!("tcp connection established");
+        tracing::debug!("tcp connection established");
         let stream = match mode {
             Mode::WS => WsStream::Plain(stream),
             Mode::WSS => {

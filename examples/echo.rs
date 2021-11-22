@@ -1,6 +1,7 @@
 use std::{io::Write, path::PathBuf};
 
 use structopt::StructOpt;
+use tracing::Level;
 use ws_tool::{
     frame::{Frame, OpCode},
     ConnBuilder,
@@ -21,7 +22,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
-    pretty_env_logger::init();
+    tracing_subscriber::fmt::fmt()
+        .with_max_level(Level::INFO)
+        .finish();
     let args = Args::from_args();
     let mut builder = ConnBuilder::new(&args.uri);
     if let Some(cert) = args.cert {

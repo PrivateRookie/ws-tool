@@ -1,4 +1,4 @@
-use log::*;
+use tracing::*;
 use std::io::Result as IOResult;
 use ws_tool::{
     frame::{Frame, OpCode},
@@ -79,7 +79,6 @@ async fn update_report() -> IOResult<()> {
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
-    pretty_env_logger::init();
     let count = get_case_count().await.unwrap();
     info!("total case {}", count);
     for case in 1..=count {

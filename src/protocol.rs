@@ -154,7 +154,7 @@ pub(crate) async fn wrap_tls(
         .connect(domain, stream)
         .await
         .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
-    log::debug!("tls connection established");
+    tracing::debug!("tls connection established");
     Ok(tls_stream)
 }
 
@@ -285,7 +285,7 @@ pub async fn perform_handshake(
             String::from_utf8_lossy(header.value).to_string(),
         );
     });
-    log::debug!("protocol handshake complete");
+    tracing::debug!("protocol handshake complete");
     Ok(handshake_resp)
 }
 

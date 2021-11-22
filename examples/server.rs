@@ -1,4 +1,5 @@
 use structopt::StructOpt;
+use tracing::Level;
 use ws_tool::{frame::OpCode, Server};
 
 /// websocket client connect to binance futures websocket
@@ -14,20 +15,22 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
-    pretty_env_logger::init();
+    tracing_subscriber::fmt::fmt()
+        .with_max_level(Level::INFO)
+        .finish();
     let args = Args::from_args();
-    log::info!("binding on {}:{}", args.host, args.port);
+    tracing::info!("binding on {}:{}", args.host, args.port);
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", args.host, args.port))
         .await
         .unwrap();
     for (stream, addr) in listener.accept().await {
-        log::info!("got connect from {:?}", addr);
+        tracing::info!("got connect from {:?}", addr);
         let mut server = Server::from_stream(stream);
         server.handle_handshake().await.unwrap();
         while let Some(x) = server.read().await {
             let frame = x.unwrap();
             if frame.opcode() == OpCode::Close {
-                log::info!("client close");
+                tracing::info!("client close");
                 break;
             }
             let payload = frame.payload_data_unmask();

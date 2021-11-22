@@ -153,7 +153,7 @@ impl Decoder for FrameDecoder {
                         }
                         if payload_len >= 2 {
                             let payload = frame.payload_data_unmask();
-                            log::debug!("{:?}", payload);
+                            tracing::debug!("{:?}", payload);
 
                             // check close code
                             let mut code_byte = [0u8; 2];
@@ -180,7 +180,7 @@ impl Decoder for FrameDecoder {
                     if opcode == OpCode::Close || !self.fragmented {
                         return Ok(Some(frame));
                     } else {
-                        log::debug!("{:?} frame between self.fragmented data", opcode);
+                        tracing::debug!("{:?} frame between self.fragmented data", opcode);
                         // let echo =
                         //     Frame::new_with_payload(OpCode::Pong, &frame.payload_data_unmask());
                         // self.write_frame(echo).await?;

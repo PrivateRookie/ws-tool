@@ -1,4 +1,5 @@
 use structopt::StructOpt;
+use tracing::Level;
 use ws_tool::ConnBuilder;
 
 /// websocket client connect to binance futures websocket
@@ -14,7 +15,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
-    pretty_env_logger::init();
+    tracing_subscriber::fmt::fmt()
+        .with_max_level(Level::INFO)
+        .finish();
     let args = Args::from_args();
     let channels = args.channels.join("/");
     let mut builder = ConnBuilder::new(&format!(

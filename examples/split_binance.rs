@@ -6,6 +6,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::{FramedRead, FramedWrite};
+use tracing::Level;
 use ws_tool::{
     codec::{FrameDecoder, FrameEncoder},
     frame::Frame,
@@ -26,7 +27,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
-    pretty_env_logger::init();
+    tracing_subscriber::fmt::fmt()
+        .with_max_level(Level::INFO)
+        .finish();
     let args = Args::from_args();
     let channels = args.channels.join("/");
     let mut builder = ConnBuilder::new(&format!(
