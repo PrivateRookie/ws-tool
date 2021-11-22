@@ -235,17 +235,11 @@ pub async fn perform_handshake(
         version = http::Version::HTTP_11,
         headers = headers
     );
-    stream
-        .write_all(req_str.as_bytes())
-        .await
-        .map_err(|e| WsError::IOError(e.to_string()))?;
+    stream.write_all(req_str.as_bytes()).await?;
     let mut read_bytes = BytesMut::with_capacity(1024);
     let mut buf: [u8; 1] = [0; 1];
     loop {
-        let num = stream
-            .read(&mut buf)
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
+        let num = stream.read(&mut buf).await?;
         read_bytes.extend_from_slice(&buf[..num]);
         let header_complete = read_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']);
         if header_complete || num == 0 {
@@ -293,10 +287,7 @@ pub async fn handle_handshake(stream: &mut WsStream) -> Result<(), WsError> {
     let mut req_bytes = BytesMut::with_capacity(1024);
     let mut buf = [0u8];
     loop {
-        stream
-            .read_exact(&mut buf)
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
+        stream.read_exact(&mut buf).await?;
         req_bytes.put_u8(buf[0]);
         if req_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']) {
             break;
@@ -323,16 +314,10 @@ pub async fn handle_handshake(stream: &mut WsStream) -> Result<(), WsError> {
     }
     if !contain_upgrade {
         let resp = "HTTP/1.1 400 Bad Request\r\n\r\nmissing upgrade header or invalid header value";
-        stream
-            .write_all(resp.as_bytes())
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
+        stream.write_all(resp.as_bytes()).await?;
     } else if key.is_empty() {
         let resp = "HTTP/1.1  400 Bad Request\r\n\r\nmissing sec-websocket-key or key is empty";
-        stream
-            .write_all(resp.as_bytes())
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?;
+        stream.write_all(resp.as_bytes()).await?;
     } else {
         let resp_lines = vec![
             "HTTP/1.1 101 Switching Protocols".to_string(),
@@ -341,10 +326,7 @@ pub async fn handle_handshake(stream: &mut WsStream) -> Result<(), WsError> {
             format!("Sec-WebSocket-Accept: {}", accept_key),
             "\r\n".to_string(),
         ];
-        stream
-            .write_all(resp_lines.join("\r\n").as_bytes())
-            .await
-            .map_err(|e| WsError::IOError(e.to_string()))?
+        stream.write_all(resp_lines.join("\r\n").as_bytes()).await?
     }
     Ok(())
 }

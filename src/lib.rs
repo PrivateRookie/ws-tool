@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::fmt::Debug;
-use std::io::Result as IOResult;
 use std::path::PathBuf;
 
 use crate::codec::{FrameCodec, FrameDecoder, FrameEncoder};
@@ -212,31 +211,28 @@ impl Connection {
         Ok(resp)
     }
 
-    pub async fn write(&mut self, item: Frame) -> IOResult<()> {
+    pub async fn write(&mut self, item: Frame) -> Result<(), WsError> {
         if self.state != ConnectionState::Running {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "connection closed",
-            ));
+            return Err(WsError::InvalidConnState(self.state.clone()));
         }
         self.framed.send(item).await
     }
 
-    pub async fn read(&mut self) -> Option<IOResult<Frame>> {
+    pub async fn read(&mut self) -> Option<Result<Frame, WsError>> {
         match self.framed.next().await {
             Some(maybe_frame) => {
                 let msg = match maybe_frame {
                     Ok(frame) => Ok(frame),
                     Err(err) => {
-                        let ret = match self.close(1002, err.to_string()).await {
-                            Ok(_) => Err(err),
-                            Err(_) => Err(std::io::Error::new(
-                                std::io::ErrorKind::ConnectionAborted,
-                                "send close failed",
-                            )),
+                        let (code, reason) = match &err {
+                            WsError::ProtocolError { close_code, error } => {
+                                (close_code, error.to_string())
+                            }
+                            _ => (&1002, err.to_string()),
                         };
+                        let _ = self.close(*code, reason).await;
                         self.state = ConnectionState::Closed;
-                        ret
+                        Err(err)
                     }
                 };
                 Some(msg)
@@ -245,7 +241,7 @@ impl Connection {
         }
     }
 
-    pub async fn close(&mut self, code: u16, reason: String) -> IOResult<()> {
+    pub async fn close(&mut self, code: u16, reason: String) -> Result<(), WsError> {
         self.state = ConnectionState::Closing;
         let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
         payload.extend_from_slice(&code.to_be_bytes());
@@ -297,21 +293,21 @@ impl Server {
         Ok(())
     }
 
-    pub async fn read(&mut self) -> Option<IOResult<Frame>> {
+    pub async fn read(&mut self) -> Option<Result<Frame, WsError>> {
         match self.framed.next().await {
             Some(maybe_frame) => {
                 let msg = match maybe_frame {
                     Ok(frame) => Ok(frame),
                     Err(err) => {
-                        let ret = match self.close(1002, err.to_string()).await {
-                            Ok(_) => Err(err),
-                            Err(_) => Err(std::io::Error::new(
-                                std::io::ErrorKind::ConnectionAborted,
-                                "send close failed",
-                            )),
+                        let (code, reason) = match &err {
+                            WsError::ProtocolError { close_code, error } => {
+                                (close_code, error.to_string())
+                            }
+                            _ => (&1002, err.to_string()),
                         };
+                        let _ = self.close(*code, reason).await;
                         self.state = ConnectionState::Closed;
-                        ret
+                        Err(err)
                     }
                 };
                 Some(msg)
@@ -320,17 +316,14 @@ impl Server {
         }
     }
 
-    pub async fn write(&mut self, item: Frame) -> IOResult<()> {
+    pub async fn write(&mut self, item: Frame) -> Result<(), WsError> {
         if self.state != ConnectionState::Running {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "connection closed",
-            ));
+            return Err(WsError::InvalidConnState(self.state.clone()));
         }
         self.framed.send(item).await
     }
 
-    pub async fn close(&mut self, code: u16, reason: String) -> IOResult<()> {
+    pub async fn close(&mut self, code: u16, reason: String) -> Result<(), WsError> {
         self.state = ConnectionState::Closing;
         let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
         payload.extend_from_slice(&code.to_be_bytes());

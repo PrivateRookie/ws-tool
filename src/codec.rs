@@ -1,4 +1,4 @@
-use crate::errors::ProtocolError;
+use crate::errors::{ProtocolError, WsError};
 use crate::frame::{get_bit, parse_opcode, parse_payload_len, Frame, OpCode};
 use bytes::{Buf, BytesMut};
 use std::io::{Error as IOError, ErrorKind::InvalidData};
@@ -16,7 +16,7 @@ impl Default for FrameEncoder {
 }
 
 impl Encoder<Frame> for FrameEncoder {
-    type Error = IOError;
+    type Error = WsError;
 
     fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
         dst.extend_from_slice(&item.0);
@@ -80,7 +80,7 @@ impl FrameDecoder {
 
 impl Decoder for FrameDecoder {
     type Item = Frame;
-    type Error = IOError;
+    type Error = WsError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let maybe_frame = self.decode_single(src)?;
@@ -89,17 +89,19 @@ impl Decoder for FrameDecoder {
             match opcode {
                 OpCode::Continue => {
                     if !self.fragmented {
-                        let reason = ProtocolError::MissInitialFragmentedFrame;
-                        // self.close(1002, reason.to_string()).await?;
-                        return Err(IOError::new(InvalidData, reason));
+                        return Err(WsError::ProtocolError {
+                            close_code: 1002,
+                            error: ProtocolError::MissInitialFragmentedFrame,
+                        });
                     }
                     self.fragmented_data
                         .extend_from_slice(&frame.payload_data_unmask());
                     if frame.fin() {
                         if String::from_utf8(self.fragmented_data.to_vec()).is_err() {
-                            let reason = ProtocolError::InvalidUtf8;
-                            // self.close(1007, reason.to_string()).await?;
-                            return Err(IOError::new(InvalidData, reason));
+                            return Err(WsError::ProtocolError {
+                                close_code: 1007,
+                                error: ProtocolError::InvalidUtf8,
+                            });
                         }
                         let completed_frame = Frame::new_with_payload(
                             self.fragmented_type.clone(),
@@ -112,9 +114,10 @@ impl Decoder for FrameDecoder {
                 }
                 OpCode::Text | OpCode::Binary => {
                     if self.fragmented {
-                        let reason = ProtocolError::NotContinueFrameAfterFragmented;
-                        // self.close(1002, reason.to_string()).await?;
-                        return Err(IOError::new(InvalidData, reason));
+                        return Err(WsError::ProtocolError {
+                            close_code: 1002,
+                            error: ProtocolError::NotContinueFrameAfterFragmented,
+                        });
                     }
                     if !frame.fin() {
                         self.fragmented = true;
@@ -126,30 +129,36 @@ impl Decoder for FrameDecoder {
                         if opcode == OpCode::Text
                             && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
                         {
-                            let reason = ProtocolError::InvalidUtf8;
-                            // self.close(1007, reason.to_string()).await?;
-                            return Err(IOError::new(InvalidData, reason));
+                            return Err(WsError::ProtocolError {
+                                close_code: 1007,
+                                error: ProtocolError::InvalidUtf8,
+                            });
                         }
                         return Ok(Some(frame));
                     }
                 }
                 OpCode::Close | OpCode::Ping | OpCode::Pong => {
                     if !frame.fin() {
-                        let reason = ProtocolError::FragmentedControlFrame;
-                        // self.close(1002, reason.to_string()).await?;
-                        return Err(IOError::new(InvalidData, reason));
+                        return Err(WsError::ProtocolError {
+                            close_code: 1002,
+                            error: ProtocolError::FragmentedControlFrame,
+                        });
                     }
                     let payload_len = frame.payload_len();
                     if payload_len > 125 {
-                        let reason = ProtocolError::ControlFrameTooBig(payload_len as usize);
-                        // self.close(1002, reason.to_string()).await?;
-                        return Err(IOError::new(InvalidData, reason));
+                        let error = ProtocolError::ControlFrameTooBig(payload_len as usize);
+                        return Err(WsError::ProtocolError {
+                            close_code: 1002,
+                            error,
+                        });
                     }
                     if opcode == OpCode::Close {
                         if payload_len == 1 {
-                            let reason = ProtocolError::InvalidCloseFramePayload;
-                            // self.close(1002, reason.to_string()).await?;
-                            return Err(IOError::new(InvalidData, reason));
+                            let error = ProtocolError::InvalidCloseFramePayload;
+                            return Err(WsError::ProtocolError {
+                                close_code: 1002,
+                                error,
+                            });
                         }
                         if payload_len >= 2 {
                             let payload = frame.payload_data_unmask();
@@ -164,16 +173,20 @@ impl Decoder for FrameDecoder {
                                 || (1015..=2999).contains(&code)
                                 || code >= 5000
                             {
-                                let reason = ProtocolError::InvalidCloseCode(code);
-                                // self.close(1002, reason.to_string()).await?;
-                                return Err(IOError::new(InvalidData, reason));
+                                let error = ProtocolError::InvalidCloseCode(code);
+                                return Err(WsError::ProtocolError {
+                                    close_code: 1002,
+                                    error,
+                                });
                             }
 
                             // utf-8 validation
                             if String::from_utf8(payload[2..].to_vec()).is_err() {
-                                let reason = ProtocolError::InvalidUtf8;
-                                // self.close(1007, reason.to_string()).await?;
-                                return Err(IOError::new(InvalidData, reason));
+                                let error = ProtocolError::InvalidUtf8;
+                                return Err(WsError::ProtocolError {
+                                    close_code: 1007,
+                                    error,
+                                });
                             }
                         }
                     }
@@ -181,19 +194,11 @@ impl Decoder for FrameDecoder {
                         return Ok(Some(frame));
                     } else {
                         tracing::debug!("{:?} frame between self.fragmented data", opcode);
-                        // let echo =
-                        //     Frame::new_with_payload(OpCode::Pong, &frame.payload_data_unmask());
-                        // self.write_frame(echo).await?;
                         return Ok(Some(frame));
                     }
                 }
                 OpCode::ReservedNonControl | OpCode::ReservedControl => {
-                    // self.close(1002, format!("can not handle {:?} frame", opcode))
-                    //     .await?;
-                    return Err(IOError::new(
-                        InvalidData,
-                        format!("unsupported frame {:?}", opcode),
-                    ));
+                    return Err(WsError::UnsupportedFrame(opcode));
                 }
             }
         } else {
@@ -218,7 +223,7 @@ impl Default for FrameCodec {
 }
 
 impl Encoder<Frame> for FrameCodec {
-    type Error = IOError;
+    type Error = WsError;
 
     fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
         self.encoder.encode(item, dst)
@@ -228,7 +233,7 @@ impl Encoder<Frame> for FrameCodec {
 impl Decoder for FrameCodec {
     type Item = Frame;
 
-    type Error = IOError;
+    type Error = WsError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         self.decoder.decode(src)

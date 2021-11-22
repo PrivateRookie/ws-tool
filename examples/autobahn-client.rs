@@ -1,13 +1,13 @@
 use tracing::*;
-use std::io::Result as IOResult;
 use ws_tool::{
+    errors::WsError,
     frame::{Frame, OpCode},
     ConnBuilder,
 };
 
 const AGENT: &str = "ws-tool-client";
 
-async fn get_case_count() -> IOResult<usize> {
+async fn get_case_count() -> Result<usize, WsError> {
     let mut client = ConnBuilder::new("ws://localhost:9002/getCaseCount")
         .build()
         .await
@@ -24,7 +24,7 @@ async fn get_case_count() -> IOResult<usize> {
     Ok(count)
 }
 
-async fn run_test(case: usize) -> IOResult<()> {
+async fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
     let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
     let mut client = ConnBuilder::new(&url).build().await.unwrap();
@@ -65,7 +65,7 @@ async fn run_test(case: usize) -> IOResult<()> {
     Ok(())
 }
 
-async fn update_report() -> IOResult<()> {
+async fn update_report() -> Result<(), WsError> {
     let mut client = ConnBuilder::new(&format!(
         "ws://localhost:9002/updateReports?agent={}",
         AGENT

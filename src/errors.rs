@@ -19,18 +19,27 @@ pub enum WsError {
     ConnectionFailed(String),
     #[error("tls dns lookup failed `{0}`")]
     TlsDnsFailed(String),
-    #[error("io error {0}")]
-    IOError(String),
+    #[error("io error {0:?}")]
+    IOError(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     HandShakeFailed(String),
-    #[error("{0:?}")]
-    ProtocolError(ProtocolError),
+    #[error("{error:?}")]
+    ProtocolError {
+        close_code: u16,
+        error: ProtocolError,
+    },
     #[error("proxy error `{0}`")]
     ProxyError(String),
     #[error("io on invalid connection state {0:?}")]
     InvalidConnState(ConnectionState),
     #[error("unsupported frame {0:?}")]
     UnsupportedFrame(OpCode),
+}
+
+impl From<std::io::Error> for WsError {
+    fn from(e: std::io::Error) -> Self {
+        WsError::IOError(Box::new(e))
+    }
 }
 
 /// errors during decode frame from bytes
