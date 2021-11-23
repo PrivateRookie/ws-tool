@@ -158,14 +158,14 @@ pub(crate) async fn wrap_tls(
     Ok(tls_stream)
 }
 
-fn gen_key() -> String {
+pub fn gen_key() -> String {
     let r: [u8; 16] = rand::random();
     base64::encode(&r)
 }
 
-fn cal_accept_key(source: &str) -> String {
+pub fn cal_accept_key(source: &[u8]) -> String {
     let mut sha1 = sha1::Sha1::default();
-    sha1.update(source.as_bytes());
+    sha1.update(source);
     sha1.update(GUID);
     base64::encode(&sha1.finalize())
 }
@@ -189,7 +189,7 @@ pub async fn perform_handshake(
     version: u8,
 ) -> Result<HandshakeResponse, WsError> {
     let key = gen_key();
-    let accept_key = cal_accept_key(&key);
+    let accept_key = cal_accept_key(&key.as_bytes());
 
     let mut req_builder = http::Request::builder()
         .uri(uri)
@@ -283,7 +283,7 @@ pub async fn perform_handshake(
     Ok(handshake_resp)
 }
 
-pub async fn handle_handshake(stream: &mut WsStream) -> Result<(), WsError> {
+pub async fn handle_handshake(stream: &mut WsStream) -> Result<http::Request<()>, WsError> {
     let mut req_bytes = BytesMut::with_capacity(1024);
     let mut buf = [0u8];
     loop {
@@ -298,35 +298,48 @@ pub async fn handle_handshake(stream: &mut WsStream) -> Result<(), WsError> {
     let _parse_status = req
         .parse(&req_bytes)
         .map_err(|_| WsError::HandShakeFailed("invalid request".to_string()))?;
-    let mut key = String::new();
-    let mut accept_key = String::new();
-    let mut contain_upgrade = false;
+    let mut req_builder = http::Request::builder()
+        .method(req.method.unwrap_or_default())
+        .uri(req.path.unwrap_or_default())
+        .version(match req.version.unwrap_or_else(|| 1) {
+            0 => http::Version::HTTP_10,
+            1 => http::Version::HTTP_11,
+            v => {
+                tracing::warn!("unknown http 1.{} version", v);
+                http::Version::HTTP_11
+            }
+        });
     for header in req.headers.iter() {
-        if header.name.to_lowercase() == "upgrade" {
-            contain_upgrade = String::from_utf8(header.value.to_vec())
-                .map(|s| s.to_lowercase() == "websocket")
-                .unwrap_or_default();
-        }
-        if header.name.to_lowercase() == "sec-websocket-key" {
-            key = String::from_utf8(header.value.to_vec()).unwrap_or_default();
-            accept_key = cal_accept_key(&key);
-        }
+        req_builder = req_builder.header(header.name, header.value);
     }
-    if !contain_upgrade {
-        let resp = "HTTP/1.1 400 Bad Request\r\n\r\nmissing upgrade header or invalid header value";
-        stream.write_all(resp.as_bytes()).await?;
-    } else if key.is_empty() {
-        let resp = "HTTP/1.1  400 Bad Request\r\n\r\nmissing sec-websocket-key or key is empty";
-        stream.write_all(resp.as_bytes()).await?;
+    Ok(req_builder.body(()).unwrap())
+}
+
+/// perform rfc standard check
+pub fn standard_handshake_req_check(req: &http::Request<()>) -> Result<(), WsError> {
+    if let Some(val) = req.headers().get("upgrade") {
+        if val != "websocket" {
+            return Err(WsError::HandShakeFailed(format!(
+                "expect `websocket`, got {:?}",
+                val
+            )));
+        }
     } else {
-        let resp_lines = vec![
-            "HTTP/1.1 101 Switching Protocols".to_string(),
-            "upgrade: websocket".to_string(),
-            "connection: upgrade".to_string(),
-            format!("Sec-WebSocket-Accept: {}", accept_key),
-            "\r\n".to_string(),
-        ];
-        stream.write_all(resp_lines.join("\r\n").as_bytes()).await?
+        return Err(WsError::HandShakeFailed(
+            "missing `upgrade` header".to_string(),
+        ));
+    }
+
+    if let Some(val) = req.headers().get("sec-websocket-key") {
+        if val.is_empty() {
+            return Err(WsError::HandShakeFailed(
+                "empty sec-websocket-key".to_string(),
+            ));
+        }
+    } else {
+        return Err(WsError::HandShakeFailed(
+            "missing `sec-websocket-key` header".to_string(),
+        ));
     }
     Ok(())
 }

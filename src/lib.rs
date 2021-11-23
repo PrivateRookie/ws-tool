@@ -7,10 +7,10 @@ use crate::frame::{Frame, OpCode};
 use bytes::BytesMut;
 use futures::SinkExt;
 use futures::StreamExt;
-use protocol::handle_handshake;
 use protocol::perform_handshake;
+use protocol::{handle_handshake, standard_handshake_req_check};
 use stream::WsStream;
-use tokio::io::{ReadHalf, WriteHalf};
+use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 
 /// client config
@@ -32,8 +32,8 @@ pub mod codec;
 use errors::WsError;
 use tokio_util::codec::{Framed, FramedRead, FramedWrite};
 
-use crate::protocol::wrap_tls;
 use crate::protocol::Mode;
+use crate::protocol::{cal_accept_key, wrap_tls};
 
 /// websocket connection state
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -288,7 +288,22 @@ impl Server {
 
     pub async fn handle_handshake(&mut self) -> Result<(), WsError> {
         let stream = self.framed.get_mut();
-        handle_handshake(stream).await?;
+        let req = handle_handshake(stream).await?;
+        if let Err(e) = standard_handshake_req_check(&req) {
+            let resp = format!("HTTP/1.1 400 Bad Request\r\n\r\n{}", e.to_string());
+            stream.write_all(resp.as_bytes()).await?;
+            return Err(e);
+        } else {
+            let key = req.headers().get("sec-websocket-key").unwrap();
+            let resp_lines = vec![
+                "HTTP/1.1 101 Switching Protocols".to_string(),
+                "upgrade: websocket".to_string(),
+                "connection: upgrade".to_string(),
+                format!("Sec-WebSocket-Accept: {}", cal_accept_key(key.as_bytes())),
+                "\r\n".to_string(),
+            ];
+            stream.write_all(resp_lines.join("\r\n").as_bytes()).await?
+        };
         self.state = ConnectionState::Running;
         Ok(())
     }
