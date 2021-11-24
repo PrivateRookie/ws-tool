@@ -7,8 +7,8 @@ use crate::frame::{Frame, OpCode};
 use bytes::BytesMut;
 use futures::SinkExt;
 use futures::StreamExt;
-use protocol::perform_handshake;
 use protocol::{handle_handshake, standard_handshake_req_check};
+use protocol::{perform_handshake, standard_handshake_resp_check};
 use stream::WsStream;
 use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -194,19 +194,21 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub async fn handshake(&mut self) -> Result<protocol::HandshakeResponse, WsError> {
+    pub async fn handshake(&mut self) -> Result<http::Response<()>, WsError> {
         self.state = ConnectionState::HandShaking;
         let protocols = self.protocols.join(" ");
         let extensions = self.extensions.join(" ");
-        let resp = perform_handshake(
+        let (key, resp) = perform_handshake(
             self.framed.get_mut(),
             &self.mode,
             &self.uri,
             protocols,
             extensions,
             13,
+            Default::default(),
         )
         .await?;
+        standard_handshake_resp_check(key.as_bytes(), &resp)?;
         self.state = ConnectionState::Running;
         Ok(resp)
     }

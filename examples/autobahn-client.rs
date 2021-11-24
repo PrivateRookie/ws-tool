@@ -52,9 +52,14 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                         unreachable!()
                     }
                 },
-                Err(e) => {
-                    client.close(1000, e.to_string()).await?;
-                }
+                Err(e) => match e {
+                    WsError::ProtocolError { close_code, error } => {
+                        client.close(close_code, error.to_string()).await?;
+                    }
+                    _ => {
+                        client.close(1000, e.to_string()).await?;
+                    }
+                },
             }
         } else {
             client.close(1000, "".to_string()).await?;

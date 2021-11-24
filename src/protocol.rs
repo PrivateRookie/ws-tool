@@ -158,11 +158,13 @@ pub(crate) async fn wrap_tls(
     Ok(tls_stream)
 }
 
+/// generate random key
 pub fn gen_key() -> String {
     let r: [u8; 16] = rand::random();
     base64::encode(&r)
 }
 
+/// cal accept key
 pub fn cal_accept_key(source: &[u8]) -> String {
     let mut sha1 = sha1::Sha1::default();
     sha1.update(source);
@@ -187,53 +189,34 @@ pub async fn perform_handshake(
     protocols: String,
     extensions: String,
     version: u8,
-) -> Result<HandshakeResponse, WsError> {
+    extra_headers: HashMap<String, String>,
+) -> Result<(String, http::Response<()>), WsError> {
     let key = gen_key();
-    let accept_key = cal_accept_key(&key.as_bytes());
-
-    let mut req_builder = http::Request::builder()
-        .uri(uri)
-        .header(
-            "Host",
-            format!(
-                "{}:{}",
-                uri.host().unwrap_or_default(),
-                uri.port_u16().unwrap_or_else(|| mode.default_port())
-            ),
-        )
-        .header("Upgrade", "websocket")
-        .header("Connection", "Upgrade")
-        .header("Sec-Websocket-Key", &key)
-        .header("Sec-WebSocket-Version", version.to_string());
-
-    req_builder = if protocols.is_empty() {
-        req_builder
-    } else {
-        req_builder.header("Sec-WebSocket-Protocol", protocols)
-    };
-
-    req_builder = if extensions.is_empty() {
-        req_builder
-    } else {
-        req_builder.header("Sec-WebSocket-Extensions", extensions)
-    };
-    let req = req_builder.body(()).unwrap();
-    let headers = req
-        .headers()
-        .iter()
-        .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or_default()))
-        .collect::<Vec<String>>()
-        .join("\r\n");
-    let method = http::Method::GET;
+    let mut headers = vec![
+        format!(
+            "Host: {}:{}",
+            uri.host().unwrap_or_default(),
+            uri.port_u16().unwrap_or_else(|| mode.default_port())
+        ),
+        "Upgrade: websocket".to_string(),
+        "Connection: Upgrade".to_string(),
+        format!("Sec-Websocket-Key: {}", key),
+        format!("Sec-WebSocket-Version: {}", version.to_string()),
+        format!("Sec-WebSocket-Protocol: {}", protocols),
+        format!("Sec-WebSocket-Extensions: {}", extensions),
+    ];
+    for (k, v) in extra_headers.iter() {
+        headers.push(format!("{}: {}", k, v));
+    }
     let req_str = format!(
         "{method} {path} {version:?}\r\n{headers}\r\n\r\n",
-        method = method,
+        method = http::Method::GET,
         path = uri
             .path_and_query()
             .map(|full_path| full_path.to_string())
             .unwrap_or_default(),
         version = http::Version::HTTP_11,
-        headers = headers
+        headers = headers.join("\r\n")
     );
     stream.write_all(req_str.as_bytes()).await?;
     let mut read_bytes = BytesMut::with_capacity(1024);
@@ -251,36 +234,42 @@ pub async fn perform_handshake(
     let _parse_status = resp
         .parse(&read_bytes)
         .map_err(|_| WsError::HandShakeFailed("invalid response".to_string()))?;
-    if resp.code.unwrap_or_default() != 101 {
+    let mut resp_builder = http::Response::builder()
+        .status(resp.code.unwrap_or_default())
+        .version(match resp.version.unwrap_or_else(|| 1) {
+            0 => http::Version::HTTP_10,
+            1 => http::Version::HTTP_11,
+            v => {
+                tracing::warn!("unknown http 1.{} version", v);
+                http::Version::HTTP_11
+            }
+        });
+    for header in resp.headers.iter() {
+        resp_builder = resp_builder.header(header.name, header.value);
+    }
+
+    tracing::debug!("protocol handshake complete");
+    Ok((key, resp_builder.body(()).unwrap()))
+}
+
+pub fn standard_handshake_resp_check(key: &[u8], resp: &http::Response<()>) -> Result<(), WsError> {
+    if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
         return Err(WsError::HandShakeFailed(format!(
-            "expect 101 response, got {:?} {:?}",
-            resp.code, resp.reason
+            "expect 101 response, got {}",
+            resp.status()
         )));
     }
-    for header in resp.headers.iter() {
-        if header.name.to_lowercase() == "sec-websocket-accept"
-            && header.value != accept_key.as_bytes()
-        {
-            return Err(WsError::HandShakeFailed(format!(
-                "mismatch key, expect {:?}, got {:?}",
-                accept_key.as_bytes(),
-                header.value
-            )));
+    let expect_key = cal_accept_key(key);
+    if let Some(accept_key) = resp.headers().get("sec-websocket-accept") {
+        if accept_key.to_str().unwrap_or_default() != expect_key {
+            return Err(WsError::HandShakeFailed("mismatch key".to_string()));
         }
+    } else {
+        return Err(WsError::HandShakeFailed(
+            "missing `sec-websocket-accept` header".to_string(),
+        ));
     }
-    let mut handshake_resp = HandshakeResponse {
-        code: 101,
-        reason: resp.reason.map(|r| r.to_string()).unwrap_or_default(),
-        headers: HashMap::new(),
-    };
-    resp.headers.iter().for_each(|header| {
-        handshake_resp.headers.insert(
-            header.name.to_string(),
-            String::from_utf8_lossy(header.value).to_string(),
-        );
-    });
-    tracing::debug!("protocol handshake complete");
-    Ok(handshake_resp)
+    Ok(())
 }
 
 pub async fn handle_handshake(stream: &mut WsStream) -> Result<http::Request<()>, WsError> {
