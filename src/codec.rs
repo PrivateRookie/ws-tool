@@ -1,3 +1,4 @@
+use crate::config::WebsocketConfig;
 use crate::errors::{ProtocolError, WsError};
 use crate::frame::{get_bit, parse_opcode, parse_payload_len, Frame, OpCode};
 use bytes::{Buf, BytesMut};
@@ -5,13 +6,23 @@ use std::io::{Error as IOError, ErrorKind::InvalidData};
 use std::{fmt::Debug, ops::Deref};
 use tokio_util::codec::{Decoder, Encoder};
 
+
+pub struct WebSocketFrameEncoder {
+    
+}
+
 /// default websocket frame encoder
 #[derive(Debug, Clone)]
-pub struct FrameEncoder {}
+pub struct FrameEncoder {
+    pub config: WebsocketConfig,
+}
+
 
 impl Default for FrameEncoder {
     fn default() -> Self {
-        Self {}
+        Self {
+            config: WebsocketConfig::default(),
+        }
     }
 }
 
@@ -162,7 +173,6 @@ impl Decoder for FrameDecoder {
                         }
                         if payload_len >= 2 {
                             let payload = frame.payload_data_unmask();
-                            tracing::debug!("{:?}", payload);
 
                             // check close code
                             let mut code_byte = [0u8; 2];

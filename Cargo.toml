@@ -32,6 +32,8 @@ tokio-socks = "0.5"
 async-http-proxy = { version = "1", features = ["runtime-tokio"] }
 tokio-stream = "0.1"
 futures = "0.3"
+serde = "1"
+
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

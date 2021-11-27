@@ -1,16 +1,21 @@
+use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::ops::Deref;
 use std::path::PathBuf;
+use std::pin::Pin;
 
 use crate::codec::{FrameCodec, FrameDecoder, FrameEncoder};
+use crate::errors::ProtocolError;
 use crate::frame::{Frame, OpCode};
-use bytes::BytesMut;
-use futures::SinkExt;
-use futures::StreamExt;
+use bytes::{Buf, Bytes, BytesMut};
+use frame::{get_bit, parse_opcode, parse_payload_len};
+use futures::{Sink, SinkExt};
+use futures::{Stream, StreamExt};
 use protocol::{handle_handshake, standard_handshake_req_check};
 use protocol::{perform_handshake, standard_handshake_resp_check};
 use stream::WsStream;
-use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 
 /// client config
@@ -30,10 +35,202 @@ pub mod stream;
 pub mod codec;
 
 use errors::WsError;
-use tokio_util::codec::{Framed, FramedRead, FramedWrite};
+use tokio_util::codec::{Decoder, Encoder, Framed, FramedRead, FramedWrite};
 
 use crate::protocol::Mode;
 use crate::protocol::{cal_accept_key, wrap_tls};
+
+pub trait WsConfig {
+    fn check_rsv(&self) -> bool {
+        true
+    }
+
+    fn mask_frame(&self) -> bool {
+        true
+    }
+    fn validate_utf8(&self) -> bool {
+        true
+    }
+    fn max_frame_payload_size(&self) -> usize {
+        0
+    }
+    fn auto_fragment_size(&self) -> usize {
+        0
+    }
+    fn open_handshake_timeout(&self) -> usize {
+        0
+    }
+    fn close_handshake_timeout(&self) -> usize {
+        0
+    }
+    fn tcp_no_delay(&self) -> bool {
+        false
+    }
+    fn auto_ping_interval(&self) -> usize {
+        0
+    }
+    fn auto_ping_timeout(&self) -> usize {
+        0
+    }
+
+    fn auto_ping_payload(&self) -> Bytes {
+        Bytes::new()
+    }
+
+    fn protocols(&self) -> HashSet<String> {
+        HashSet::with_capacity(0)
+    }
+
+    fn extensions(&self) -> HashSet<String> {
+        HashSet::with_capacity(0)
+    }
+
+    fn version(&self) -> u8 {
+        13
+    }
+
+    fn payload_opcode(&self) -> OpCode {
+        OpCode::Text
+    }
+}
+
+impl WsConfig for () {}
+
+pub struct WebSocketCodec<C>
+where
+    C: WsConfig + Unpin,
+{
+    pub config: C,
+    pub state: ConnectionState,
+    pub framed: Framed<WsStream, FrameCodec>,
+}
+
+pub struct WebSocketEncoder<C>
+where
+    C: WsConfig + Unpin,
+{
+    pub config: C,
+    pub state: ConnectionState,
+}
+
+fn write_single_frame(payload: &[u8], fin: bool, mask: bool, code: OpCode, dst: &mut BytesMut) {
+    let mut frame = Frame::new_with_opcode(code);
+    frame.set_fin(fin);
+    frame.set_mask(mask);
+    frame.set_payload(payload);
+    dst.extend_from_slice(&frame.0);
+}
+
+impl<'a, C: WsConfig + Unpin, T: Into<&'a [u8]>> Encoder<T> for WebSocketCodec<C> {
+    type Error = WsError;
+
+    fn encode(&mut self, item: T, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        if self.state != ConnectionState::Running {
+            return Err(WsError::InvalidConnState(self.state.clone()));
+        }
+        let split_size = self.config.auto_fragment_size();
+        let data: &[u8] = item.into();
+        if split_size > 0 {
+            let mut idx = 0;
+            let mut fin = idx + split_size >= data.len();
+            while (idx + split_size) <= data.len() {
+                let end = data.len().min(idx + split_size);
+                write_single_frame(
+                    &data[idx..end],
+                    fin,
+                    self.config.mask_frame(),
+                    self.config.payload_opcode(),
+                    dst,
+                );
+                idx = end;
+                fin = idx + split_size >= data.len();
+            }
+        } else {
+            write_single_frame(
+                data,
+                true,
+                self.config.mask_frame(),
+                self.config.payload_opcode(),
+                dst,
+            )
+        }
+        Ok(())
+    }
+}
+
+pub struct WebSocketDecoder<C>
+where
+    C: WsConfig + Unpin,
+{
+    pub config: C,
+    pub state: ConnectionState,
+    pub fragmented: bool,
+    pub fragmented_data: BytesMut,
+    pub fragmented_type: OpCode,
+}
+
+impl<C> WebSocketDecoder<C>
+where
+    C: WsConfig + Unpin,
+{
+    fn decode_single(&mut self, src: &mut BytesMut) -> Result<Option<BytesMut>, WsError> {
+        if src.len() < 2 {
+            return Ok(None);
+        }
+        // TODO check nonzero value according to extension negotiation
+        let leading_bits = src[0] >> 4;
+        if self.config.check_rsv() && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
+            return Err(WsError::ProtocolError {
+                close_code: 1008,
+                error: ProtocolError::InvalidLeadingBits(leading_bits),
+            });
+        }
+        parse_opcode(src[0]).map_err(|e| WsError::ProtocolError {
+            error: ProtocolError::InvalidOpcode(e),
+            close_code: 1008,
+        })?;
+        let (payload_len, len_occ_bytes) =
+            parse_payload_len(src.deref()).map_err(|e| WsError::ProtocolError {
+                close_code: 1008,
+                error: e,
+            })?;
+        let max_payload_size = self.config.max_frame_payload_size();
+        if max_payload_size > 0 && payload_len > max_payload_size {
+            return Err(WsError::ProtocolError {
+                close_code: 1008,
+                error: ProtocolError::PayloadTooLarge(max_payload_size),
+            });
+        }
+        let mut expected_len = 1 + len_occ_bytes + payload_len;
+        let mask = get_bit(&src, 1, 0);
+        if mask {
+            expected_len += 4;
+        }
+        if expected_len > src.len() {
+            src.reserve(expected_len - src.len() + 1);
+            Ok(None)
+        } else {
+            let mut data = BytesMut::with_capacity(expected_len);
+            data.extend_from_slice(&src[..expected_len]);
+            src.advance(expected_len);
+            let mut ret = BytesMut::new();
+            ret.extend_from_slice(&Frame(data).payload_data_unmask());
+            Ok(Some(ret))
+        }
+    }
+}
+
+impl<C> Decoder for WebSocketDecoder<C>
+where
+    C: WsConfig + Unpin,
+{
+    type Item = BytesMut;
+    type Error = WsError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        todo!()
+    }
+}
 
 /// websocket connection state
 #[derive(Debug, Clone, PartialEq, Eq)]
