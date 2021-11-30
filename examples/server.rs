@@ -1,6 +1,13 @@
+use futures::SinkExt;
 use structopt::StructOpt;
+use tokio_stream::StreamExt;
 use tracing::Level;
-use ws_tool::{frame::OpCode, Server};
+use tracing_subscriber::util::SubscriberInitExt;
+use ws_tool::{
+    codec::{default_handshake_handler, default_string_codec_factory},
+    frame::OpCode,
+    ServerBuilder,
+};
 
 /// websocket client connect to binance futures websocket
 #[derive(StructOpt)]
@@ -16,8 +23,10 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::INFO)
-        .finish();
+        .with_max_level(Level::DEBUG)
+        .finish()
+        .try_init()
+        .expect("failed to init log");
     let args = Args::from_args();
     tracing::info!("binding on {}:{}", args.host, args.port);
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", args.host, args.port))
@@ -25,19 +34,18 @@ async fn main() -> Result<(), ()> {
         .unwrap();
     for (stream, addr) in listener.accept().await {
         tracing::info!("got connect from {:?}", addr);
-        let mut server = Server::from_stream(stream);
-        server.handle_handshake().await.unwrap();
-        while let Some(x) = server.read().await {
-            let frame = x.unwrap();
-            if frame.opcode() == OpCode::Close {
-                tracing::info!("client close");
+        let mut server = ServerBuilder::accept(
+            stream,
+            default_handshake_handler,
+            default_string_codec_factory,
+        )
+        .await
+        .unwrap();
+        while let Some(Ok((code, msg))) = server.next().await {
+            if code == OpCode::Close {
                 break;
             }
-            let payload = frame.payload_data_unmask();
-            let mut frame = ws_tool::frame::Frame::new_with_opcode(ws_tool::frame::OpCode::Text);
-            frame.set_mask(false);
-            frame.set_payload(String::from_utf8(payload.to_vec()).unwrap().as_bytes());
-            server.write(frame).await.unwrap();
+            server.send(msg).await.unwrap();
         }
     }
     Ok(())

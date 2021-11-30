@@ -1,20 +1,12 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::path::PathBuf;
 
-use crate::codec::{FrameCodec, FrameDecoder, FrameEncoder};
-use crate::frame::{Frame, OpCode};
-use bytes::BytesMut;
-use futures::SinkExt;
-use futures::StreamExt;
-use protocol::{handle_handshake, standard_handshake_req_check};
-use protocol::{perform_handshake, standard_handshake_resp_check};
+use protocol::perform_handshake;
 use stream::WsStream;
-use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-/// client config
-pub mod config;
 /// websocket error definitions
 pub mod errors;
 /// websocket transport unit
@@ -30,10 +22,10 @@ pub mod stream;
 pub mod codec;
 
 use errors::WsError;
-use tokio_util::codec::{Framed, FramedRead, FramedWrite};
+use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use crate::protocol::Mode;
-use crate::protocol::{cal_accept_key, wrap_tls};
+use crate::protocol::{handle_handshake, wrap_tls};
 
 /// websocket connection state
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,27 +42,30 @@ pub enum ConnectionState {
     Closed,
 }
 
-pub struct ConnBuilder {
+pub struct ClientBuilder {
     uri: String,
     proxy_uri: Option<String>,
-    protocols: Vec<String>,
-    extensions: Vec<String>,
+    protocols: HashSet<String>,
+    extensions: HashSet<String>,
     certs: HashSet<PathBuf>,
+    version: u8,
+    headers: HashMap<String, String>,
 }
 
-impl ConnBuilder {
-    pub fn new(uri: &str) -> Self {
+impl ClientBuilder {
+    pub fn new<S: ToString>(uri: S) -> Self {
         Self {
             uri: uri.to_string(),
             proxy_uri: None,
-            protocols: Vec::new(),
-            extensions: Vec::new(),
+            protocols: HashSet::new(),
+            extensions: HashSet::new(),
+            headers: HashMap::new(),
             certs: HashSet::new(),
+            version: 13,
         }
     }
 
-    /// config  proxy
-    pub fn proxy(self, uri: &str) -> Self {
+    pub fn proxy<S: ToString>(self, uri: S) -> Self {
         Self {
             proxy_uri: Some(uri.to_string()),
             ..self
@@ -79,26 +74,27 @@ impl ConnBuilder {
 
     /// add protocols
     pub fn protocol(mut self, protocol: String) -> Self {
-        self.protocols.push(protocol);
+        self.protocols.insert(protocol);
         self
     }
 
     /// set extension in handshake http header
     ///
     /// **NOTE** it will clear protocols set by `protocol` method
-    pub fn protocols(self, protocols: Vec<String>) -> Self {
+    pub fn protocols(self, protocols: HashSet<String>) -> Self {
         Self { protocols, ..self }
     }
+
     /// add protocols
     pub fn extension(mut self, extension: String) -> Self {
-        self.extensions.push(extension);
+        self.extensions.insert(extension);
         self
     }
 
     /// set extension in handshake http header
     ///
     /// **NOTE** it will clear protocols set by `protocol` method
-    pub fn extensions(self, extensions: Vec<String>) -> Self {
+    pub fn extensions(self, extensions: HashSet<String>) -> Self {
         Self { extensions, ..self }
     }
 
@@ -114,13 +110,29 @@ impl ConnBuilder {
         Self { certs, ..self }
     }
 
-    pub async fn build(&self) -> Result<Connection, WsError> {
+    /// set websocket version
+    pub fn version(self, version: u8) -> Self {
+        Self { version, ..self }
+    }
+
+    pub fn header<K: ToString, V: ToString>(mut self, name: K, value: V) -> Self {
+        self.headers.insert(name.to_string(), value.to_string());
+        self
+    }
+
+    pub fn headers(self, headers: HashMap<String, String>) -> Self {
+        Self { headers, ..self }
+    }
+
+    async fn _connect(&self) -> Result<(String, http::Response<()>, WsStream), WsError> {
         let Self {
             uri,
             proxy_uri,
             protocols,
             extensions,
             certs,
+            version,
+            headers,
         } = self;
         let uri = uri
             .parse::<http::Uri>()
@@ -160,209 +172,70 @@ impl ConnBuilder {
             })?,
         };
         tracing::debug!("tcp connection established");
-        let stream = match mode {
+        let mut stream = match mode {
             Mode::WS => WsStream::Plain(stream),
             Mode::WSS => {
                 let tls_stream = wrap_tls(stream, host, &self.certs).await?;
                 WsStream::Tls(tls_stream)
             }
         };
-        Ok(Connection {
-            uri,
-            mode,
-            framed: Framed::new(stream, FrameCodec::default()),
-            state: ConnectionState::Created,
-            certs: certs.clone(),
-            proxy: ws_proxy,
-            protocols: protocols.to_owned(),
-            extensions: extensions.to_owned(),
-        })
-    }
-}
-
-/// websocket client, use ConnBuilder to construct new client
-#[derive(Debug)]
-pub struct Connection {
-    uri: http::Uri,
-    mode: Mode,
-    framed: Framed<stream::WsStream, FrameCodec>,
-    certs: HashSet<PathBuf>,
-    state: ConnectionState,
-    proxy: Option<proxy::Proxy>,
-    protocols: Vec<String>,
-    extensions: Vec<String>,
-}
-
-impl Connection {
-    pub async fn handshake(&mut self) -> Result<http::Response<()>, WsError> {
-        self.state = ConnectionState::HandShaking;
-        let protocols = self.protocols.join(" ");
-        let extensions = self.extensions.join(" ");
         let (key, resp) = perform_handshake(
-            self.framed.get_mut(),
-            &self.mode,
-            &self.uri,
-            protocols,
-            extensions,
-            13,
-            Default::default(),
+            &mut stream,
+            &mode,
+            &uri,
+            protocols.iter().cloned().collect::<Vec<String>>().join(" "),
+            extensions
+                .iter()
+                .cloned()
+                .collect::<Vec<String>>()
+                .join(" "),
+            *version,
+            headers.clone(),
         )
         .await?;
-        standard_handshake_resp_check(key.as_bytes(), &resp)?;
-        self.state = ConnectionState::Running;
-        Ok(resp)
+        Ok((key, resp, stream))
     }
 
-    pub async fn write(&mut self, item: Frame) -> Result<(), WsError> {
-        if self.state != ConnectionState::Running {
-            return Err(WsError::InvalidConnState(self.state.clone()));
-        }
-        self.framed.send(item).await
-    }
-
-    pub async fn read(&mut self) -> Option<Result<Frame, WsError>> {
-        match self.framed.next().await {
-            Some(maybe_frame) => {
-                let msg = match maybe_frame {
-                    Ok(frame) => Ok(frame),
-                    Err(err) => {
-                        let (code, reason) = match &err {
-                            WsError::ProtocolError { close_code, error } => {
-                                (close_code, error.to_string())
-                            }
-                            _ => (&1002, err.to_string()),
-                        };
-                        let _ = self.close(*code, reason).await;
-                        self.state = ConnectionState::Closed;
-                        Err(err)
-                    }
-                };
-                Some(msg)
-            }
-            None => None,
-        }
-    }
-
-    pub async fn close(&mut self, code: u16, reason: String) -> Result<(), WsError> {
-        self.state = ConnectionState::Closing;
-        let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
-        payload.extend_from_slice(&code.to_be_bytes());
-        payload.extend_from_slice(reason.as_bytes());
-        let close = Frame::new_with_payload(OpCode::Close, &payload);
-        self.framed.send(close).await
-    }
-
-    pub fn split(
-        self,
-    ) -> (
-        FramedRead<ReadHalf<WsStream>, FrameDecoder>,
-        FramedWrite<WriteHalf<WsStream>, FrameEncoder>,
-    ) {
-        if self.state != ConnectionState::Running {
-            panic!("should split after connection is running");
-        }
-        let Self { framed, .. } = self;
-        let parts = framed.into_parts();
-        let (read_stream, write_stream) = tokio::io::split(parts.io);
-        let frame_r = FramedRead::new(read_stream, parts.codec.decoder);
-        let frame_w = FramedWrite::new(write_stream, parts.codec.encoder);
-        (frame_r, frame_w)
+    pub async fn connect_with_check<C, EI, DI, F>(
+        &self,
+        check_fn: F,
+    ) -> Result<Framed<WsStream, C>, WsError>
+    where
+        C: Encoder<EI, Error = WsError> + Decoder<Item = DI, Error = WsError>,
+        F: Fn(String, http::Response<()>, WsStream) -> Result<Framed<WsStream, C>, WsError>,
+    {
+        let (key, resp, stream) = self._connect().await?;
+        check_fn(key, resp, stream)
     }
 }
 
-#[derive(Debug)]
-pub struct Server {
-    pub framed: Framed<stream::WsStream, FrameCodec>,
-    pub state: ConnectionState,
-    pub protocols: Vec<String>,
-    pub extensions: Vec<String>,
-}
+pub struct ServerBuilder {}
 
-impl Server {
-    pub fn from_stream(stream: TcpStream) -> Self {
-        Self {
-            state: ConnectionState::Created,
-            framed: Framed::new(WsStream::Plain(stream), FrameCodec::default()),
-            protocols: vec![],
-            extensions: vec![],
+impl ServerBuilder {
+    pub async fn accept<C, EI, DI, F1, F2, T>(
+        stream: TcpStream,
+        handshake_handler: F1,
+        codec_factory: F2,
+    ) -> Result<Framed<WsStream, C>, WsError>
+    where
+        C: Encoder<EI, Error = WsError> + Decoder<Item = DI, Error = WsError>,
+        F1: Fn(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
+        F2: Fn(http::Request<()>, WsStream) -> Result<Framed<WsStream, C>, WsError>,
+        T: ToString + Debug,
+    {
+        let mut stream = WsStream::Plain(stream);
+        let req = handle_handshake(&mut stream).await?;
+        let (req, resp) = handshake_handler(req)?;
+        let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
+        resp.headers().iter().for_each(|(k, v)| {
+            resp_lines.push(format!("{}: {}", k, v.to_str().unwrap_or_default()))
+        });
+        resp_lines.push("\r\n".to_string());
+        stream.write_all(resp_lines.join("\r\n").as_bytes()).await?;
+        tracing::debug!("{:?}", &resp);
+        if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+            return Err(WsError::HandShakeFailed(resp.body().to_string()));
         }
-    }
-
-    pub async fn handle_handshake(&mut self) -> Result<(), WsError> {
-        let stream = self.framed.get_mut();
-        let req = handle_handshake(stream).await?;
-        if let Err(e) = standard_handshake_req_check(&req) {
-            let resp = format!("HTTP/1.1 400 Bad Request\r\n\r\n{}", e.to_string());
-            stream.write_all(resp.as_bytes()).await?;
-            return Err(e);
-        } else {
-            let key = req.headers().get("sec-websocket-key").unwrap();
-            let resp_lines = vec![
-                "HTTP/1.1 101 Switching Protocols".to_string(),
-                "upgrade: websocket".to_string(),
-                "connection: upgrade".to_string(),
-                format!("Sec-WebSocket-Accept: {}", cal_accept_key(key.as_bytes())),
-                "\r\n".to_string(),
-            ];
-            stream.write_all(resp_lines.join("\r\n").as_bytes()).await?
-        };
-        self.state = ConnectionState::Running;
-        Ok(())
-    }
-
-    pub async fn read(&mut self) -> Option<Result<Frame, WsError>> {
-        match self.framed.next().await {
-            Some(maybe_frame) => {
-                let msg = match maybe_frame {
-                    Ok(frame) => Ok(frame),
-                    Err(err) => {
-                        let (code, reason) = match &err {
-                            WsError::ProtocolError { close_code, error } => {
-                                (close_code, error.to_string())
-                            }
-                            _ => (&1002, err.to_string()),
-                        };
-                        let _ = self.close(*code, reason).await;
-                        self.state = ConnectionState::Closed;
-                        Err(err)
-                    }
-                };
-                Some(msg)
-            }
-            None => None,
-        }
-    }
-
-    pub async fn write(&mut self, item: Frame) -> Result<(), WsError> {
-        if self.state != ConnectionState::Running {
-            return Err(WsError::InvalidConnState(self.state.clone()));
-        }
-        self.framed.send(item).await
-    }
-
-    pub async fn close(&mut self, code: u16, reason: String) -> Result<(), WsError> {
-        self.state = ConnectionState::Closing;
-        let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
-        payload.extend_from_slice(&code.to_be_bytes());
-        payload.extend_from_slice(reason.as_bytes());
-        let close = Frame::new_with_payload(OpCode::Close, &payload);
-        self.framed.send(close).await
-    }
-
-    pub fn split(
-        self,
-    ) -> (
-        FramedRead<ReadHalf<WsStream>, FrameDecoder>,
-        FramedWrite<WriteHalf<WsStream>, FrameEncoder>,
-    ) {
-        if self.state != ConnectionState::Running {
-            panic!("should split after connection is running");
-        }
-        let Self { framed, .. } = self;
-        let parts = framed.into_parts();
-        let (read_stream, write_stream) = tokio::io::split(parts.io);
-        let frame_r = FramedRead::new(read_stream, parts.codec.decoder);
-        let frame_w = FramedWrite::new(write_stream, parts.codec.encoder);
-        (frame_r, frame_w)
+        codec_factory(req, stream)
     }
 }

@@ -69,4 +69,6 @@ pub enum ProtocolError {
     InvalidUtf8,
     #[error("invalid close code {0}")]
     InvalidCloseCode(u16),
+    #[error("payload too large, max payload size {0}")]
+    PayloadTooLarge(usize),
 }
