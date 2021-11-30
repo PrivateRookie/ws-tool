@@ -12,12 +12,7 @@ features:
 
 **basic usage**
 
-```rust
-use ws_tool::{frame::Frame, ClientBuilder};
-let mut client = ClientBuilder::new("wss://privaterookie.com").proxy("socks5://proxy:proxy_port").build().await.unwrap();
-client.connect().await.unwrap();
-client.read_frame().await.unwrap();
-```
+see `echo` example
 
 ### self signed cert
 
@@ -98,7 +93,7 @@ report files should be under `test_reports` dir.
 
 - [ ] add proxy auth config
 - [ ] support custom https proxy cert
-- [ ] split client into writer & reader
+- [x] split client into writer & reader
 
 
 ## REF

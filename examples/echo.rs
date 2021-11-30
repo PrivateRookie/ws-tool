@@ -1,11 +1,11 @@
 use std::{io::Write, path::PathBuf};
 
+use futures::SinkExt;
 use structopt::StructOpt;
+use tokio_stream::StreamExt;
 use tracing::Level;
-use ws_tool::{
-    frame::{Frame, OpCode},
-    ConnBuilder,
-};
+use tracing_subscriber::util::SubscriberInitExt;
+use ws_tool::{codec::default_string_check_fn, ClientBuilder};
 
 /// websocket client demo with raw frame
 #[derive(StructOpt)]
@@ -23,18 +23,22 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::INFO)
-        .finish();
+        .with_max_level(Level::DEBUG)
+        .finish()
+        .try_init()
+        .expect("failed to init log");
     let args = Args::from_args();
-    let mut builder = ConnBuilder::new(&args.uri);
+    let mut builder = ClientBuilder::new(&args.uri);
     if let Some(cert) = args.cert {
         builder = builder.cert(cert);
     }
     if let Some(proxy) = args.proxy {
         builder = builder.proxy(&proxy)
     }
-    let mut client = builder.build().await.unwrap();
-    client.handshake().await.unwrap();
+    let mut client = builder
+        .connect_with_check(default_string_check_fn)
+        .await
+        .unwrap();
 
     let mut input = String::new();
     loop {
@@ -44,27 +48,16 @@ async fn main() -> Result<(), ()> {
         if &input == "quit\n" {
             break;
         }
-        let mut frame = Frame::default();
-        frame.set_payload(input.trim().as_bytes());
-        client.write(frame).await.unwrap();
-        let resp = client.read().await.unwrap().unwrap();
-        if resp.opcode() == OpCode::Ping {
-            client
-                .write(Frame::new_with_payload(
-                    OpCode::Pong,
-                    &resp.payload_data_unmask(),
-                ))
-                .await
-                .unwrap();
-            continue;
-        }
-        let msg = String::from_utf8(resp.payload_data_unmask().to_vec()).unwrap();
-        println!("[RECV] > {}", msg.trim());
-        if &msg == "quit" {
+        client.send(input.clone()).await.unwrap();
+        if let Some(Ok((_, msg))) = client.next().await {
+            println!("[RECV] > {}", msg.trim());
+            if &msg == "quit" {
+                break;
+            }
+            input.clear()
+        } else {
             break;
         }
-        input.clear()
     }
-    client.close(1000, "".to_string()).await.unwrap();
-    return Ok(());
+    Ok(())
 }

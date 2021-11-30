@@ -18,7 +18,7 @@ let mut client = ConnBuilder::new("url")
                         .cert("cert_path")
                         .proxy("proxy_socket")
                         .on_handshake(
-                            |req: http::Request, stream: &mut WsStream| -> Result<FrameCodec, WsError> {
+                            |resp: http::Response, stream: &mut WsStream| -> Result<FrameCodec, WsError> {
                                  Ok(FrameCodec::default()) }
                             )
                         .codec(FrameCodec::default())
@@ -35,7 +35,7 @@ while let Some(Ok(frame)) = client.next().await? {
 let mut client = ConnBuilder::new("url")
                         .cert("cert_path")
                         .proxy("proxy_socket")
-                        .on_handshake(|req: http::Request, stream: &mut WsStream| -> Result<BytesCodec, WsError> { Ok(BytesCodec::default()) })
+                        .on_handshake(|resp: http::Response, stream: &mut WsStream| -> Result<BytesCodec, WsError> { Ok(BytesCodec::default()) })
                         .connect().await?;
 
 // if client send close or ping frame, payload will be send with data
@@ -50,7 +50,7 @@ while let Some(Ok(data)) = client.next().await? {
 let mut client = ConnBuilder::new("url")
                         .cert("cert_path")
                         .proxy("proxy_socket")
-                        .on_handshake(|req: http::Request, stream: &mut WsStream| -> Result<StringCodec, WsError> { Ok(StringCodec::default()) })
+                        .on_handshake(|resp: http::Response, stream: &mut WsStream| -> Result<StringCodec, WsError> { Ok(StringCodec::default()) })
                         .connect().await?;
 
 // if client send close or ping frame, payload will be send with data, maybe you need close utf-8 validation
@@ -65,7 +65,7 @@ while let Some(Ok(str_data)) = client.next().await? {
 let mut client = ConnBuilder::new("url")
                         .cert("cert_path")
                         .proxy("proxy_socket")
-                        .on_handshake(|req: http::Request, stream: &mut WsStream| -> Result<MessageCodec, WsError> { Ok(MessageCodec::default()) })
+                        .on_handshake(|resp: http::Response, stream: &mut WsStream| -> Result<MessageCodec, WsError> { Ok(MessageCodec::default()) })
                         .connect().await?;
 
 // if client send close or ping frame, payload will be send with data
@@ -87,7 +87,7 @@ let (read, write) = client.split();
 let mut client = ConnBuilder::new("url")
                         .cert("cert_path")
                         .proxy("proxy_socket")
-                        .on_handshake(|req: http::Request, stream: &mut WsStream| -> Result<StringCodec, WsError> { 
+                        .on_handshake(|resp: http::Response, stream: &mut WsStream| -> Result<StringCodec, WsError> { 
                             let zipped = req.headers.get("web-socket-protocols") == Some("gzip");
                             Ok(GzipCodec::new(zipped))
                          })

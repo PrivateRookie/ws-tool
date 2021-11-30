@@ -27,6 +27,12 @@ pub enum OpCode {
     ReservedControl,
 }
 
+impl Default for OpCode {
+    fn default() -> Self {
+        Self::Text
+    }
+}
+
 impl OpCode {
     pub fn as_u8(&self) -> u8 {
         match self {

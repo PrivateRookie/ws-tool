@@ -202,9 +202,13 @@ pub async fn perform_handshake(
         "Connection: Upgrade".to_string(),
         format!("Sec-Websocket-Key: {}", key),
         format!("Sec-WebSocket-Version: {}", version.to_string()),
-        format!("Sec-WebSocket-Protocol: {}", protocols),
-        format!("Sec-WebSocket-Extensions: {}", extensions),
     ];
+    if !protocols.is_empty() {
+        headers.push(format!("Sec-WebSocket-Protocol: {}", protocols))
+    }
+    if !extensions.is_empty() {
+        headers.push(format!("Sec-WebSocket-Extensions: {}", extensions))
+    }
     for (k, v) in extra_headers.iter() {
         headers.push(format!("{}: {}", k, v));
     }
@@ -253,6 +257,7 @@ pub async fn perform_handshake(
 }
 
 pub fn standard_handshake_resp_check(key: &[u8], resp: &http::Response<()>) -> Result<(), WsError> {
+    tracing::debug!("{:?}", resp);
     if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
         return Err(WsError::HandShakeFailed(format!(
             "expect 101 response, got {}",
