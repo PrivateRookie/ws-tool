@@ -1,6 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Debug;
-use std::path::PathBuf;
 
 use protocol::perform_handshake;
 use stream::WsStream;
@@ -49,9 +48,10 @@ pub struct ClientBuilder {
     uri: String,
     #[cfg(feature = "proxy")]
     proxy_uri: Option<String>,
-    protocols: HashSet<String>,
-    extensions: HashSet<String>,
-    certs: HashSet<PathBuf>,
+    protocols: Vec<String>,
+    extensions: Vec<String>,
+    #[cfg(feature = "rustls")]
+    certs: HashSet<std::path::PathBuf>,
     version: u8,
     headers: HashMap<String, String>,
 }
@@ -62,9 +62,10 @@ impl ClientBuilder {
             uri: uri.to_string(),
             #[cfg(feature = "proxy")]
             proxy_uri: None,
-            protocols: HashSet::new(),
-            extensions: HashSet::new(),
+            protocols: vec![],
+            extensions: vec![],
             headers: HashMap::new(),
+            #[cfg(feature = "rustls")]
             certs: HashSet::new(),
             version: 13,
         }
@@ -80,35 +81,37 @@ impl ClientBuilder {
 
     /// add protocols
     pub fn protocol(mut self, protocol: String) -> Self {
-        self.protocols.insert(protocol);
+        self.protocols.push(protocol);
         self
     }
 
     /// set extension in handshake http header
     ///
     /// **NOTE** it will clear protocols set by `protocol` method
-    pub fn protocols(self, protocols: HashSet<String>) -> Self {
+    pub fn protocols(self, protocols: Vec<String>) -> Self {
         Self { protocols, ..self }
     }
 
     /// add protocols
     pub fn extension(mut self, extension: String) -> Self {
-        self.extensions.insert(extension);
+        self.extensions.push(extension);
         self
     }
 
     /// set extension in handshake http header
     ///
     /// **NOTE** it will clear protocols set by `protocol` method
-    pub fn extensions(self, extensions: HashSet<String>) -> Self {
+    pub fn extensions(self, extensions: Vec<String>) -> Self {
         Self { extensions, ..self }
     }
 
+    #[cfg(feature = "rustls")]
     pub fn cert(mut self, cert: PathBuf) -> Self {
         self.certs.insert(cert);
         self
     }
 
+    #[cfg(feature = "rustls")]
     // set ssl certs in wss connection
     ///
     /// **NOTE** it will clear certs set by `cert` method
@@ -137,6 +140,7 @@ impl ClientBuilder {
             proxy_uri,
             protocols,
             extensions,
+            #[cfg(feature = "rustls")]
             certs,
             version,
             headers,
@@ -153,6 +157,7 @@ impl ClientBuilder {
         } else {
             Err(WsError::InvalidUri("missing ws or wss schema".to_string()))
         }?;
+        #[cfg(feature = "rustls")]
         if mode == Mode::WS && !certs.is_empty() {
             tracing::warn!("setting tls cert has no effect on insecure ws")
         }
