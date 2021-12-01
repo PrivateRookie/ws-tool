@@ -42,6 +42,12 @@ impl From<std::io::Error> for WsError {
     }
 }
 
+impl From<WsError> for std::io::Error {
+    fn from(e: WsError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+    }
+}
+
 /// errors during decode frame from bytes
 #[derive(Debug, Error)]
 pub enum ProtocolError {
