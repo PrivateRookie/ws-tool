@@ -51,7 +51,7 @@ pub struct ClientBuilder {
     protocols: Vec<String>,
     extensions: Vec<String>,
     #[cfg(feature = "rustls")]
-    certs: HashSet<std::path::PathBuf>,
+    certs: std::collections::HashSet<std::path::PathBuf>,
     version: u8,
     headers: HashMap<String, String>,
 }
@@ -66,7 +66,7 @@ impl ClientBuilder {
             extensions: vec![],
             headers: HashMap::new(),
             #[cfg(feature = "rustls")]
-            certs: HashSet::new(),
+            certs: std::collections::HashSet::new(),
             version: 13,
         }
     }
@@ -106,7 +106,7 @@ impl ClientBuilder {
     }
 
     #[cfg(feature = "rustls")]
-    pub fn cert(mut self, cert: PathBuf) -> Self {
+    pub fn cert(mut self, cert: std::path::PathBuf) -> Self {
         self.certs.insert(cert);
         self
     }
@@ -115,7 +115,7 @@ impl ClientBuilder {
     // set ssl certs in wss connection
     ///
     /// **NOTE** it will clear certs set by `cert` method
-    pub fn certs(self, certs: HashSet<PathBuf>) -> Self {
+    pub fn certs(self, certs: std::collections::HashSet<std::path::PathBuf>) -> Self {
         Self { certs, ..self }
     }
 
