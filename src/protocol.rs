@@ -1,16 +1,10 @@
-use std::collections::{HashMap, HashSet};
-use std::io::BufReader;
-use std::path::PathBuf;
-use std::{fmt::Debug, sync::Arc};
+use std::collections::HashMap;
+use std::fmt::Debug;
 
 use crate::stream::WsStream;
 use bytes::{BufMut, BytesMut};
 use sha1::Digest;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-
-use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
-use webpki::DNSNameRef;
 
 use crate::errors::WsError;
 
@@ -129,34 +123,49 @@ impl Mode {
     }
 }
 
-pub(crate) async fn wrap_tls(
-    stream: TcpStream,
-    host: &str,
-    certs: &HashSet<PathBuf>,
-) -> Result<TlsStream<TcpStream>, WsError> {
-    let mut config = ClientConfig::new();
-    for cert_path in certs {
-        let mut pem = std::fs::File::open(cert_path).map_err(|_| {
-            WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-        })?;
-        let mut cert = BufReader::new(&mut pem);
-        config.root_store.add_pem_file(&mut cert).map_err(|_| {
-            WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-        })?;
+#[cfg(feature = "rustls")]
+mod tls {
+    use std::io::BufReader;
+    use std::{collections::HashSet, path::PathBuf};
+    // use std::path::PathBuf;
+    use crate::errors::WsError;
+    use std::sync::Arc;
+    use tokio::net::TcpStream;
+    use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
+    use webpki::DNSNameRef;
+
+    pub(crate) async fn wrap_tls(
+        stream: TcpStream,
+        host: &str,
+        certs: &HashSet<PathBuf>,
+    ) -> Result<TlsStream<TcpStream>, WsError> {
+        let mut config = ClientConfig::new();
+        for cert_path in certs {
+            let mut pem = std::fs::File::open(cert_path).map_err(|_| {
+                WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
+            })?;
+            let mut cert = BufReader::new(&mut pem);
+            config.root_store.add_pem_file(&mut cert).map_err(|_| {
+                WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
+            })?;
+        }
+        config
+            .root_store
+            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        let domain = DNSNameRef::try_from_ascii_str(host)
+            .map_err(|e| WsError::TlsDnsFailed(e.to_string()))?;
+        let connector = TlsConnector::from(Arc::new(config));
+        let tls_stream = connector
+            .connect(domain, stream)
+            .await
+            .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
+        tracing::debug!("tls connection established");
+        Ok(tls_stream)
     }
-    config
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    let domain =
-        DNSNameRef::try_from_ascii_str(host).map_err(|e| WsError::TlsDnsFailed(e.to_string()))?;
-    let connector = TlsConnector::from(Arc::new(config));
-    let tls_stream = connector
-        .connect(domain, stream)
-        .await
-        .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
-    tracing::debug!("tls connection established");
-    Ok(tls_stream)
 }
+
+#[cfg(feature = "rustls")]
+pub(crate) use tls::wrap_tls;
 
 /// generate random key
 pub fn gen_key() -> String {

@@ -13,8 +13,11 @@ pub mod errors;
 pub mod frame;
 /// build connection & read/write frame utils
 pub mod protocol;
+
+#[cfg(feature = "proxy")]
 /// connection proxy support
 pub mod proxy;
+
 /// stream definition
 pub mod stream;
 
@@ -24,8 +27,8 @@ pub mod codec;
 use errors::WsError;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
+use crate::protocol::handle_handshake;
 use crate::protocol::Mode;
-use crate::protocol::{handle_handshake, wrap_tls};
 
 /// websocket connection state
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +47,7 @@ pub enum ConnectionState {
 
 pub struct ClientBuilder {
     uri: String,
+    #[cfg(feature = "proxy")]
     proxy_uri: Option<String>,
     protocols: HashSet<String>,
     extensions: HashSet<String>,
@@ -56,6 +60,7 @@ impl ClientBuilder {
     pub fn new<S: ToString>(uri: S) -> Self {
         Self {
             uri: uri.to_string(),
+            #[cfg(feature = "proxy")]
             proxy_uri: None,
             protocols: HashSet::new(),
             extensions: HashSet::new(),
@@ -65,6 +70,7 @@ impl ClientBuilder {
         }
     }
 
+    #[cfg(feature = "proxy")]
     pub fn proxy<S: ToString>(self, uri: S) -> Self {
         Self {
             proxy_uri: Some(uri.to_string()),
@@ -127,6 +133,7 @@ impl ClientBuilder {
     async fn _connect(&self) -> Result<(String, http::Response<()>, WsStream), WsError> {
         let Self {
             uri,
+            #[cfg(feature = "proxy")]
             proxy_uri,
             protocols,
             extensions,
@@ -149,11 +156,6 @@ impl ClientBuilder {
         if mode == Mode::WS && !certs.is_empty() {
             tracing::warn!("setting tls cert has no effect on insecure ws")
         }
-        let ws_proxy: Option<proxy::Proxy> = match proxy_uri {
-            Some(uri) => Some(uri.parse()?),
-            None => None,
-        };
-
         let host = uri
             .host()
             .ok_or_else(|| WsError::InvalidUri(format!("can not find host {}", self.uri)))?;
@@ -162,21 +164,51 @@ impl ClientBuilder {
             None => mode.default_port(),
         };
 
-        let stream = match &ws_proxy {
-            Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
-            None => TcpStream::connect((host, port)).await.map_err(|e| {
+        let stream;
+        #[cfg(feature = "proxy")]
+        {
+            let ws_proxy: Option<proxy::Proxy> = match proxy_uri {
+                Some(uri) => Some(uri.parse()?),
+                None => None,
+            };
+            stream = match &ws_proxy {
+                Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
+                None => TcpStream::connect((host, port)).await.map_err(|e| {
+                    WsError::ConnectionFailed(format!(
+                        "failed to create tcp connection {}",
+                        e.to_string()
+                    ))
+                })?,
+            };
+        }
+
+        #[cfg(not(feature = "proxy"))]
+        {
+            stream = TcpStream::connect((host, port)).await.map_err(|e| {
                 WsError::ConnectionFailed(format!(
                     "failed to create tcp connection {}",
                     e.to_string()
                 ))
-            })?,
-        };
+            })?;
+        }
+
         tracing::debug!("tcp connection established");
+
         let mut stream = match mode {
             Mode::WS => WsStream::Plain(stream),
             Mode::WSS => {
-                let tls_stream = wrap_tls(stream, host, &self.certs).await?;
-                WsStream::Tls(tls_stream)
+                #[cfg(feature = "rustls")]
+                {
+                    use crate::protocol::wrap_tls;
+
+                    let tls_stream = wrap_tls(stream, host, &self.certs).await?;
+                    WsStream::Tls(tls_stream)
+                }
+
+                #[cfg(not(feature = "rustls"))]
+                {
+                    panic!("require `rustls`")
+                }
             }
         };
         let (key, resp) = perform_handshake(

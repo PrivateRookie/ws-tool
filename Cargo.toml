@@ -17,26 +17,46 @@ keywords = ["websocket", "proxy", "network"]
 http = "0.2"
 tokio = { version = "1", features = ["rt", "net", "io-util"] }
 tokio-util = { version = "0.6", features = ["codec"] }
-tokio-rustls = "0.22"
-webpki = "0.21"
-webpki-roots = "0.21"
+tokio-rustls = { version = "0.22", optional = true }
+webpki = { version = "0.21", optional = true }
+webpki-roots = { version = "0.21", optional = true }
 thiserror = "1"
 rand = "0.8"
 base64 = "0.13"
-tracing ="0.1"
+tracing = "0.1"
 bytes = "1"
 rcgen = "0.8"
 httparse = "1.4"
 sha-1 = "0.9"
-tokio-socks = "0.5"
-async-http-proxy = { version = "1", features = ["runtime-tokio"] }
+tokio-socks = { version = "0.5", optional = true }
+async-http-proxy = { version = "1", features = [
+    "runtime-tokio",
+], optional = true }
 tokio-stream = "0.1"
 futures = "0.3"
 serde = "1"
 
+
+[features]
+default = []
+proxy = ["tokio-socks", "async-http-proxy"]
+rustls = ["tokio-rustls", "webpki", "webpki-roots"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.2"
 structopt = "0.3"
 rcgen = "0.8"
+
+
+[[example]]
+name = "echo"
+required-features = ["rustls", "proxy"]
+
+[[example]]
+name = "binance"
+required-features = ["rustls", "proxy"]
+
+[[example]]
+name = "split_binance"
+required-features = ["rustls", "proxy"]
