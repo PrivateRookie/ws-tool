@@ -5,6 +5,7 @@ use crate::stream::WsStream;
 use bytes::{Buf, Bytes, BytesMut};
 use flate2::read::{DeflateDecoder, DeflateEncoder};
 use flate2::Compression;
+use tracing::{debug, trace};
 
 use std::fmt::Debug;
 use std::io::Read;
@@ -198,6 +199,7 @@ pub fn default_deflate_check_fn(
         enable,
         ..Default::default()
     };
+    debug!("{:#?}", codec);
     Ok(Framed::new(stream, codec))
 }
 
