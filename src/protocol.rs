@@ -231,6 +231,7 @@ pub async fn perform_handshake(
         version = http::Version::HTTP_11,
         headers = headers.join("\r\n")
     );
+    tracing::debug!("handshake request\n{}", req_str);
     stream.write_all(req_str.as_bytes()).await?;
     let mut read_bytes = BytesMut::with_capacity(1024);
     let mut buf: [u8; 1] = [0; 1];

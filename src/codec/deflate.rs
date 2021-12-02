@@ -87,7 +87,7 @@ fn encode_frame(enable: bool, item: (OpCode, BytesMut)) -> Frame {
         OpCode::Text | OpCode::Binary if enable => {
             let mut compressed = BytesMut::with_capacity(item.1.len());
             let mut deflate_encoder = DeflateEncoder::new(item.1.as_ref(), Compression::fast());
-            let count = deflate_encoder.read(&mut compressed).unwrap();
+            let count = deflate_encoder.read(&mut compressed).unwrap() - 4;
             let mut frame = Frame::new_with_payload(item.0, &compressed[..count]);
             frame.set_rsv1(true);
             frame
