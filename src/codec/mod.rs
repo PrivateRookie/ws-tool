@@ -11,6 +11,7 @@ mod deflate;
 pub use binary::*;
 pub use frame::*;
 pub use text::*;
+#[cfg(feature="deflate")]
 pub use deflate::*;
 pub trait SplitSocket<EI, DI, E, D>
 where

@@ -220,12 +220,12 @@ impl ClientBuilder {
             &mut stream,
             &mode,
             &uri,
-            protocols.iter().cloned().collect::<Vec<String>>().join(" "),
+            protocols.iter().cloned().collect::<Vec<String>>().join(" ,"),
             extensions
                 .iter()
                 .cloned()
                 .collect::<Vec<String>>()
-                .join(" "),
+                .join(" ,"),
             *version,
             headers.clone(),
         )
