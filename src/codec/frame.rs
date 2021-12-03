@@ -233,12 +233,12 @@ pub fn decode_frame(
                 }
                 fragmented_data.extend_from_slice(&frame.payload_data_unmask());
                 if frame.fin() {
-                    if String::from_utf8(fragmented_data.to_vec()).is_err() {
-                        return Err(WsError::ProtocolError {
-                            close_code: 1007,
-                            error: ProtocolError::InvalidUtf8,
-                        });
-                    }
+                    // if String::from_utf8(fragmented_data.to_vec()).is_err() {
+                    //     return Err(WsError::ProtocolError {
+                    //         close_code: 1007,
+                    //         error: ProtocolError::InvalidUtf8,
+                    //     });
+                    // }
                     let completed_frame =
                         Frame::new_with_payload(fragmented_type.clone(), fragmented_data);
                     return Ok(Some(completed_frame));
@@ -260,14 +260,14 @@ pub fn decode_frame(
                     fragmented_data.extend_from_slice(&payload);
                     Ok(None)
                 } else {
-                    if opcode == OpCode::Text
-                        && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
-                    {
-                        return Err(WsError::ProtocolError {
-                            close_code: 1007,
-                            error: ProtocolError::InvalidUtf8,
-                        });
-                    }
+                    // if opcode == OpCode::Text
+                    //     && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
+                    // {
+                    //     return Err(WsError::ProtocolError {
+                    //         close_code: 1007,
+                    //         error: ProtocolError::InvalidUtf8,
+                    //     });
+                    // }
                     return Ok(Some(frame));
                 }
             }

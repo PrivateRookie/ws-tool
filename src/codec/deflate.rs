@@ -1,3 +1,4 @@
+use crate::codec::FrameConfig;
 use crate::errors::{ProtocolError, WsError};
 use crate::frame::{Frame, OpCode};
 use crate::protocol::standard_handshake_resp_check;
@@ -88,7 +89,7 @@ fn encode_frame(enable: bool, item: (OpCode, BytesMut)) -> Frame {
         OpCode::Text | OpCode::Binary if enable => {
             let mut compressed = BytesMut::with_capacity(item.1.len());
             let mut deflate_encoder = DeflateEncoder::new(item.1.as_ref(), Compression::fast());
-            let count = deflate_encoder.read(&mut compressed).unwrap() - 4;
+            let count = deflate_encoder.read(&mut compressed).unwrap();
             let mut frame = Frame::new_with_payload(item.0, &compressed[..count]);
             frame.set_rsv1(true);
             frame
@@ -133,6 +134,7 @@ fn decode_deflate_frame(enable: bool, frame: Frame) -> Result<Option<(OpCode, By
     if compressed {
         let mut data = vec![];
         let mut input = frame.payload_data_unmask().to_vec();
+        tracing::debug!("{:?}, {:x?}", frame, input);
         input.extend([0x00, 0x00, 0xff, 0xff]);
         let mut deflate_decoder = DeflateDecoder::new(&input[..]);
         deflate_decoder.read_to_end(&mut data).unwrap();
@@ -195,10 +197,11 @@ pub fn default_deflate_check_fn(
     } else {
         false
     };
-    let codec = WebSocketDeflateCodec {
+    let mut codec = WebSocketDeflateCodec {
         enable,
         ..Default::default()
     };
+    codec.codec.config.check_rsv = false;
     debug!("{:#?}", codec);
     Ok(Framed::new(stream, codec))
 }

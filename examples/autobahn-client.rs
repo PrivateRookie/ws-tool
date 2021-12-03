@@ -70,9 +70,10 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                 },
             }
         } else {
-            let mut data = BytesMut::new();
-            data.extend_from_slice(&1000u16.to_be_bytes());
-            client.send((OpCode::Close, data)).await.unwrap();
+            break;
+            // let mut data = BytesMut::new();
+            // data.extend_from_slice(&1000u16.to_be_bytes());
+            // client.send((OpCode::Close, data)).await.unwrap();
         }
     }
 
