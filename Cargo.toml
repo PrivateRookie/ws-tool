@@ -41,13 +41,12 @@ async-http-proxy = { version = "1", features = [
 
 # deflate deps
 flate2 = { version = "1", optional = true }
-libflate = { version = "1", optional = true }
 
 [features]
 default = []
 proxy = ["tokio-socks", "async-http-proxy"]
 rustls = ["tokio-rustls", "webpki", "webpki-roots"]
-deflate = ["flate2", "libflate"]
+deflate = ["flate2"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

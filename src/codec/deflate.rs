@@ -87,9 +87,9 @@ pub struct WebSocketDeflateCodec {
 fn encode_frame(enable: bool, item: (OpCode, BytesMut)) -> Frame {
     match &item.0 {
         OpCode::Text | OpCode::Binary if enable => {
-            let mut compressed = BytesMut::with_capacity(item.1.len());
+            let mut compressed = Vec::with_capacity(item.1.len());
             let mut deflate_encoder = DeflateEncoder::new(item.1.as_ref(), Compression::fast());
-            let count = deflate_encoder.read(&mut compressed).unwrap();
+            let count = deflate_encoder.read_to_end(&mut compressed).unwrap();
             let mut frame = Frame::new_with_payload(item.0, &compressed[..count]);
             frame.set_rsv1(true);
             frame

@@ -58,7 +58,11 @@ async fn main() -> Result<(), ()> {
             .send((OpCode::Text, BytesMut::from_iter(input.as_bytes())))
             .await
             .unwrap();
-        if let Some(Ok((_, msg))) = client.next().await {
+        if let Some(Ok((code, msg))) = client.next().await {
+            if code == OpCode::Close {
+                break;
+            }
+            tracing::info!("{:?}", msg);
             println!("[RECV] > {}", String::from_utf8(msg[..].to_vec()).unwrap());
             if &msg == "quit" {
                 break;
