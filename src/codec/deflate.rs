@@ -6,7 +6,7 @@ use crate::stream::WsStream;
 use bytes::{Buf, Bytes, BytesMut};
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
-use flate2::Compression;
+use flate2::{Compress, Compression, Decompress, FlushCompress};
 use tracing::{debug, trace};
 
 use std::fmt::Debug;
@@ -64,39 +64,59 @@ impl DeflateConfig {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 pub struct WebSocketDeflateEncoder {
     pub enable: bool,
     pub deflate_config: DeflateConfig,
     pub frame_encoder: WebSocketFrameEncoder,
+    pub compress: Compress,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 pub struct WebSocketDeflateDecoder {
     pub enable: bool,
     pub deflate_config: DeflateConfig,
     pub frame_decoder: WebSocketFrameDecoder,
+    pub decompress: Decompress,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 pub struct WebSocketDeflateCodec {
     pub enable: bool,
     pub deflate_config: DeflateConfig,
     pub codec: WebSocketFrameCodec,
+    pub compress: Compress,
+    pub decompress: Decompress,
 }
 
-fn encode_frame(enable: bool, item: (OpCode, BytesMut)) -> Frame {
+impl Default for WebSocketDeflateCodec {
+    fn default() -> Self {
+        Self {
+            enable: Default::default(),
+            deflate_config: Default::default(),
+            codec: Default::default(),
+            compress: Compress::new(Compression::fast(), true),
+            decompress: Decompress::new(true),
+        }
+    }
+}
+
+fn encode_frame(compress: &mut Compress, enable: bool, item: (OpCode, BytesMut)) -> Frame {
     match &item.0 {
         OpCode::Text | OpCode::Binary if enable => {
-            let mut deflate_encoder =
-                DeflateEncoder::new(Vec::with_capacity(item.1.len()), Compression::fast());
-            deflate_encoder.write(item.1.as_ref()).unwrap();
-            let compressed = deflate_encoder.finish().unwrap();
-            println!("{:x?}", &compressed);
+            let mut compressed = Vec::with_capacity(100);
+            let input = Vec::from(item.1.as_ref());
+            compress
+                .compress_vec(&input, &mut compressed, FlushCompress::Sync)
+                .unwrap();
+            println!("{} {}", compress.total_in(), compress.total_out());
+            println!("----> {:x?}", &compressed);
+            for _ in 0..4 {
+                compressed.pop();
+            }
             let mut frame = Frame::new_with_payload(item.0, &compressed);
             frame.set_rsv1(true);
             frame
-
         }
         _ => Frame::new_with_payload(item.0, &item.1),
     }
@@ -106,9 +126,8 @@ impl Encoder<(OpCode, BytesMut)> for WebSocketDeflateEncoder {
     type Error = WsError;
 
     fn encode(&mut self, item: (OpCode, BytesMut), dst: &mut BytesMut) -> Result<(), Self::Error> {
-        tracing::info!("{:?}", item.1);
         self.frame_encoder
-            .encode(encode_frame(self.enable, item), dst)
+            .encode(encode_frame(&mut self.compress, self.enable, item), dst)
     }
 }
 
@@ -116,12 +135,16 @@ impl Encoder<(OpCode, BytesMut)> for WebSocketDeflateCodec {
     type Error = WsError;
 
     fn encode(&mut self, item: (OpCode, BytesMut), dst: &mut BytesMut) -> Result<(), Self::Error> {
-        tracing::info!("{:?}", item.1);
-        self.codec.encode(encode_frame(self.enable, item), dst)
+        self.codec
+            .encode(encode_frame(&mut self.compress, self.enable, item), dst)
     }
 }
 
-fn decode_deflate_frame(enable: bool, frame: Frame) -> Result<Option<(OpCode, BytesMut)>, WsError> {
+fn decode_deflate_frame(
+    decompress: &mut Decompress,
+    enable: bool,
+    frame: Frame,
+) -> Result<Option<(OpCode, BytesMut)>, WsError> {
     let op_code = frame.opcode();
     let compressed = frame.rsv1();
 
@@ -142,8 +165,9 @@ fn decode_deflate_frame(enable: bool, frame: Frame) -> Result<Option<(OpCode, By
         let mut input = frame.payload_data_unmask().to_vec();
         tracing::debug!("{:?}, {:x?}", frame, input);
         input.extend([0x00, 0x00, 0xff, 0xff]);
-        let mut deflate_decoder = DeflateDecoder::new(&input[..]);
-        deflate_decoder.read_to_end(&mut data).unwrap();
+        decompress
+            .decompress_vec(&input, &mut data, flate2::FlushDecompress::Finish)
+            .unwrap();
         Ok(Some((op_code, BytesMut::from(&data[..]))))
     } else {
         let mut data = BytesMut::new();
@@ -159,7 +183,7 @@ impl Decoder for WebSocketDeflateDecoder {
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if let Some(frame) = self.frame_decoder.decode(src)? {
-            decode_deflate_frame(self.enable, frame)
+            decode_deflate_frame(&mut self.decompress, self.enable, frame)
         } else {
             Ok(None)
         }
@@ -173,7 +197,7 @@ impl Decoder for WebSocketDeflateCodec {
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if let Some(frame) = self.codec.decode(src)? {
-            decode_deflate_frame(self.enable, frame)
+            decode_deflate_frame(&mut self.decompress, self.enable, frame)
         } else {
             Ok(None)
         }
@@ -259,6 +283,7 @@ impl
                     fragmented_data: codec.fragmented_data,
                     fragmented_type: codec.fragmented_type,
                 },
+                decompress: parts.codec.decompress,
                 enable: parts.codec.enable,
                 deflate_config: parts.codec.deflate_config.clone(),
             },
@@ -272,6 +297,7 @@ impl
                 },
                 enable: parts.codec.enable,
                 deflate_config: parts.codec.deflate_config,
+                compress: parts.codec.compress,
             },
         );
         *frame_write.write_buffer_mut() = parts.write_buf;
