@@ -55,7 +55,7 @@ async fn main() -> Result<(), ()> {
             break;
         }
         client
-            .send((OpCode::Text, BytesMut::from_iter(input.as_bytes())))
+            .send((OpCode::Text, BytesMut::from_iter(input.trim().as_bytes())))
             .await
             .unwrap();
         if let Some(Ok((code, msg))) = client.next().await {

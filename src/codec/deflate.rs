@@ -4,12 +4,13 @@ use crate::frame::{Frame, OpCode};
 use crate::protocol::standard_handshake_resp_check;
 use crate::stream::WsStream;
 use bytes::{Buf, Bytes, BytesMut};
-use flate2::read::{DeflateDecoder, DeflateEncoder};
+use flate2::read::DeflateDecoder;
+use flate2::write::DeflateEncoder;
 use flate2::Compression;
 use tracing::{debug, trace};
 
 use std::fmt::Debug;
-use std::io::Read;
+use std::io::{Read, Write};
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio_util::codec::{Decoder, Encoder, Framed, FramedRead, FramedWrite};
 
@@ -87,12 +88,15 @@ pub struct WebSocketDeflateCodec {
 fn encode_frame(enable: bool, item: (OpCode, BytesMut)) -> Frame {
     match &item.0 {
         OpCode::Text | OpCode::Binary if enable => {
-            let mut compressed = Vec::with_capacity(item.1.len());
-            let mut deflate_encoder = DeflateEncoder::new(item.1.as_ref(), Compression::fast());
-            let count = deflate_encoder.read_to_end(&mut compressed).unwrap();
-            let mut frame = Frame::new_with_payload(item.0, &compressed[..count]);
+            let mut deflate_encoder =
+                DeflateEncoder::new(Vec::with_capacity(item.1.len()), Compression::fast());
+            deflate_encoder.write(item.1.as_ref()).unwrap();
+            let compressed = deflate_encoder.finish().unwrap();
+            println!("{:x?}", &compressed);
+            let mut frame = Frame::new_with_payload(item.0, &compressed);
             frame.set_rsv1(true);
             frame
+
         }
         _ => Frame::new_with_payload(item.0, &item.1),
     }
@@ -102,6 +106,7 @@ impl Encoder<(OpCode, BytesMut)> for WebSocketDeflateEncoder {
     type Error = WsError;
 
     fn encode(&mut self, item: (OpCode, BytesMut), dst: &mut BytesMut) -> Result<(), Self::Error> {
+        tracing::info!("{:?}", item.1);
         self.frame_encoder
             .encode(encode_frame(self.enable, item), dst)
     }
@@ -111,6 +116,7 @@ impl Encoder<(OpCode, BytesMut)> for WebSocketDeflateCodec {
     type Error = WsError;
 
     fn encode(&mut self, item: (OpCode, BytesMut), dst: &mut BytesMut) -> Result<(), Self::Error> {
+        tracing::info!("{:?}", item.1);
         self.codec.encode(encode_frame(self.enable, item), dst)
     }
 }
