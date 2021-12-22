@@ -1,10 +1,15 @@
+use bytes::BytesMut;
 use futures::SinkExt;
 use tokio_stream::StreamExt;
 use tracing::*;
+use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_frame_check_fn, default_string_check_fn, send_close},
+    codec::{
+        default_deflate_check_fn, default_frame_check_fn, default_string_check_fn, send_close,
+        DeflateConfig,
+    },
     errors::WsError,
-    frame::{Frame, OpCode},
+    frame::OpCode,
     ClientBuilder,
 };
 
@@ -25,26 +30,25 @@ async fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
     let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
     let mut client = ClientBuilder::new(&url)
-        .connect_with_check(default_frame_check_fn)
+        .extension(DeflateConfig::default().build_header())
+        .connect_with_check(default_deflate_check_fn)
         .await
         .unwrap();
     loop {
         if let Some(maybe_frame) = client.next().await {
             match maybe_frame {
-                Ok(frame) => match frame.opcode() {
+                Ok((code, data)) => match code {
                     OpCode::Text | OpCode::Binary => {
-                        let payload = frame.payload_data_unmask();
-                        let echo = Frame::new_with_payload(frame.opcode(), &payload);
-                        client.send(echo).await?;
+                        client.send((code, data)).await?;
                     }
                     OpCode::Close => {
-                        send_close(&mut client, 1000, "".to_string()).await?;
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&1000u16.to_be_bytes());
+                        client.send((OpCode::Close, data)).await.unwrap();
                         break;
                     }
                     OpCode::Ping => {
-                        let mut echo = Frame::new_with_opcode(OpCode::Pong);
-                        echo.set_payload(&frame.payload_data_unmask());
-                        client.send(echo).await?;
+                        client.send((code, data)).await?;
                     }
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
@@ -53,16 +57,23 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                 },
                 Err(e) => match e {
                     WsError::ProtocolError { close_code, error } => {
-                        send_close(&mut client, close_code, error.to_string()).await?;
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&close_code.to_be_bytes());
+                        data.extend_from_slice(&error.to_string().as_bytes());
+                        client.send((OpCode::Close, data)).await.unwrap();
                     }
                     _ => {
-                        send_close(&mut client, 1000, e.to_string()).await?;
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&1000u16.to_be_bytes());
+                        client.send((OpCode::Close, data)).await.unwrap();
                     }
                 },
             }
         } else {
-            send_close(&mut client, 1000, "".to_string()).await?;
             break;
+            // let mut data = BytesMut::new();
+            // data.extend_from_slice(&1000u16.to_be_bytes());
+            // client.send((OpCode::Close, data)).await.unwrap();
         }
     }
 
@@ -82,6 +93,11 @@ async fn update_report() -> Result<(), WsError> {
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
+    tracing_subscriber::fmt::fmt()
+        .with_max_level(Level::DEBUG)
+        .finish()
+        .try_init()
+        .expect("failed to init log");
     let count = get_case_count().await.unwrap();
     info!("total case {}", count);
     for case in 1..=count {

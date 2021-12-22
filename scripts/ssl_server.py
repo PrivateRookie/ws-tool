@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 
 # WSS (WS over TLS) server example, with a self-signed certificate
 
@@ -24,7 +23,7 @@ cert_pem = pathlib.Path(__file__).with_name("target.pem")
 ssl_context.load_cert_chain(cert_pem, key_pem)
 
 start_server = websockets.serve(
-    hello, "0.0.0.0", 4430, ssl=ssl_context
+    hello, "0.0.0.0", 4430,  compression = "deflate", ssl=ssl_context,
 )
 print("running on 0.0.0.0:4430")
 asyncio.get_event_loop().run_until_complete(start_server)

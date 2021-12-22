@@ -7,5 +7,6 @@
         "thiserror",
         "webpki"
     ],
-    "python.pythonPath": ".venv/bin/python"
+    "python.pythonPath": ".venv/bin/python",
+    "rust-analyzer.cargo.allFeatures": true
 }

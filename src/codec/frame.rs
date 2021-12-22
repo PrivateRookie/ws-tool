@@ -10,6 +10,8 @@ use std::{fmt::Debug, ops::Deref};
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio_util::codec::{Decoder, Encoder, Framed, FramedRead, FramedWrite};
 
+use super::SplitSocket;
+
 #[derive(Debug, Clone)]
 pub struct FrameConfig {
     pub check_rsv: bool,
@@ -52,16 +54,16 @@ pub struct WebSocketFrameCodec {
     pub fragmented_type: OpCode,
 }
 
-pub async fn send_close<S: Sink<Frame, Error = WsError> + Unpin>(
+pub async fn send_close<S: Sink<I, Error = E> + Unpin, E: From<WsError>, I: From<Frame>>(
     framed: &mut S,
     code: u16,
     reason: String,
-) -> Result<(), WsError> {
+) -> Result<(), E> {
     let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
     payload.extend_from_slice(&code.to_be_bytes());
     payload.extend_from_slice(reason.as_bytes());
     let close = Frame::new_with_payload(OpCode::Close, &payload);
-    framed.send(close).await
+    framed.send(close.into()).await
 }
 
 pub fn default_frame_check_fn(
@@ -231,12 +233,12 @@ pub fn decode_frame(
                 }
                 fragmented_data.extend_from_slice(&frame.payload_data_unmask());
                 if frame.fin() {
-                    if String::from_utf8(fragmented_data.to_vec()).is_err() {
-                        return Err(WsError::ProtocolError {
-                            close_code: 1007,
-                            error: ProtocolError::InvalidUtf8,
-                        });
-                    }
+                    // if String::from_utf8(fragmented_data.to_vec()).is_err() {
+                    //     return Err(WsError::ProtocolError {
+                    //         close_code: 1007,
+                    //         error: ProtocolError::InvalidUtf8,
+                    //     });
+                    // }
                     let completed_frame =
                         Frame::new_with_payload(fragmented_type.clone(), fragmented_data);
                     return Ok(Some(completed_frame));
@@ -258,14 +260,14 @@ pub fn decode_frame(
                     fragmented_data.extend_from_slice(&payload);
                     Ok(None)
                 } else {
-                    if opcode == OpCode::Text
-                        && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
-                    {
-                        return Err(WsError::ProtocolError {
-                            close_code: 1007,
-                            error: ProtocolError::InvalidUtf8,
-                        });
-                    }
+                    // if opcode == OpCode::Text
+                    //     && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
+                    // {
+                    //     return Err(WsError::ProtocolError {
+                    //         close_code: 1007,
+                    //         error: ProtocolError::InvalidUtf8,
+                    //     });
+                    // }
                     return Ok(Some(frame));
                 }
             }
@@ -369,247 +371,6 @@ impl Decoder for WebSocketFrameCodec {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct WebSocketBytesEncoder {
-    pub frame_encoder: WebSocketFrameEncoder,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct WebSocketBytesDecoder {
-    pub frame_decoder: WebSocketFrameDecoder,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct WebSocketBytesCodec {
-    pub frame_codec: WebSocketFrameCodec,
-}
-
-pub fn default_bytes_check_fn(
-    key: String,
-    resp: http::Response<()>,
-    stream: WsStream,
-) -> Result<Framed<WsStream, WebSocketBytesCodec>, WsError> {
-    standard_handshake_resp_check(key.as_bytes(), &resp)?;
-    Ok(Framed::new(stream, WebSocketBytesCodec::default()))
-}
-
-pub fn default_bytes_codec_factory(
-    _req: http::Request<()>,
-    stream: WsStream,
-) -> Result<Framed<WsStream, WebSocketBytesCodec>, WsError> {
-    let mut frame_codec = WebSocketFrameCodec::default();
-    // do not mask server side frame
-    frame_codec.config.mask = false;
-    Ok(Framed::new(stream, WebSocketBytesCodec { frame_codec }))
-}
-
-impl Encoder<(OpCode, BytesMut)> for WebSocketBytesEncoder {
-    type Error = WsError;
-
-    fn encode(&mut self, item: (OpCode, BytesMut), dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(item.0, &item.1);
-        self.frame_encoder.encode(frame, dst)
-    }
-}
-
-impl Encoder<(OpCode, BytesMut)> for WebSocketBytesCodec {
-    type Error = WsError;
-
-    fn encode(&mut self, item: (OpCode, BytesMut), dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(item.0, &item.1);
-        self.frame_codec.encode(frame, dst)
-    }
-}
-
-impl Encoder<BytesMut> for WebSocketBytesEncoder {
-    type Error = WsError;
-
-    fn encode(&mut self, item: BytesMut, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(OpCode::Binary, &item);
-        self.frame_encoder.encode(frame, dst)
-    }
-}
-
-impl Encoder<BytesMut> for WebSocketBytesCodec {
-    type Error = WsError;
-
-    fn encode(&mut self, item: BytesMut, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(OpCode::Binary, &item);
-        self.frame_codec.encode(frame, dst)
-    }
-}
-
-impl Decoder for WebSocketBytesDecoder {
-    type Item = (OpCode, BytesMut);
-
-    type Error = WsError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        self.frame_decoder.decode(src).map(|maybe_frame| {
-            maybe_frame.map(|frame| {
-                let mut data = BytesMut::new();
-                data.extend_from_slice(&frame.payload_data_unmask());
-                (frame.opcode(), data)
-            })
-        })
-    }
-}
-
-impl Decoder for WebSocketBytesCodec {
-    type Item = (OpCode, BytesMut);
-
-    type Error = WsError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        self.frame_codec.decode(src).map(|maybe_frame| {
-            maybe_frame.map(|frame| {
-                let mut data = BytesMut::new();
-                data.extend_from_slice(&frame.payload_data_unmask());
-                (frame.opcode(), data)
-            })
-        })
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct WebSocketStringEncoder {
-    pub frame_encoder: WebSocketFrameEncoder,
-}
-
-#[derive(Debug, Clone)]
-pub struct WebSocketStringDecoder {
-    pub frame_decoder: WebSocketFrameDecoder,
-    pub validate_utf8: bool,
-}
-
-impl Default for WebSocketStringDecoder {
-    fn default() -> Self {
-        Self {
-            frame_decoder: Default::default(),
-            validate_utf8: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct WebSocketStringCodec {
-    pub frame_codec: WebSocketFrameCodec,
-    pub validate_utf8: bool,
-}
-
-impl Default for WebSocketStringCodec {
-    fn default() -> Self {
-        Self {
-            frame_codec: Default::default(),
-            validate_utf8: true,
-        }
-    }
-}
-
-pub fn default_string_check_fn(
-    key: String,
-    resp: http::Response<()>,
-    stream: WsStream,
-) -> Result<Framed<WsStream, WebSocketStringCodec>, WsError> {
-    standard_handshake_resp_check(key.as_bytes(), &resp)?;
-    Ok(Framed::new(stream, WebSocketStringCodec::default()))
-}
-
-pub fn default_string_codec_factory(
-    _req: http::Request<()>,
-    stream: WsStream,
-) -> Result<Framed<WsStream, WebSocketStringCodec>, WsError> {
-    let mut frame_codec = WebSocketFrameCodec::default();
-    // do not mask server side frame
-    frame_codec.config.mask = false;
-    Ok(Framed::new(
-        stream,
-        WebSocketStringCodec {
-            frame_codec,
-            validate_utf8: true,
-        },
-    ))
-}
-
-impl Encoder<String> for WebSocketStringEncoder {
-    type Error = WsError;
-
-    fn encode(&mut self, item: String, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(OpCode::Text, item.as_bytes());
-        self.frame_encoder.encode(frame, dst)
-    }
-}
-
-impl Encoder<String> for WebSocketStringCodec {
-    type Error = WsError;
-
-    fn encode(&mut self, item: String, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(OpCode::Text, item.as_bytes());
-        self.frame_codec.encode(frame, dst)
-    }
-}
-
-impl Decoder for WebSocketStringDecoder {
-    type Item = (OpCode, String);
-
-    type Error = WsError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let maybe_frame = self.frame_decoder.decode(src)?;
-        if let Some(frame) = maybe_frame {
-            let data = frame.payload_data_unmask();
-            let s = if self.validate_utf8 {
-                String::from_utf8(data.to_vec()).map_err(|_| WsError::ProtocolError {
-                    close_code: 1001,
-                    error: ProtocolError::InvalidUtf8,
-                })?
-            } else {
-                String::from_utf8_lossy(&data).to_string()
-            };
-            Ok(Some((frame.opcode(), s)))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-impl Decoder for WebSocketStringCodec {
-    type Item = (OpCode, String);
-
-    type Error = WsError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let maybe_frame = self.frame_codec.decode(src)?;
-        if let Some(frame) = maybe_frame {
-            let data = frame.payload_data_unmask();
-            let s = if self.validate_utf8 {
-                String::from_utf8(data.to_vec()).map_err(|_| WsError::ProtocolError {
-                    close_code: 1001,
-                    error: ProtocolError::InvalidUtf8,
-                })?
-            } else {
-                String::from_utf8_lossy(&data).to_string()
-            };
-            Ok(Some((frame.opcode(), s)))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-pub trait SplitSocket<EI, DI, E, D>
-where
-    E: Encoder<EI, Error = WsError>,
-    D: Decoder<Item = DI, Error = WsError>,
-{
-    fn split(
-        self,
-    ) -> (
-        FramedRead<ReadHalf<WsStream>, D>,
-        FramedWrite<WriteHalf<WsStream>, E>,
-    );
-}
-
 impl SplitSocket<Frame, Frame, WebSocketFrameEncoder, WebSocketFrameDecoder>
     for Framed<WsStream, WebSocketFrameCodec>
 {
@@ -636,81 +397,6 @@ impl SplitSocket<Frame, Frame, WebSocketFrameEncoder, WebSocketFrameDecoder>
             write_io,
             WebSocketFrameEncoder {
                 config: codec.config,
-            },
-        );
-        *frame_write.write_buffer_mut() = parts.write_buf;
-        (frame_read, frame_write)
-    }
-}
-
-impl SplitSocket<BytesMut, (OpCode, BytesMut), WebSocketBytesEncoder, WebSocketBytesDecoder>
-    for Framed<WsStream, WebSocketBytesCodec>
-{
-    fn split(
-        self,
-    ) -> (
-        FramedRead<ReadHalf<WsStream>, WebSocketBytesDecoder>,
-        FramedWrite<WriteHalf<WsStream>, WebSocketBytesEncoder>,
-    ) {
-        let parts = self.into_parts();
-        let (read_io, write_io) = tokio::io::split(parts.io);
-        let codec = parts.codec.frame_codec;
-        let mut frame_read = FramedRead::new(
-            read_io,
-            WebSocketBytesDecoder {
-                frame_decoder: WebSocketFrameDecoder {
-                    config: codec.config.clone(),
-                    fragmented: codec.fragmented,
-                    fragmented_data: codec.fragmented_data,
-                    fragmented_type: codec.fragmented_type,
-                },
-            },
-        );
-        *frame_read.read_buffer_mut() = parts.read_buf;
-        let mut frame_write = FramedWrite::new(
-            write_io,
-            WebSocketBytesEncoder {
-                frame_encoder: WebSocketFrameEncoder {
-                    config: codec.config,
-                },
-            },
-        );
-        *frame_write.write_buffer_mut() = parts.write_buf;
-        (frame_read, frame_write)
-    }
-}
-
-impl SplitSocket<String, (OpCode, String), WebSocketStringEncoder, WebSocketStringDecoder>
-    for Framed<WsStream, WebSocketStringCodec>
-{
-    fn split(
-        self,
-    ) -> (
-        FramedRead<ReadHalf<WsStream>, WebSocketStringDecoder>,
-        FramedWrite<WriteHalf<WsStream>, WebSocketStringEncoder>,
-    ) {
-        let parts = self.into_parts();
-        let (read_io, write_io) = tokio::io::split(parts.io);
-        let codec = parts.codec.frame_codec;
-        let mut frame_read = FramedRead::new(
-            read_io,
-            WebSocketStringDecoder {
-                frame_decoder: WebSocketFrameDecoder {
-                    config: codec.config.clone(),
-                    fragmented: codec.fragmented,
-                    fragmented_data: codec.fragmented_data,
-                    fragmented_type: codec.fragmented_type,
-                },
-                validate_utf8: parts.codec.validate_utf8,
-            },
-        );
-        *frame_read.read_buffer_mut() = parts.read_buf;
-        let mut frame_write = FramedWrite::new(
-            write_io,
-            WebSocketStringEncoder {
-                frame_encoder: WebSocketFrameEncoder {
-                    config: codec.config,
-                },
             },
         );
         *frame_write.write_buffer_mut() = parts.write_buf;

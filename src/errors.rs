@@ -77,4 +77,7 @@ pub enum ProtocolError {
     InvalidCloseCode(u16),
     #[error("payload too large, max payload size {0}")]
     PayloadTooLarge(usize),
+    #[cfg(feature="deflate")]
+    #[error("enable deflate but rsv1 not set")]
+    NotDeflateDataWhileEnabled,
 }
