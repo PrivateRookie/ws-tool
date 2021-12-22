@@ -9,7 +9,7 @@ use ws_tool::{
         DeflateConfig,
     },
     errors::WsError,
-    frame::{Frame, OpCode},
+    frame::OpCode,
     ClientBuilder,
 };
 

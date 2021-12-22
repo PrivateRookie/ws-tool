@@ -1,16 +1,14 @@
-use crate::codec::FrameConfig;
+#![allow(dead_code)]
+
 use crate::errors::{ProtocolError, WsError};
 use crate::frame::{Frame, OpCode};
 use crate::protocol::standard_handshake_resp_check;
 use crate::stream::WsStream;
-use bytes::{Buf, Bytes, BytesMut};
-use flate2::read::DeflateDecoder;
-use flate2::write::DeflateEncoder;
+use bytes::BytesMut;
 use flate2::{Compress, Compression, Decompress, FlushCompress};
-use tracing::{debug, trace};
+use tracing::debug;
 
 use std::fmt::Debug;
-use std::io::{Read, Write};
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio_util::codec::{Decoder, Encoder, Framed, FramedRead, FramedWrite};
 
@@ -109,8 +107,6 @@ fn encode_frame(compress: &mut Compress, enable: bool, item: (OpCode, BytesMut))
             compress
                 .compress_vec(&input, &mut compressed, FlushCompress::Sync)
                 .unwrap();
-            println!("{} {}", compress.total_in(), compress.total_out());
-            println!("----> {:x?}", &compressed);
             for _ in 0..4 {
                 compressed.pop();
             }

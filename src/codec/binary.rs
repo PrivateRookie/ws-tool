@@ -34,6 +34,7 @@ pub fn default_bytes_check_fn(
     Ok(Framed::new(stream, WebSocketBytesCodec::default()))
 }
 
+#[allow(dead_code)]
 pub fn default_bytes_codec_factory(
     _req: http::Request<()>,
     stream: WsStream,

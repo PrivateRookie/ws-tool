@@ -54,16 +54,16 @@ pub struct WebSocketFrameCodec {
     pub fragmented_type: OpCode,
 }
 
-pub async fn send_close<S: Sink<Frame, Error = WsError> + Unpin>(
+pub async fn send_close<S: Sink<I, Error = E> + Unpin, E: From<WsError>, I: From<Frame>>(
     framed: &mut S,
     code: u16,
     reason: String,
-) -> Result<(), WsError> {
+) -> Result<(), E> {
     let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
     payload.extend_from_slice(&code.to_be_bytes());
     payload.extend_from_slice(reason.as_bytes());
     let close = Frame::new_with_payload(OpCode::Close, &payload);
-    framed.send(close).await
+    framed.send(close.into()).await
 }
 
 pub fn default_frame_check_fn(

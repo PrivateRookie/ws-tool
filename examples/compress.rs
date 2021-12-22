@@ -7,7 +7,7 @@ use tokio_stream::StreamExt;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_deflate_check_fn, default_string_check_fn, DeflateConfig},
+    codec::{default_deflate_check_fn, DeflateConfig},
     frame::OpCode,
     ClientBuilder,
 };
