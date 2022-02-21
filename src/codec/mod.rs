@@ -8,6 +8,9 @@ mod frame;
 mod text;
 #[cfg(feature="deflate")]
 mod deflate;
+
+mod sync;
+
 pub use binary::*;
 pub use frame::*;
 pub use text::*;
