@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use bytes::{Buf, BytesMut};
 
@@ -7,16 +7,15 @@ use crate::{
     frame::{get_bit, parse_opcode, parse_payload_len, Frame, OpCode},
 };
 
-use super::FrameReadState;
+use super::{FrameReadState, FrameConfig};
 
 type IOResult<T> = std::io::Result<T>;
-
-pub struct WebSocketFrameCodec<S: Read + Write> {
+pub struct AWebSocketFrameCodec<S: AsyncRead + AsyncWrite> {
     stream: S,
     state: FrameReadState,
 }
 
-impl<S: Read + Write> WebSocketFrameCodec<S> {
+impl<S: AsyncRead + AsyncWrite + Unpin> AWebSocketFrameCodec<S> {
     pub fn new(stream: S) -> Self {
         Self {
             stream,
@@ -24,15 +23,16 @@ impl<S: Read + Write> WebSocketFrameCodec<S> {
         }
     }
 
-    fn poll(&mut self) -> IOResult<usize> {
-        self.stream.read(&mut self.state.read_buf)
+    pub async fn poll(&mut self) -> IOResult<usize> {
+        let state = &mut self.state;
+        let count = self.stream.read(&mut state.read_buf).await?;
+        Ok(count)
     }
 
-    fn read_single_frame(&mut self) -> Result<Frame, WsError> {
+    async fn read_single_frame(&mut self) -> Result<Frame, WsError> {
         while !self.state.leading_bits_ok() {
-            self.poll()?;
+            self.poll().await?;
         }
-
         // TODO check nonzero value according to extension negotiation
         let leading_bits = self.state.get_leading_bits();
         if self.state.config.check_rsv
@@ -65,7 +65,7 @@ impl<S: Read + Write> WebSocketFrameCodec<S> {
             expected_len += 4;
         }
         while !self.state.body_ok(expected_len) {
-            self.poll()?;
+            self.poll().await?;
         }
         let mut data = BytesMut::with_capacity(expected_len);
         data.extend_from_slice(&self.state.read_buf[..expected_len]);
@@ -73,9 +73,9 @@ impl<S: Read + Write> WebSocketFrameCodec<S> {
         Ok(Frame(data))
     }
 
-    pub fn receive(&mut self) -> Result<Frame, WsError> {
+    pub async fn receive(&mut self) -> Result<Frame, WsError> {
         loop {
-            let frame = self.read_single_frame()?;
+            let frame = self.read_single_frame().await?;
             let opcode = frame.opcode();
             match opcode {
                 OpCode::Continue => {
