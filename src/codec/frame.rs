@@ -10,8 +10,6 @@ use std::{fmt::Debug, ops::Deref};
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio_util::codec::{Decoder, Encoder, Framed, FramedRead, FramedWrite};
 
-use super::SplitSocket;
-
 #[derive(Debug, Clone)]
 pub struct FrameConfig {
     pub check_rsv: bool,
@@ -29,6 +27,477 @@ impl Default for FrameConfig {
             max_frame_payload_size: 0,
             auto_fragment_size: 0,
             merge_frame: true,
+        }
+    }
+}
+type IOResult<T> = std::io::Result<T>;
+
+#[cfg(features = "async")]
+pub use non_block::AWebSocketFrameCodec;
+
+#[cfg(features = "blocking")]
+pub use blocking::WebSocketFrameCodec;
+
+struct FrameReadState {
+    fragmented: bool,
+    config: FrameConfig,
+    read_buf: BytesMut,
+    fragmented_data: BytesMut,
+    fragmented_type: OpCode,
+}
+
+impl FrameReadState {
+    pub fn new() -> Self {
+        Self {
+            config: FrameConfig::default(),
+            fragmented: false,
+            read_buf: BytesMut::with_capacity(1024 * 4),
+            fragmented_data: BytesMut::new(),
+            fragmented_type: OpCode::default(),
+        }
+    }
+
+    pub fn with_config(config: FrameConfig) -> Self {
+        Self {
+            config,
+            ..Self::new()
+        }
+    }
+
+    pub fn leading_bits_ok(&self) -> bool {
+        self.read_buf.len() >= 2
+    }
+
+    pub fn get_leading_bits(&self) -> u8 {
+        self.read_buf[0] >> 4
+    }
+
+    pub fn body_ok(&self, expect_len: usize) -> bool {
+        self.read_buf.len() >= expect_len
+    }
+
+    fn parse_frame_header(&mut self) -> Result<usize, WsError> {
+        // TODO check nonzero value according to extension negotiation
+        let leading_bits = self.get_leading_bits();
+        if self.config.check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
+            return Err(WsError::ProtocolError {
+                close_code: 1008,
+                error: ProtocolError::InvalidLeadingBits(leading_bits),
+            });
+        }
+        parse_opcode(self.read_buf[0]).map_err(|e| WsError::ProtocolError {
+            error: ProtocolError::InvalidOpcode(e),
+            close_code: 1008,
+        })?;
+        let (payload_len, len_occ_bytes) =
+            parse_payload_len(self.read_buf.as_ref()).map_err(|e| WsError::ProtocolError {
+                close_code: 1008,
+                error: e,
+            })?;
+        let max_payload_size = self.config.max_frame_payload_size;
+        if max_payload_size > 0 && payload_len > max_payload_size {
+            return Err(WsError::ProtocolError {
+                close_code: 1008,
+                error: ProtocolError::PayloadTooLarge(max_payload_size),
+            });
+        }
+        let mut expected_len = 1 + len_occ_bytes + payload_len;
+        let mask = get_bit(&self.read_buf, 1, 0);
+        if mask {
+            expected_len += 4;
+        };
+        Ok(expected_len)
+    }
+
+    fn consume_frame(&mut self, len: usize) -> Frame {
+        let mut data = BytesMut::with_capacity(len);
+        data.extend_from_slice(&self.read_buf[..len]);
+        self.read_buf.advance(len);
+        Frame(data)
+    }
+
+    fn check_frame(&mut self, frame: Frame) -> Result<Option<Frame>, WsError> {
+        let opcode = frame.opcode();
+        match opcode {
+            OpCode::Continue => {
+                if !self.fragmented {
+                    return Err(WsError::ProtocolError {
+                        close_code: 1002,
+                        error: ProtocolError::MissInitialFragmentedFrame,
+                    });
+                }
+                self.fragmented_data
+                    .extend_from_slice(&frame.payload_data_unmask());
+                if frame.fin() {
+                    // if String::from_utf8(fragmented_data.to_vec()).is_err() {
+                    //     return Err(WsError::ProtocolError {
+                    //         close_code: 1007,
+                    //         error: ProtocolError::InvalidUtf8,
+                    //     });
+                    // }
+                    let completed_frame = Frame::new_with_payload(
+                        self.fragmented_type.clone(),
+                        &self.fragmented_data,
+                    );
+                    Ok(Some(completed_frame))
+                } else {
+                    Ok(None)
+                }
+            }
+            OpCode::Text | OpCode::Binary => {
+                if self.fragmented {
+                    return Err(WsError::ProtocolError {
+                        close_code: 1002,
+                        error: ProtocolError::NotContinueFrameAfterFragmented,
+                    });
+                }
+                if !frame.fin() {
+                    self.fragmented = true;
+                    self.fragmented_type = opcode.clone();
+                    let payload = frame.payload_data_unmask();
+                    self.fragmented_data.extend_from_slice(&payload);
+                    Ok(None)
+                } else {
+                    // if opcode == OpCode::Text
+                    //     && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
+                    // {
+                    //     return Err(WsError::ProtocolError {
+                    //         close_code: 1007,
+                    //         error: ProtocolError::InvalidUtf8,
+                    //     });
+                    // }
+                    Ok(Some(frame))
+                }
+            }
+            OpCode::Close | OpCode::Ping | OpCode::Pong => {
+                if !frame.fin() {
+                    return Err(WsError::ProtocolError {
+                        close_code: 1002,
+                        error: ProtocolError::FragmentedControlFrame,
+                    });
+                }
+                let payload_len = frame.payload_len();
+                if payload_len > 125 {
+                    let error = ProtocolError::ControlFrameTooBig(payload_len as usize);
+                    return Err(WsError::ProtocolError {
+                        close_code: 1002,
+                        error,
+                    });
+                }
+                if opcode == OpCode::Close {
+                    if payload_len == 1 {
+                        let error = ProtocolError::InvalidCloseFramePayload;
+                        return Err(WsError::ProtocolError {
+                            close_code: 1002,
+                            error,
+                        });
+                    }
+                    if payload_len >= 2 {
+                        let payload = frame.payload_data_unmask();
+
+                        // check close code
+                        let mut code_byte = [0u8; 2];
+                        code_byte.copy_from_slice(&payload[..2]);
+                        let code = u16::from_be_bytes(code_byte);
+                        if code < 1000
+                            || (1004..=1006).contains(&code)
+                            || (1015..=2999).contains(&code)
+                            || code >= 5000
+                        {
+                            let error = ProtocolError::InvalidCloseCode(code);
+                            return Err(WsError::ProtocolError {
+                                close_code: 1002,
+                                error,
+                            });
+                        }
+
+                        // utf-8 validation
+                        if String::from_utf8(payload[2..].to_vec()).is_err() {
+                            let error = ProtocolError::InvalidUtf8;
+                            return Err(WsError::ProtocolError {
+                                close_code: 1007,
+                                error,
+                            });
+                        }
+                    }
+                }
+                if opcode == OpCode::Close || !self.fragmented {
+                    Ok(Some(frame))
+                } else {
+                    tracing::debug!("{:?} frame between self.fragmented data", opcode);
+                    Ok(Some(frame))
+                }
+            }
+            OpCode::ReservedNonControl | OpCode::ReservedControl => {
+                return Err(WsError::UnsupportedFrame(opcode));
+            }
+        }
+    }
+}
+
+struct FrameWriteState {
+    config: FrameConfig,
+}
+
+impl FrameWriteState {
+    pub fn new() -> Self {
+        Self {
+            config: FrameConfig::default(),
+        }
+    }
+
+    pub fn with_config(config: FrameConfig) -> Self {
+        Self { config }
+    }
+}
+
+#[cfg(feature = "blocking")]
+mod blocking {
+    use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
+    use crate::{
+        errors::WsError,
+        frame::{Frame, OpCode},
+    };
+    use std::io::{Read, Write};
+
+    impl FrameReadState {
+        fn poll<S: Read>(&mut self, stream: &mut S) -> IOResult<usize> {
+            stream.read(&mut self.read_buf)
+        }
+
+        fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<Frame, WsError> {
+            while !self.leading_bits_ok() {
+                self.poll(stream)?;
+            }
+            let len = self.parse_frame_header()?;
+            while !self.body_ok(len) {
+                self.poll(stream)?;
+            }
+            Ok(self.consume_frame(len))
+        }
+
+        pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<Frame, WsError> {
+            loop {
+                let frame = self.read_one_frame(stream)?;
+                if let Some(frame) = self.check_frame(frame)? {
+                    break Ok(frame);
+                }
+            }
+        }
+    }
+
+    impl FrameWriteState {
+        fn send_one<S: Write>(
+            &mut self,
+            payload: &[u8],
+            fin: bool,
+            mask: bool,
+            code: OpCode,
+            stream: &mut S,
+        ) -> IOResult<usize> {
+            let mut frame = Frame::new_with_opcode(code);
+            frame.set_fin(fin);
+            frame.set_mask(mask);
+            frame.set_payload(payload);
+            stream.write(&frame.0)
+        }
+
+        pub fn send<S: Write>(
+            &mut self,
+            payload: &[u8],
+            code: OpCode,
+            stream: &mut S,
+        ) -> IOResult<usize> {
+            let split_size = self.config.auto_fragment_size;
+            let data = payload;
+            if split_size > 0 {
+                let mut idx = 0;
+                let mut fin = idx + split_size >= data.len();
+                let mut total = 0;
+                while (idx + split_size) <= data.len() {
+                    let end = data.len().min(idx + split_size);
+                    let send = self.send_one(
+                        &data[idx..end],
+                        fin,
+                        self.config.mask,
+                        code.clone(),
+                        stream,
+                    )?;
+                    total += send;
+                    idx = end;
+                    fin = idx + split_size >= data.len();
+                }
+                Ok(total)
+            } else {
+                self.send_one(&data, true, self.config.mask, code, stream)
+            }
+        }
+    }
+
+    pub struct WebSocketFrameCodec<S: Read + Write> {
+        stream: S,
+        read_state: FrameReadState,
+        write_state: FrameWriteState,
+    }
+
+    impl<S: Read + Write> WebSocketFrameCodec<S> {
+        pub fn new(stream: S) -> Self {
+            Self {
+                stream,
+                read_state: FrameReadState::new(),
+                write_state: FrameWriteState::new(),
+            }
+        }
+
+        pub fn new_with(stream: S, config: FrameConfig) -> Self {
+            Self {
+                stream,
+                read_state: FrameReadState::with_config(config.clone()),
+                write_state: FrameWriteState::with_config(config),
+            }
+        }
+
+        pub fn receive(&mut self) -> Result<Frame, WsError> {
+            self.read_state.receive(&mut self.stream)
+        }
+
+        pub fn send(&mut self, payload: &[u8], code: OpCode) -> Result<usize, WsError> {
+            self.write_state
+                .send(payload, code, &mut self.stream)
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+    }
+}
+
+#[cfg(feature = "async")]
+mod non_block {
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+    use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
+    use crate::{
+        errors::WsError,
+        frame::{Frame, OpCode},
+    };
+
+    impl FrameReadState {
+        async fn async_poll<S: AsyncRead + Unpin>(&mut self, stream: &mut S) -> IOResult<usize> {
+            stream.read(&mut self.read_buf).await
+        }
+
+        async fn async_read_one_frame<S: AsyncRead + Unpin>(
+            &mut self,
+            stream: &mut S,
+        ) -> Result<Frame, WsError> {
+            while !self.leading_bits_ok() {
+                self.async_poll(stream).await?;
+            }
+            let len = self.parse_frame_header()?;
+            while !self.body_ok(len) {
+                self.async_poll(stream).await?;
+            }
+            Ok(self.consume_frame(len))
+        }
+
+        pub async fn async_receive<S: AsyncRead + Unpin>(
+            &mut self,
+            stream: &mut S,
+        ) -> Result<Frame, WsError> {
+            loop {
+                let frame = self.async_read_one_frame(stream).await?;
+                if let Some(frame) = self.check_frame(frame)? {
+                    break Ok(frame);
+                }
+            }
+        }
+    }
+
+    impl FrameWriteState {
+        async fn async_send_one<S: AsyncWrite + Unpin>(
+            &mut self,
+            payload: &[u8],
+            fin: bool,
+            mask: bool,
+            code: OpCode,
+            stream: &mut S,
+        ) -> IOResult<usize> {
+            let mut frame = Frame::new_with_opcode(code);
+            frame.set_fin(fin);
+            frame.set_mask(mask);
+            frame.set_payload(payload);
+            stream.write(&frame.0).await
+        }
+
+        pub async fn async_send<S: AsyncWrite + Unpin>(
+            &mut self,
+            payload: &[u8],
+            code: OpCode,
+            stream: &mut S,
+        ) -> IOResult<usize> {
+            let split_size = self.config.auto_fragment_size;
+            let data = payload;
+            if split_size > 0 {
+                let mut idx = 0;
+                let mut fin = idx + split_size >= data.len();
+                let mut total = 0;
+                while (idx + split_size) <= data.len() {
+                    let end = data.len().min(idx + split_size);
+                    let send = self
+                        .async_send_one(
+                            &data[idx..end],
+                            fin,
+                            self.config.mask,
+                            code.clone(),
+                            stream,
+                        )
+                        .await?;
+                    total += send;
+                    idx = end;
+                    fin = idx + split_size >= data.len();
+                }
+                Ok(total)
+            } else {
+                self.async_send_one(&data, true, self.config.mask, code, stream)
+                    .await
+            }
+        }
+    }
+
+    pub struct AWebSocketFrameCodec<S: AsyncRead + AsyncWrite> {
+        stream: S,
+        read_state: FrameReadState,
+        write_state: FrameWriteState,
+    }
+
+    impl<S: AsyncRead + AsyncWrite + Unpin> AWebSocketFrameCodec<S> {
+        pub fn new(stream: S) -> Self {
+            Self {
+                stream,
+                read_state: FrameReadState::new(),
+                write_state: FrameWriteState::new(),
+            }
+        }
+
+        pub fn new_with(stream: S, config: FrameConfig) -> Self {
+            Self {
+                stream,
+                read_state: FrameReadState::with_config(config.clone()),
+                write_state: FrameWriteState::with_config(config),
+            }
+        }
+
+        pub fn stream_mut(&mut self) -> &mut S {
+            &mut self.stream
+        }
+
+        pub async fn receive(&mut self) -> Result<Frame, WsError> {
+            self.read_state.async_receive(&mut self.stream).await
+        }
+
+        pub async fn send(&mut self, payload: &[u8], code: OpCode) -> Result<usize, WsError> {
+            self.write_state
+                .async_send(payload, code, &mut self.stream)
+                .await
+                .map_err(|e| WsError::IOError(Box::new(e)))
         }
     }
 }
@@ -371,35 +840,35 @@ impl Decoder for WebSocketFrameCodec {
     }
 }
 
-impl SplitSocket<Frame, Frame, WebSocketFrameEncoder, WebSocketFrameDecoder>
-    for Framed<WsStream, WebSocketFrameCodec>
-{
-    fn split(
-        self,
-    ) -> (
-        FramedRead<ReadHalf<WsStream>, WebSocketFrameDecoder>,
-        FramedWrite<WriteHalf<WsStream>, WebSocketFrameEncoder>,
-    ) {
-        let parts = self.into_parts();
-        let (read_io, write_io) = tokio::io::split(parts.io);
-        let codec = parts.codec;
-        let mut frame_read = FramedRead::new(
-            read_io,
-            WebSocketFrameDecoder {
-                config: codec.config.clone(),
-                fragmented: codec.fragmented,
-                fragmented_data: codec.fragmented_data,
-                fragmented_type: codec.fragmented_type,
-            },
-        );
-        *frame_read.read_buffer_mut() = parts.read_buf;
-        let mut frame_write = FramedWrite::new(
-            write_io,
-            WebSocketFrameEncoder {
-                config: codec.config,
-            },
-        );
-        *frame_write.write_buffer_mut() = parts.write_buf;
-        (frame_read, frame_write)
-    }
-}
+// impl SplitSocket<Frame, Frame, WebSocketFrameEncoder, WebSocketFrameDecoder>
+//     for Framed<WsStream, WebSocketFrameCodec>
+// {
+//     fn split(
+//         self,
+//     ) -> (
+//         FramedRead<ReadHalf<WsStream>, WebSocketFrameDecoder>,
+//         FramedWrite<WriteHalf<WsStream>, WebSocketFrameEncoder>,
+//     ) {
+//         let parts = self.into_parts();
+//         let (read_io, write_io) = tokio::io::split(parts.io);
+//         let codec = parts.codec;
+//         let mut frame_read = FramedRead::new(
+//             read_io,
+//             WebSocketFrameDecoder {
+//                 config: codec.config.clone(),
+//                 fragmented: codec.fragmented,
+//                 fragmented_data: codec.fragmented_data,
+//                 fragmented_type: codec.fragmented_type,
+//             },
+//         );
+//         *frame_read.read_buffer_mut() = parts.read_buf;
+//         let mut frame_write = FramedWrite::new(
+//             write_io,
+//             WebSocketFrameEncoder {
+//                 config: codec.config,
+//             },
+//         );
+//         *frame_write.write_buffer_mut() = parts.write_buf;
+//         (frame_read, frame_write)
+//     }
+// }

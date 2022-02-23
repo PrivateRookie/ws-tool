@@ -44,6 +44,8 @@ flate2 = { version = "1", optional = true }
 
 [features]
 default = []
+blocking = []
+async = []
 proxy = ["tokio-socks", "async-http-proxy"]
 rustls = ["tokio-rustls", "webpki", "webpki-roots"]
 deflate = ["flate2"]

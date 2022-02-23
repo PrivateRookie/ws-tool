@@ -5,10 +5,9 @@ use crate::stream::WsStream;
 use bytes::BytesMut;
 
 use std::fmt::Debug;
-use tokio::io::{ReadHalf, WriteHalf};
-use tokio_util::codec::{Decoder, Encoder, Framed, FramedRead, FramedWrite};
+use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use super::{SplitSocket, WebSocketFrameCodec, WebSocketFrameDecoder, WebSocketFrameEncoder};
+use super::{WebSocketFrameCodec, WebSocketFrameDecoder, WebSocketFrameEncoder};
 
 #[derive(Debug, Clone, Default)]
 pub struct WebSocketStringEncoder {
@@ -136,40 +135,40 @@ impl Decoder for WebSocketStringCodec {
     }
 }
 
-impl SplitSocket<String, (OpCode, String), WebSocketStringEncoder, WebSocketStringDecoder>
-    for Framed<WsStream, WebSocketStringCodec>
-{
-    fn split(
-        self,
-    ) -> (
-        FramedRead<ReadHalf<WsStream>, WebSocketStringDecoder>,
-        FramedWrite<WriteHalf<WsStream>, WebSocketStringEncoder>,
-    ) {
-        let parts = self.into_parts();
-        let (read_io, write_io) = tokio::io::split(parts.io);
-        let codec = parts.codec.frame_codec;
-        let mut frame_read = FramedRead::new(
-            read_io,
-            WebSocketStringDecoder {
-                frame_decoder: WebSocketFrameDecoder {
-                    config: codec.config.clone(),
-                    fragmented: codec.fragmented,
-                    fragmented_data: codec.fragmented_data,
-                    fragmented_type: codec.fragmented_type,
-                },
-                validate_utf8: parts.codec.validate_utf8,
-            },
-        );
-        *frame_read.read_buffer_mut() = parts.read_buf;
-        let mut frame_write = FramedWrite::new(
-            write_io,
-            WebSocketStringEncoder {
-                frame_encoder: WebSocketFrameEncoder {
-                    config: codec.config,
-                },
-            },
-        );
-        *frame_write.write_buffer_mut() = parts.write_buf;
-        (frame_read, frame_write)
-    }
-}
+// impl SplitSocket<String, (OpCode, String), WebSocketStringEncoder, WebSocketStringDecoder>
+//     for Framed<WsStream, WebSocketStringCodec>
+// {
+//     fn split(
+//         self,
+//     ) -> (
+//         FramedRead<ReadHalf<WsStream>, WebSocketStringDecoder>,
+//         FramedWrite<WriteHalf<WsStream>, WebSocketStringEncoder>,
+//     ) {
+//         let parts = self.into_parts();
+//         let (read_io, write_io) = tokio::io::split(parts.io);
+//         let codec = parts.codec.frame_codec;
+//         let mut frame_read = FramedRead::new(
+//             read_io,
+//             WebSocketStringDecoder {
+//                 frame_decoder: WebSocketFrameDecoder {
+//                     config: codec.config.clone(),
+//                     fragmented: codec.fragmented,
+//                     fragmented_data: codec.fragmented_data,
+//                     fragmented_type: codec.fragmented_type,
+//                 },
+//                 validate_utf8: parts.codec.validate_utf8,
+//             },
+//         );
+//         *frame_read.read_buffer_mut() = parts.read_buf;
+//         let mut frame_write = FramedWrite::new(
+//             write_io,
+//             WebSocketStringEncoder {
+//                 frame_encoder: WebSocketFrameEncoder {
+//                     config: codec.config,
+//                 },
+//             },
+//         );
+//         *frame_write.write_buffer_mut() = parts.write_buf;
+//         (frame_read, frame_write)
+//     }
+// }

@@ -12,7 +12,7 @@ use std::fmt::Debug;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio_util::codec::{Decoder, Encoder, Framed, FramedRead, FramedWrite};
 
-use super::{SplitSocket, WebSocketFrameCodec, WebSocketFrameDecoder, WebSocketFrameEncoder};
+use super::{WebSocketFrameCodec, WebSocketFrameDecoder, WebSocketFrameEncoder};
 
 const EXT_ID: &str = "permessage-deflate";
 
@@ -253,50 +253,50 @@ pub fn default_bytes_codec_factory(
     Ok(Framed::new(stream, codec))
 }
 
-impl
-    SplitSocket<
-        (OpCode, BytesMut),
-        (OpCode, BytesMut),
-        WebSocketDeflateEncoder,
-        WebSocketDeflateDecoder,
-    > for Framed<WsStream, WebSocketDeflateCodec>
-{
-    fn split(
-        self,
-    ) -> (
-        FramedRead<ReadHalf<WsStream>, WebSocketDeflateDecoder>,
-        FramedWrite<WriteHalf<WsStream>, WebSocketDeflateEncoder>,
-    ) {
-        let parts = self.into_parts();
-        let (read_io, write_io) = tokio::io::split(parts.io);
-        let codec = parts.codec.codec;
-        let mut frame_read = FramedRead::new(
-            read_io,
-            WebSocketDeflateDecoder {
-                frame_decoder: WebSocketFrameDecoder {
-                    config: codec.config.clone(),
-                    fragmented: codec.fragmented,
-                    fragmented_data: codec.fragmented_data,
-                    fragmented_type: codec.fragmented_type,
-                },
-                decompress: parts.codec.decompress,
-                enable: parts.codec.enable,
-                deflate_config: parts.codec.deflate_config.clone(),
-            },
-        );
-        *frame_read.read_buffer_mut() = parts.read_buf;
-        let mut frame_write = FramedWrite::new(
-            write_io,
-            WebSocketDeflateEncoder {
-                frame_encoder: WebSocketFrameEncoder {
-                    config: codec.config,
-                },
-                enable: parts.codec.enable,
-                deflate_config: parts.codec.deflate_config,
-                compress: parts.codec.compress,
-            },
-        );
-        *frame_write.write_buffer_mut() = parts.write_buf;
-        (frame_read, frame_write)
-    }
-}
+// impl
+//     SplitSocket<
+//         (OpCode, BytesMut),
+//         (OpCode, BytesMut),
+//         WebSocketDeflateEncoder,
+//         WebSocketDeflateDecoder,
+//     > for Framed<WsStream, WebSocketDeflateCodec>
+// {
+//     fn split(
+//         self,
+//     ) -> (
+//         FramedRead<ReadHalf<WsStream>, WebSocketDeflateDecoder>,
+//         FramedWrite<WriteHalf<WsStream>, WebSocketDeflateEncoder>,
+//     ) {
+//         let parts = self.into_parts();
+//         let (read_io, write_io) = tokio::io::split(parts.io);
+//         let codec = parts.codec.codec;
+//         let mut frame_read = FramedRead::new(
+//             read_io,
+//             WebSocketDeflateDecoder {
+//                 frame_decoder: WebSocketFrameDecoder {
+//                     config: codec.config.clone(),
+//                     fragmented: codec.fragmented,
+//                     fragmented_data: codec.fragmented_data,
+//                     fragmented_type: codec.fragmented_type,
+//                 },
+//                 decompress: parts.codec.decompress,
+//                 enable: parts.codec.enable,
+//                 deflate_config: parts.codec.deflate_config.clone(),
+//             },
+//         );
+//         *frame_read.read_buffer_mut() = parts.read_buf;
+//         let mut frame_write = FramedWrite::new(
+//             write_io,
+//             WebSocketDeflateEncoder {
+//                 frame_encoder: WebSocketFrameEncoder {
+//                     config: codec.config,
+//                 },
+//                 enable: parts.codec.enable,
+//                 deflate_config: parts.codec.deflate_config,
+//                 compress: parts.codec.compress,
+//             },
+//         );
+//         *frame_write.write_buffer_mut() = parts.write_buf;
+//         (frame_read, frame_write)
+//     }
+// }
