@@ -5,7 +5,7 @@ use tracing::*;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{
-        default_deflate_check_fn, default_frame_check_fn, default_string_check_fn, send_close,
+        default_deflate_check_fn, frame_check_fn, default_string_check_fn, send_close,
         DeflateConfig,
     },
     errors::WsError,
@@ -17,7 +17,7 @@ const AGENT: &str = "ws-tool-client";
 
 async fn get_case_count() -> Result<usize, WsError> {
     let mut client = ClientBuilder::new("ws://localhost:9002/getCaseCount")
-        .connect_with_check(default_string_check_fn)
+        .async_connect(default_string_check_fn)
         .await
         .unwrap();
     let (_, count) = client.next().await.unwrap().unwrap();
@@ -31,7 +31,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
     let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
     let mut client = ClientBuilder::new(&url)
         .extension(DeflateConfig::default().build_header())
-        .connect_with_check(default_deflate_check_fn)
+        .async_connect(default_deflate_check_fn)
         .await
         .unwrap();
     loop {
@@ -85,7 +85,7 @@ async fn update_report() -> Result<(), WsError> {
         "ws://localhost:9002/updateReports?agent={}",
         AGENT
     ))
-    .connect_with_check(default_frame_check_fn)
+    .async_connect(frame_check_fn)
     .await
     .unwrap();
     send_close(&mut client, 1000, "".to_string()).await

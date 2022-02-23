@@ -32,7 +32,7 @@ async fn main() -> Result<(), ()> {
         builder = builder.proxy(&proxy)
     }
     let mut client = builder
-        .connect_with_check(default_string_check_fn)
+        .async_connect(default_string_check_fn)
         .await
         .unwrap();
 
