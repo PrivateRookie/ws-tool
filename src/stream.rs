@@ -1,7 +1,7 @@
 #[cfg(feature = "blocking")]
 mod blocking {
 
-    #[cfg(feature = "tls_rutls")]
+    #[cfg(feature = "tls_rustls")]
     mod stream {
         use rustls_connector::TlsStream;
         use std::{
@@ -17,7 +17,7 @@ mod blocking {
         impl WsStream {
             pub fn stream_mut(&mut self) -> &mut TcpStream {
                 match self {
-                    WsStream::Plain(s) => &mut s,
+                    WsStream::Plain(s) => s,
                     WsStream::Tls(tls) => tls.get_mut(),
                 }
             }
@@ -27,6 +27,7 @@ mod blocking {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
                 match self {
                     WsStream::Plain(s) => s.read(buf),
+                    WsStream::Tls(s) => s.read(buf),
                 }
             }
         }
@@ -35,18 +36,20 @@ mod blocking {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 match self {
                     WsStream::Plain(s) => s.write(buf),
+                    WsStream::Tls(s) => s.write(buf),
                 }
             }
 
             fn flush(&mut self) -> std::io::Result<()> {
                 match self {
                     WsStream::Plain(s) => s.flush(),
+                    WsStream::Tls(s) => s.flush(),
                 }
             }
         }
     }
 
-    #[cfg(not(feature = "tls_rutls"))]
+    #[cfg(not(feature = "tls_rustls"))]
     mod stream {
         use std::{
             io::{Read, Write},

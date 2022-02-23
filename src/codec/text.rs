@@ -3,9 +3,10 @@ mod blocking {
     use std::io::{Read, Write};
 
     use crate::{
-        codec::WsFrameCodec,
+        codec::{FrameConfig, WsFrameCodec},
         errors::{ProtocolError, WsError},
         frame::OpCode,
+        protocol::standard_handshake_resp_check,
     };
 
     pub struct WsStringCodec<S: Read + Write> {
@@ -14,11 +15,33 @@ mod blocking {
     }
 
     impl<S: Read + Write> WsStringCodec<S> {
-        pub fn new(stream: S, validate_utf8: bool) -> Self {
+        pub fn new(stream: S) -> Self {
             Self {
                 frame_codec: WsFrameCodec::new(stream),
+                validate_utf8: false,
+            }
+        }
+
+        pub fn new_with(stream: S, config: FrameConfig, validate_utf8: bool) -> Self {
+            Self {
+                frame_codec: WsFrameCodec::new_with(stream, config),
                 validate_utf8,
             }
+        }
+
+        pub fn stream_mut(&mut self) -> &mut S {
+            self.frame_codec.stream_mut()
+        }
+
+        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+            standard_handshake_resp_check(key.as_bytes(), &resp)?;
+            Ok(Self::new_with(stream, FrameConfig::default(), true))
+        }
+
+        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+            let mut config = FrameConfig::default();
+            config.mask = false;
+            Ok(Self::new_with(stream, config, true))
         }
 
         pub fn receive(&mut self) -> Result<(OpCode, String), WsError> {
@@ -53,9 +76,10 @@ mod non_blocking {
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::{
-        codec::AsyncWsFrameCodec,
+        codec::{AsyncWsFrameCodec, FrameConfig},
         errors::{ProtocolError, WsError},
         frame::OpCode,
+        protocol::standard_handshake_resp_check,
     };
 
     pub struct AsyncWsStringCodec<S: AsyncRead + AsyncWrite> {
@@ -64,11 +88,33 @@ mod non_blocking {
     }
 
     impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsStringCodec<S> {
-        pub fn new(stream: S, validate_utf8: bool) -> Self {
+        pub fn new(stream: S) -> Self {
             Self {
                 frame_codec: AsyncWsFrameCodec::new(stream),
+                validate_utf8: false,
+            }
+        }
+
+        pub fn new_with(stream: S, config: FrameConfig, validate_utf8: bool) -> Self {
+            Self {
+                frame_codec: AsyncWsFrameCodec::new_with(stream, config),
                 validate_utf8,
             }
+        }
+
+        pub fn stream_mut(&mut self) -> &mut S {
+            self.frame_codec.stream_mut()
+        }
+
+        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+            standard_handshake_resp_check(key.as_bytes(), &resp)?;
+            Ok(Self::new_with(stream, FrameConfig::default(), true))
+        }
+
+        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+            let mut config = FrameConfig::default();
+            config.mask = false;
+            Ok(Self::new_with(stream, config, true))
         }
 
         pub async fn receive(&mut self) -> Result<(OpCode, String), WsError> {

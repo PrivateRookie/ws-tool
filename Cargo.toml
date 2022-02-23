@@ -51,7 +51,7 @@ tls_rustls = ["blocking", "rustls-connector"]
 async = ["tokio", "tokio-stream", "futures"]
 proxy = ["async", "tokio-socks", "async-http-proxy"]
 async_tls_rustls = ["async", "tokio-rustls", "webpki", "webpki-roots"]
-deflate = ["flate2"]
+# deflate = ["flate2"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

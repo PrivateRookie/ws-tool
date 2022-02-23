@@ -2,7 +2,6 @@ use crate::errors::{ProtocolError, WsError};
 use crate::frame::{get_bit, parse_opcode, parse_payload_len, Frame, OpCode};
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
 use bytes::{Buf, BytesMut};
-use futures::{Sink, SinkExt};
 use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
@@ -26,12 +25,6 @@ impl Default for FrameConfig {
     }
 }
 type IOResult<T> = std::io::Result<T>;
-
-#[cfg(feature = "async")]
-pub use non_block::AsyncWsFrameCodec;
-
-#[cfg(feature = "blocking")]
-pub use blocking::WsFrameCodec;
 
 struct FrameReadState {
     fragmented: bool,
@@ -252,7 +245,7 @@ mod blocking {
     use crate::{
         errors::WsError,
         frame::{Frame, OpCode},
-        stream::WsStream,
+        protocol::standard_handshake_resp_check,
     };
     use std::io::{Read, Write};
 
@@ -353,6 +346,21 @@ mod blocking {
             }
         }
 
+        pub fn stream_mut(&mut self) -> &mut S {
+            &mut self.stream
+        }
+
+        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+            let mut config = FrameConfig::default();
+            config.mask = false;
+            Ok(Self::new_with(stream, config))
+        }
+
+        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+            standard_handshake_resp_check(key.as_bytes(), &resp)?;
+            Ok(Self::new_with(stream, FrameConfig::default()))
+        }
+
         pub fn receive(&mut self) -> Result<Frame, WsError> {
             self.read_state.receive(&mut self.stream)
         }
@@ -363,17 +371,10 @@ mod blocking {
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }
     }
-
-    pub fn frame_codec_factory(
-        _req: http::Request<()>,
-        stream: WsStream,
-    ) -> Result<WsFrameCodec<WsStream>, WsError> {
-        let mut config = FrameConfig::default();
-        // do not mask server side frame
-        config.mask = false;
-        Ok(WsFrameCodec::new_with(stream, config))
-    }
 }
+
+#[cfg(feature = "blocking")]
+pub use blocking::WsFrameCodec;
 
 #[cfg(feature = "async")]
 mod non_block {
@@ -383,6 +384,7 @@ mod non_block {
     use crate::{
         errors::WsError,
         frame::{Frame, OpCode},
+        protocol::standard_handshake_resp_check,
     };
 
     impl FrameReadState {
@@ -491,6 +493,18 @@ mod non_block {
             }
         }
 
+        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+            let mut config = FrameConfig::default();
+            // do not mask server side frame
+            config.mask = false;
+            Ok(Self::new_with(stream, config))
+        }
+
+        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+            standard_handshake_resp_check(key.as_bytes(), &resp)?;
+            Ok(Self::new_with(stream, FrameConfig::default()))
+        }
+
         pub fn stream_mut(&mut self) -> &mut S {
             &mut self.stream
         }
@@ -508,17 +522,8 @@ mod non_block {
     }
 }
 
-pub async fn send_close<S: Sink<I, Error = E> + Unpin, E: From<WsError>, I: From<Frame>>(
-    framed: &mut S,
-    code: u16,
-    reason: String,
-) -> Result<(), E> {
-    let mut payload = BytesMut::with_capacity(2 + reason.as_bytes().len());
-    payload.extend_from_slice(&code.to_be_bytes());
-    payload.extend_from_slice(reason.as_bytes());
-    let close = Frame::new_with_payload(OpCode::Close, &payload);
-    framed.send(close.into()).await
-}
+#[cfg(feature = "async")]
+pub use non_block::AsyncWsFrameCodec;
 
 pub fn default_handshake_handler(
     req: http::Request<()>,

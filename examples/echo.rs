@@ -5,7 +5,7 @@ use structopt::StructOpt;
 use tokio_stream::StreamExt;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::default_string_check_fn, ClientBuilder};
+use ws_tool::ClientBuilder;
 
 /// websocket client demo with raw frame
 #[derive(StructOpt)]

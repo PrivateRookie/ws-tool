@@ -4,7 +4,12 @@ mod blocking {
 
     use bytes::BytesMut;
 
-    use crate::{codec::WsFrameCodec, errors::WsError, frame::OpCode};
+    use crate::{
+        codec::{FrameConfig, WsFrameCodec},
+        errors::WsError,
+        frame::OpCode,
+        protocol::standard_handshake_resp_check,
+    };
 
     pub struct WsBytesCodec<S: Read + Write> {
         frame_codec: WsFrameCodec<S>,
@@ -15,6 +20,28 @@ mod blocking {
             Self {
                 frame_codec: WsFrameCodec::new(stream),
             }
+        }
+
+        pub fn new_with(stream: S, config: FrameConfig) -> Self {
+            Self {
+                frame_codec: WsFrameCodec::new_with(stream, config),
+            }
+        }
+
+        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+            let mut config = FrameConfig::default();
+            // do not mask server side frame
+            config.mask = false;
+            Ok(Self::new_with(stream, config))
+        }
+
+        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+            standard_handshake_resp_check(key.as_bytes(), &resp)?;
+            Ok(Self::new_with(stream, FrameConfig::default()))
+        }
+
+        pub fn stream_mut(&mut self) -> &mut S {
+            self.frame_codec.stream_mut()
         }
 
         pub fn receive(&mut self) -> Result<(OpCode, BytesMut), WsError> {
@@ -42,7 +69,12 @@ mod non_blocking {
     use bytes::BytesMut;
     use tokio::io::{AsyncRead, AsyncWrite};
 
-    use crate::{codec::AsyncWsFrameCodec, errors::WsError, frame::OpCode};
+    use crate::{
+        codec::{AsyncWsFrameCodec, FrameConfig},
+        errors::WsError,
+        frame::OpCode,
+        protocol::standard_handshake_resp_check,
+    };
 
     pub struct AsyncWsBytesCodec<S: AsyncRead + AsyncWrite> {
         frame_codec: AsyncWsFrameCodec<S>,
@@ -53,6 +85,28 @@ mod non_blocking {
             Self {
                 frame_codec: AsyncWsFrameCodec::new(stream),
             }
+        }
+
+        pub fn new_with(stream: S, config: FrameConfig) -> Self {
+            Self {
+                frame_codec: AsyncWsFrameCodec::new_with(stream, config),
+            }
+        }
+
+        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+            let mut config = FrameConfig::default();
+            // do not mask server side frame
+            config.mask = false;
+            Ok(Self::new_with(stream, config))
+        }
+
+        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+            standard_handshake_resp_check(key.as_bytes(), &resp)?;
+            Ok(Self::new_with(stream, FrameConfig::default()))
+        }
+
+        pub fn stream_mut(&mut self) -> &mut S {
+            self.frame_codec.stream_mut()
         }
 
         pub async fn receive(&mut self) -> Result<(OpCode, BytesMut), WsError> {
