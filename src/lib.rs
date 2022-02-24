@@ -261,9 +261,8 @@ mod non_blocking {
     use tokio::{io::AsyncWriteExt, net::TcpStream};
 
     use crate::{
-        codec::AsyncWsFrameCodec,
         errors::WsError,
-        protocol::{async_handle_handshake, async_req_handshake, async_wrap_tls, Mode},
+        protocol::{async_handle_handshake, async_req_handshake, Mode},
         stream::WsAsyncStream,
         ServerBuilder,
     };
@@ -344,6 +343,7 @@ mod non_blocking {
                 Mode::WSS => {
                     #[cfg(feature = "async_tls_rustls")]
                     {
+                        use crate::protocol::async_wrap_tls;
                         let tls_stream = async_wrap_tls(stream, host, &self.certs).await?;
                         WsAsyncStream::Tls(tls_stream)
                     }

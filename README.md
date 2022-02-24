@@ -53,7 +53,7 @@ running on 0.0.0.0:4430
 now you can connect websocket server with following command
 
 ```bash
-cargo run --example echo -- wss://wsl.com:4430 -c ./scripts/target.pem
+cargo run --example echo --all-features -- wss://wsl.com:4430 -c ./scripts/target.pem
 
 [SEND] > rookie
 [RECV] > Hello rookie!
@@ -75,7 +75,7 @@ start test server
 run test on other terminal
 
 ```bash
-cargo run --example autobahn-client
+cargo run --example autobahn-client --all-features
 ```
 
 report files should be under `test_reports` dir.
@@ -93,7 +93,7 @@ report files should be under `test_reports` dir.
 
 - [ ] add proxy auth config
 - [ ] support custom https proxy cert
-- [x] split client into writer & reader
+- [ ] split client into writer & reader(working)
 
 
 ## REF
