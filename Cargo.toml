@@ -62,12 +62,8 @@ rcgen = "0.8"
 
 [[example]]
 name = "echo"
-required-features = ["rustls", "proxy"]
+# required-features = ["rustls", "proxy"]
 
 [[example]]
 name = "binance"
-required-features = ["rustls", "proxy"]
-
-[[example]]
-name = "split_binance"
-required-features = ["rustls", "proxy"]
+# required-features = ["rustls", "proxy"]

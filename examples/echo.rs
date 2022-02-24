@@ -1,11 +1,9 @@
 use std::{io::Write, path::PathBuf};
 
-use futures::SinkExt;
 use structopt::StructOpt;
-use tokio_stream::StreamExt;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::ClientBuilder;
+use ws_tool::{codec::AsyncWsStringCodec, ClientBuilder};
 
 /// websocket client demo with raw frame
 #[derive(StructOpt)]
@@ -36,7 +34,7 @@ async fn main() -> Result<(), ()> {
         builder = builder.proxy(&proxy)
     }
     let mut client = builder
-        .async_connect(default_string_check_fn)
+        .async_connect(AsyncWsStringCodec::check_fn)
         .await
         .unwrap();
 
@@ -48,8 +46,9 @@ async fn main() -> Result<(), ()> {
         if &input == "quit\n" {
             break;
         }
-        client.send(input.clone()).await.unwrap();
-        if let Some(Ok((_, msg))) = client.next().await {
+        dbg!(&input);
+        client.send((None, input.clone())).await.unwrap();
+        if let Ok((_, msg)) = client.receive().await {
             println!("[RECV] > {}", msg.trim());
             if &msg == "quit" {
                 break;

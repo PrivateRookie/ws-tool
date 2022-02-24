@@ -29,7 +29,8 @@ type IOResult<T> = std::io::Result<T>;
 struct FrameReadState {
     fragmented: bool,
     config: FrameConfig,
-    read_buf: BytesMut,
+    read_buf: [u8; 1024 * 4],
+    read_data: BytesMut,
     fragmented_data: BytesMut,
     fragmented_type: OpCode,
 }
@@ -39,7 +40,8 @@ impl FrameReadState {
         Self {
             config: FrameConfig::default(),
             fragmented: false,
-            read_buf: BytesMut::with_capacity(1024 * 4),
+            read_buf: [0; 1024 * 4],
+            read_data: BytesMut::with_capacity(1024 * 4),
             fragmented_data: BytesMut::new(),
             fragmented_type: OpCode::default(),
         }
@@ -53,15 +55,15 @@ impl FrameReadState {
     }
 
     pub fn leading_bits_ok(&self) -> bool {
-        self.read_buf.len() >= 2
+        self.read_data.len() >= 2
     }
 
     pub fn get_leading_bits(&self) -> u8 {
-        self.read_buf[0] >> 4
+        self.read_data[0] >> 4
     }
 
     pub fn body_ok(&self, expect_len: usize) -> bool {
-        self.read_buf.len() >= expect_len
+        self.read_data.len() >= expect_len
     }
 
     fn parse_frame_header(&mut self) -> Result<usize, WsError> {
@@ -73,12 +75,12 @@ impl FrameReadState {
                 error: ProtocolError::InvalidLeadingBits(leading_bits),
             });
         }
-        parse_opcode(self.read_buf[0]).map_err(|e| WsError::ProtocolError {
+        parse_opcode(self.read_data[0]).map_err(|e| WsError::ProtocolError {
             error: ProtocolError::InvalidOpcode(e),
             close_code: 1008,
         })?;
         let (payload_len, len_occ_bytes) =
-            parse_payload_len(self.read_buf.as_ref()).map_err(|e| WsError::ProtocolError {
+            parse_payload_len(self.read_data.as_ref()).map_err(|e| WsError::ProtocolError {
                 close_code: 1008,
                 error: e,
             })?;
@@ -90,7 +92,7 @@ impl FrameReadState {
             });
         }
         let mut expected_len = 1 + len_occ_bytes + payload_len;
-        let mask = get_bit(&self.read_buf, 1, 0);
+        let mask = get_bit(&self.read_data, 1, 0);
         if mask {
             expected_len += 4;
         };
@@ -99,8 +101,8 @@ impl FrameReadState {
 
     fn consume_frame(&mut self, len: usize) -> Frame {
         let mut data = BytesMut::with_capacity(len);
-        data.extend_from_slice(&self.read_buf[..len]);
-        self.read_buf.advance(len);
+        data.extend_from_slice(&self.read_data[..len]);
+        self.read_data.advance(len);
         Frame(data)
     }
 
@@ -251,7 +253,15 @@ mod blocking {
 
     impl FrameReadState {
         fn poll<S: Read>(&mut self, stream: &mut S) -> IOResult<usize> {
-            stream.read(&mut self.read_buf)
+            let count = stream.read(&mut self.read_buf)?;
+            if count == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "read eof",
+                ));
+            }
+            self.read_data.extend_from_slice(&self.read_buf[..count]);
+            Ok(count)
         }
 
         fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<Frame, WsError> {
@@ -389,7 +399,15 @@ mod non_block {
 
     impl FrameReadState {
         async fn async_poll<S: AsyncRead + Unpin>(&mut self, stream: &mut S) -> IOResult<usize> {
-            stream.read(&mut self.read_buf).await
+            let count = stream.read(&mut self.read_buf).await?;
+            if count == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "read eof",
+                ));
+            }
+            self.read_data.extend_from_slice(&self.read_buf[..count]);
+            Ok(count)
         }
 
         async fn async_read_one_frame<S: AsyncRead + Unpin>(

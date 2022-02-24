@@ -172,33 +172,12 @@ mod blocking {
                 None => mode.default_port(),
             };
 
-            let stream;
-            // #[cfg(all(feature = "proxy", feature = "async"))]
-            // {
-            //     let ws_proxy: Option<proxy::Proxy> = match proxy_uri {
-            //         Some(uri) => Some(uri.parse()?),
-            //         None => None,
-            //     };
-            //     stream = match &ws_proxy {
-            //         Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
-            //         None => TcpStream::connect((host, port)).await.map_err(|e| {
-            //             WsError::ConnectionFailed(format!(
-            //                 "failed to create tcp connection {}",
-            //                 e.to_string()
-            //             ))
-            //         })?,
-            //     };
-            // }
-
-            #[cfg(not(feature = "proxy"))]
-            {
-                stream = TcpStream::connect((host, port)).map_err(|e| {
-                    WsError::ConnectionFailed(format!(
-                        "failed to create tcp connection {}",
-                        e.to_string()
-                    ))
-                })?;
-            }
+            let stream = TcpStream::connect((host, port)).map_err(|e| {
+                WsError::ConnectionFailed(format!(
+                    "failed to create tcp connection {}",
+                    e.to_string()
+                ))
+            })?;
 
             tracing::debug!("tcp connection established");
 
@@ -237,9 +216,9 @@ mod blocking {
             Ok((key, resp, stream))
         }
 
-        pub fn connect<F>(&self, check_fn: F) -> Result<WsFrameCodec<WsStream>, WsError>
+        pub fn connect<C, F>(&self, check_fn: F) -> Result<C, WsError>
         where
-            F: Fn(String, http::Response<()>, WsStream) -> Result<WsFrameCodec<WsStream>, WsError>,
+            F: Fn(String, http::Response<()>, WsStream) -> Result<C, WsError>,
         {
             let (key, resp, stream) = self._connect()?;
             check_fn(key, resp, stream)
@@ -333,7 +312,7 @@ mod non_blocking {
             let stream;
             #[cfg(feature = "proxy")]
             {
-                let ws_proxy: Option<proxy::Proxy> = match proxy_uri {
+                let ws_proxy: Option<super::proxy::Proxy> = match proxy_uri {
                     Some(uri) => Some(uri.parse()?),
                     None => None,
                 };
@@ -396,16 +375,9 @@ mod non_blocking {
             Ok((key, resp, stream))
         }
 
-        pub async fn async_connect<C, EI, DI, F>(
-            &self,
-            check_fn: F,
-        ) -> Result<AsyncWsFrameCodec<WsAsyncStream>, WsError>
+        pub async fn async_connect<C, F>(&self, check_fn: F) -> Result<C, WsError>
         where
-            F: Fn(
-                String,
-                http::Response<()>,
-                WsAsyncStream,
-            ) -> Result<AsyncWsFrameCodec<WsAsyncStream>, WsError>,
+            F: Fn(String, http::Response<()>, WsAsyncStream) -> Result<C, WsError>,
         {
             let (key, resp, stream) = self._async_connect().await?;
             check_fn(key, resp, stream)

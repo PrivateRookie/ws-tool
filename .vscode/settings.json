@@ -13,6 +13,7 @@
         "blocking",
         "async",
         "tls_rustls",
-        "async_tls_rustls"
+        "async_tls_rustls",
+        "proxy"
     ]
 }
