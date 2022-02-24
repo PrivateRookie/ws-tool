@@ -128,9 +128,8 @@ mod blocking {
     use std::{io::Write, net::TcpStream};
 
     use crate::{
-        codec::WsFrameCodec,
         errors::WsError,
-        protocol::{handle_handshake, req_handshake, wrap_tls, Mode},
+        protocol::{handle_handshake, req_handshake, Mode},
         stream::WsStream,
         ClientBuilder, ServerBuilder,
     };
@@ -186,6 +185,7 @@ mod blocking {
                 Mode::WSS => {
                     #[cfg(feature = "tls_rustls")]
                     {
+                        use crate::protocol::wrap_tls;
                         let tls_stream = wrap_tls(stream, host, &self.certs)?;
                         WsStream::Tls(tls_stream)
                     }
