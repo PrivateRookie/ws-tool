@@ -1,13 +1,8 @@
 use bytes::BytesMut;
-use futures::SinkExt;
-use tokio_stream::StreamExt;
 use tracing::*;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{
-        default_deflate_check_fn, default_frame_check_fn, default_string_check_fn, send_close,
-        DeflateConfig,
-    },
+    codec::{AsyncWsFrameCodec, AsyncWsStringCodec},
     errors::WsError,
     frame::OpCode,
     ClientBuilder,
@@ -17,11 +12,11 @@ const AGENT: &str = "ws-tool-client";
 
 async fn get_case_count() -> Result<usize, WsError> {
     let mut client = ClientBuilder::new("ws://localhost:9002/getCaseCount")
-        .connect_with_check(default_string_check_fn)
+        .async_connect(AsyncWsStringCodec::check_fn)
         .await
         .unwrap();
-    let (_, count) = client.next().await.unwrap().unwrap();
-    client.next().await.unwrap().unwrap();
+    let (_, count) = client.receive().await.unwrap();
+    client.receive().await.unwrap();
     // send_close(&mut client, 1001, "".to_string()).await.unwrap();
     Ok(count.parse().unwrap())
 }
@@ -30,50 +25,46 @@ async fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
     let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
     let mut client = ClientBuilder::new(&url)
-        .extension(DeflateConfig::default().build_header())
-        .connect_with_check(default_deflate_check_fn)
+        .async_connect(AsyncWsFrameCodec::check_fn)
         .await
         .unwrap();
     loop {
-        if let Some(maybe_frame) = client.next().await {
-            match maybe_frame {
-                Ok((code, data)) => match code {
+        match client.receive().await {
+            Ok(frame) => {
+                let code = frame.opcode();
+                let data = frame.payload_data_unmask();
+                match &code {
                     OpCode::Text | OpCode::Binary => {
-                        client.send((code, data)).await?;
+                        client.send(code, &data).await?;
                     }
                     OpCode::Close => {
                         let mut data = BytesMut::new();
                         data.extend_from_slice(&1000u16.to_be_bytes());
-                        client.send((OpCode::Close, data)).await.unwrap();
+                        client.send(OpCode::Close, &data).await.unwrap();
                         break;
                     }
                     OpCode::Ping => {
-                        client.send((code, data)).await?;
+                        client.send(code, &data).await?;
                     }
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
                         unreachable!()
                     }
-                },
-                Err(e) => match e {
-                    WsError::ProtocolError { close_code, error } => {
-                        let mut data = BytesMut::new();
-                        data.extend_from_slice(&close_code.to_be_bytes());
-                        data.extend_from_slice(&error.to_string().as_bytes());
-                        client.send((OpCode::Close, data)).await.unwrap();
-                    }
-                    _ => {
-                        let mut data = BytesMut::new();
-                        data.extend_from_slice(&1000u16.to_be_bytes());
-                        client.send((OpCode::Close, data)).await.unwrap();
-                    }
-                },
+                }
             }
-        } else {
-            break;
-            // let mut data = BytesMut::new();
-            // data.extend_from_slice(&1000u16.to_be_bytes());
-            // client.send((OpCode::Close, data)).await.unwrap();
+            Err(e) => match e {
+                WsError::ProtocolError { close_code, error } => {
+                    let mut data = BytesMut::new();
+                    data.extend_from_slice(&close_code.to_be_bytes());
+                    data.extend_from_slice(&error.to_string().as_bytes());
+                    client.send(OpCode::Close, &data).await.unwrap();
+                }
+                _ => {
+                    let mut data = BytesMut::new();
+                    data.extend_from_slice(&1000u16.to_be_bytes());
+                    client.send(OpCode::Close, &data).await.unwrap();
+                }
+            },
         }
     }
 
@@ -85,10 +76,13 @@ async fn update_report() -> Result<(), WsError> {
         "ws://localhost:9002/updateReports?agent={}",
         AGENT
     ))
-    .connect_with_check(default_frame_check_fn)
+    .async_connect(AsyncWsFrameCodec::check_fn)
     .await
     .unwrap();
-    send_close(&mut client, 1000, "".to_string()).await
+    client
+        .send(OpCode::Close, &1000u16.to_be_bytes())
+        .await
+        .map(|_| ())
 }
 
 #[tokio::main]

@@ -1,12 +1,19 @@
 {
     "cSpell.words": [
-        "NODELAY",
-        "Nagle",
         "httparse",
+        "Nagle",
+        "NODELAY",
         "rustls",
+        "rutls",
         "thiserror",
         "webpki"
     ],
     "python.pythonPath": ".venv/bin/python",
-    "rust-analyzer.cargo.allFeatures": true
+    "rust-analyzer.cargo.features": [
+        "blocking",
+        "async",
+        "tls_rustls",
+        "async_tls_rustls",
+        "proxy"
+    ]
 }

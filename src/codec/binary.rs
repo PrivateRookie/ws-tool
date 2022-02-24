@@ -1,151 +1,131 @@
-use crate::errors::WsError;
-use crate::frame::{Frame, OpCode};
-use crate::protocol::standard_handshake_resp_check;
-use crate::stream::WsStream;
-use bytes::BytesMut;
+#[cfg(feature = "blocking")]
+mod blocking {
+    use std::io::{Read, Write};
 
-use std::fmt::Debug;
-use tokio::io::{ReadHalf, WriteHalf};
-use tokio_util::codec::{Decoder, Encoder, Framed, FramedRead, FramedWrite};
+    use bytes::BytesMut;
 
-use super::{SplitSocket, WebSocketFrameCodec, WebSocketFrameDecoder, WebSocketFrameEncoder};
+    use crate::{
+        codec::{FrameConfig, WsFrameCodec},
+        errors::WsError,
+        frame::OpCode,
+        protocol::standard_handshake_resp_check,
+    };
 
-#[derive(Debug, Clone, Default)]
-pub struct WebSocketBytesEncoder {
-    pub frame_encoder: WebSocketFrameEncoder,
-}
+    pub struct WsBytesCodec<S: Read + Write> {
+        frame_codec: WsFrameCodec<S>,
+    }
 
-#[derive(Debug, Clone, Default)]
-pub struct WebSocketBytesDecoder {
-    pub frame_decoder: WebSocketFrameDecoder,
-}
+    impl<S: Read + Write> WsBytesCodec<S> {
+        pub fn new(stream: S) -> Self {
+            Self {
+                frame_codec: WsFrameCodec::new(stream),
+            }
+        }
 
-#[derive(Debug, Clone, Default)]
-pub struct WebSocketBytesCodec {
-    pub frame_codec: WebSocketFrameCodec,
-}
+        pub fn new_with(stream: S, config: FrameConfig) -> Self {
+            Self {
+                frame_codec: WsFrameCodec::new_with(stream, config),
+            }
+        }
 
-pub fn default_bytes_check_fn(
-    key: String,
-    resp: http::Response<()>,
-    stream: WsStream,
-) -> Result<Framed<WsStream, WebSocketBytesCodec>, WsError> {
-    standard_handshake_resp_check(key.as_bytes(), &resp)?;
-    Ok(Framed::new(stream, WebSocketBytesCodec::default()))
-}
+        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+            let mut config = FrameConfig::default();
+            // do not mask server side frame
+            config.mask = false;
+            Ok(Self::new_with(stream, config))
+        }
 
-#[allow(dead_code)]
-pub fn default_bytes_codec_factory(
-    _req: http::Request<()>,
-    stream: WsStream,
-) -> Result<Framed<WsStream, WebSocketBytesCodec>, WsError> {
-    let mut frame_codec = WebSocketFrameCodec::default();
-    // do not mask server side frame
-    frame_codec.config.mask = false;
-    Ok(Framed::new(stream, WebSocketBytesCodec { frame_codec }))
-}
+        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+            standard_handshake_resp_check(key.as_bytes(), &resp)?;
+            Ok(Self::new_with(stream, FrameConfig::default()))
+        }
 
-impl Encoder<(OpCode, BytesMut)> for WebSocketBytesEncoder {
-    type Error = WsError;
+        pub fn stream_mut(&mut self) -> &mut S {
+            self.frame_codec.stream_mut()
+        }
 
-    fn encode(&mut self, item: (OpCode, BytesMut), dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(item.0, &item.1);
-        self.frame_encoder.encode(frame, dst)
+        pub fn receive(&mut self) -> Result<(OpCode, BytesMut), WsError> {
+            let frame = self.frame_codec.receive()?;
+            let mut data = BytesMut::new();
+            data.extend_from_slice(&frame.payload_data_unmask());
+            Ok((frame.opcode(), data))
+        }
+
+        pub fn send<T: Into<Option<OpCode>>>(
+            &mut self,
+            (code, content): (T, &[u8]),
+        ) -> Result<usize, WsError> {
+            self.frame_codec
+                .send(code.into().unwrap_or(OpCode::Binary), content)
+        }
     }
 }
 
-impl Encoder<(OpCode, BytesMut)> for WebSocketBytesCodec {
-    type Error = WsError;
+#[cfg(feature = "blocking")]
+pub use blocking::WsBytesCodec;
 
-    fn encode(&mut self, item: (OpCode, BytesMut), dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(item.0, &item.1);
-        self.frame_codec.encode(frame, dst)
+#[cfg(feature = "async")]
+mod non_blocking {
+    use bytes::BytesMut;
+    use tokio::io::{AsyncRead, AsyncWrite};
+
+    use crate::{
+        codec::{AsyncWsFrameCodec, FrameConfig},
+        errors::WsError,
+        frame::OpCode,
+        protocol::standard_handshake_resp_check,
+    };
+
+    pub struct AsyncWsBytesCodec<S: AsyncRead + AsyncWrite> {
+        frame_codec: AsyncWsFrameCodec<S>,
+    }
+
+    impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsBytesCodec<S> {
+        pub fn new(stream: S) -> Self {
+            Self {
+                frame_codec: AsyncWsFrameCodec::new(stream),
+            }
+        }
+
+        pub fn new_with(stream: S, config: FrameConfig) -> Self {
+            Self {
+                frame_codec: AsyncWsFrameCodec::new_with(stream, config),
+            }
+        }
+
+        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+            let mut config = FrameConfig::default();
+            // do not mask server side frame
+            config.mask = false;
+            Ok(Self::new_with(stream, config))
+        }
+
+        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+            standard_handshake_resp_check(key.as_bytes(), &resp)?;
+            Ok(Self::new_with(stream, FrameConfig::default()))
+        }
+
+        pub fn stream_mut(&mut self) -> &mut S {
+            self.frame_codec.stream_mut()
+        }
+
+        pub async fn receive(&mut self) -> Result<(OpCode, BytesMut), WsError> {
+            let frame = self.frame_codec.receive().await?;
+            let mut data = BytesMut::new();
+            data.extend_from_slice(&frame.payload_data_unmask());
+            Ok((frame.opcode(), data))
+        }
+
+        pub async fn send<T: Into<Option<OpCode>>>(
+            &mut self,
+            (code, content): (T, &[u8]),
+        ) -> Result<usize, WsError> {
+            self.frame_codec
+                .send(code.into().unwrap_or(OpCode::Binary), content)
+                .await
+        }
     }
 }
 
-impl Encoder<BytesMut> for WebSocketBytesEncoder {
-    type Error = WsError;
-
-    fn encode(&mut self, item: BytesMut, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(OpCode::Binary, &item);
-        self.frame_encoder.encode(frame, dst)
-    }
-}
-
-impl Encoder<BytesMut> for WebSocketBytesCodec {
-    type Error = WsError;
-
-    fn encode(&mut self, item: BytesMut, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame = Frame::new_with_payload(OpCode::Binary, &item);
-        self.frame_codec.encode(frame, dst)
-    }
-}
-
-impl Decoder for WebSocketBytesDecoder {
-    type Item = (OpCode, BytesMut);
-
-    type Error = WsError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        self.frame_decoder.decode(src).map(|maybe_frame| {
-            maybe_frame.map(|frame| {
-                let mut data = BytesMut::new();
-                data.extend_from_slice(&frame.payload_data_unmask());
-                (frame.opcode(), data)
-            })
-        })
-    }
-}
-
-impl Decoder for WebSocketBytesCodec {
-    type Item = (OpCode, BytesMut);
-
-    type Error = WsError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        self.frame_codec.decode(src).map(|maybe_frame| {
-            maybe_frame.map(|frame| {
-                let mut data = BytesMut::new();
-                data.extend_from_slice(&frame.payload_data_unmask());
-                (frame.opcode(), data)
-            })
-        })
-    }
-}
-
-impl SplitSocket<BytesMut, (OpCode, BytesMut), WebSocketBytesEncoder, WebSocketBytesDecoder>
-    for Framed<WsStream, WebSocketBytesCodec>
-{
-    fn split(
-        self,
-    ) -> (
-        FramedRead<ReadHalf<WsStream>, WebSocketBytesDecoder>,
-        FramedWrite<WriteHalf<WsStream>, WebSocketBytesEncoder>,
-    ) {
-        let parts = self.into_parts();
-        let (read_io, write_io) = tokio::io::split(parts.io);
-        let codec = parts.codec.frame_codec;
-        let mut frame_read = FramedRead::new(
-            read_io,
-            WebSocketBytesDecoder {
-                frame_decoder: WebSocketFrameDecoder {
-                    config: codec.config.clone(),
-                    fragmented: codec.fragmented,
-                    fragmented_data: codec.fragmented_data,
-                    fragmented_type: codec.fragmented_type,
-                },
-            },
-        );
-        *frame_read.read_buffer_mut() = parts.read_buf;
-        let mut frame_write = FramedWrite::new(
-            write_io,
-            WebSocketBytesEncoder {
-                frame_encoder: WebSocketFrameEncoder {
-                    config: codec.config,
-                },
-            },
-        );
-        *frame_write.write_buffer_mut() = parts.write_buf;
-        (frame_read, frame_write)
-    }
-}
+#[cfg(feature = "async")]
+pub use non_blocking::AsyncWsBytesCodec;

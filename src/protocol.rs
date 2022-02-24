@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use crate::stream::WsStream;
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use sha1::Digest;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::errors::WsError;
 
@@ -123,49 +121,208 @@ impl Mode {
     }
 }
 
-#[cfg(feature = "rustls")]
-mod tls {
-    use std::io::BufReader;
-    use std::{collections::HashSet, path::PathBuf};
-    // use std::path::PathBuf;
-    use crate::errors::WsError;
-    use std::sync::Arc;
-    use tokio::net::TcpStream;
-    use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
-    use webpki::DNSNameRef;
+#[cfg(feature = "blocking")]
+mod blocking {
+    use std::{
+        collections::HashMap,
+        io::{Read, Write},
+    };
 
-    pub(crate) async fn wrap_tls(
-        stream: TcpStream,
-        host: &str,
-        certs: &HashSet<PathBuf>,
-    ) -> Result<TlsStream<TcpStream>, WsError> {
-        let mut config = ClientConfig::new();
-        for cert_path in certs {
-            let mut pem = std::fs::File::open(cert_path).map_err(|_| {
-                WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-            })?;
-            let mut cert = BufReader::new(&mut pem);
-            config.root_store.add_pem_file(&mut cert).map_err(|_| {
-                WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-            })?;
+    use bytes::{BufMut, BytesMut};
+
+    use crate::{errors::WsError, stream::WsStream};
+
+    use super::{handle_parse_handshake, perform_parse_req, prepare_handshake, Mode};
+
+    #[cfg(feature = "tls_rustls")]
+    mod tls {
+        use std::{collections::HashSet, io::Read, net::TcpStream, path::PathBuf};
+
+        use rustls_connector::{RustlsConnectorConfig, TlsStream};
+
+        use crate::errors::WsError;
+
+        pub fn wrap_tls(
+            stream: TcpStream,
+            host: &str,
+            certs: &HashSet<PathBuf>,
+        ) -> Result<TlsStream<TcpStream>, WsError> {
+            let mut config = RustlsConnectorConfig::new_with_webpki_roots_certs();
+            let mut cert_data = vec![];
+            for cert_path in certs {
+                let mut pem = std::fs::File::open(cert_path).map_err(|_| {
+                    WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
+                })?;
+                let mut data = vec![];
+                if let Err(e) = pem.read_to_end(&mut data) {
+                    tracing::error!(
+                        "failed to read cert file {} {}",
+                        cert_path.display(),
+                        e.to_string()
+                    );
+                    continue;
+                }
+                cert_data.push(data);
+            }
+            config.add_parsable_certificates(&cert_data);
+            let connector = config.connector_with_no_client_auth();
+            let tls_stream = connector
+                .connect(host, stream)
+                .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
+            tracing::debug!("tls connection established");
+            Ok(tls_stream)
         }
-        config
-            .root_store
-            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-        let domain = DNSNameRef::try_from_ascii_str(host)
-            .map_err(|e| WsError::TlsDnsFailed(e.to_string()))?;
-        let connector = TlsConnector::from(Arc::new(config));
-        let tls_stream = connector
-            .connect(domain, stream)
-            .await
-            .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
-        tracing::debug!("tls connection established");
-        Ok(tls_stream)
+    }
+
+    #[cfg(feature = "tls_rustls")]
+    pub use tls::wrap_tls;
+
+    /// perform http upgrade
+    ///
+    /// **NOTE**: low level api
+    pub fn req_handshake(
+        stream: &mut WsStream,
+        mode: &Mode,
+        uri: &http::Uri,
+        protocols: String,
+        extensions: String,
+        version: u8,
+        extra_headers: HashMap<String, String>,
+    ) -> Result<(String, http::Response<()>), WsError> {
+        let (key, req_str) =
+            prepare_handshake(protocols, extensions, extra_headers, uri, mode, version);
+        stream.write_all(req_str.as_bytes())?;
+        let mut read_bytes = BytesMut::with_capacity(1024);
+        let mut buf: [u8; 1] = [0; 1];
+        loop {
+            let num = stream.read(&mut buf)?;
+            read_bytes.extend_from_slice(&buf[..num]);
+            let header_complete = read_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']);
+            if header_complete || num == 0 {
+                break;
+            }
+        }
+        perform_parse_req(read_bytes, key)
+    }
+
+    pub fn handle_handshake(stream: &mut WsStream) -> Result<http::Request<()>, WsError> {
+        let mut req_bytes = BytesMut::with_capacity(1024);
+        let mut buf = [0u8];
+        loop {
+            stream.read_exact(&mut buf)?;
+            req_bytes.put_u8(buf[0]);
+            if req_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']) {
+                break;
+            }
+        }
+        handle_parse_handshake(req_bytes)
     }
 }
 
-#[cfg(feature = "rustls")]
-pub(crate) use tls::wrap_tls;
+#[cfg(feature = "blocking")]
+pub use blocking::*;
+
+#[cfg(feature = "async")]
+mod non_blocking {
+    use std::collections::HashMap;
+
+    use bytes::{BufMut, BytesMut};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use crate::{errors::WsError, protocol::prepare_handshake, stream::WsAsyncStream};
+
+    use super::{handle_parse_handshake, perform_parse_req, Mode};
+
+    #[cfg(feature = "async_tls_rustls")]
+    mod tls {
+        use std::io::BufReader;
+        use std::{collections::HashSet, path::PathBuf};
+        // use std::path::PathBuf;
+        use crate::errors::WsError;
+        use std::sync::Arc;
+        use tokio::net::TcpStream;
+        use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
+        use webpki::DNSNameRef;
+
+        pub async fn async_wrap_tls(
+            stream: TcpStream,
+            host: &str,
+            certs: &HashSet<PathBuf>,
+        ) -> Result<TlsStream<TcpStream>, WsError> {
+            let mut config = ClientConfig::new();
+            for cert_path in certs {
+                let mut pem = std::fs::File::open(cert_path).map_err(|_| {
+                    WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
+                })?;
+                let mut cert = BufReader::new(&mut pem);
+                config.root_store.add_pem_file(&mut cert).map_err(|_| {
+                    WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
+                })?;
+            }
+            config
+                .root_store
+                .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+            let domain = DNSNameRef::try_from_ascii_str(host)
+                .map_err(|e| WsError::TlsDnsFailed(e.to_string()))?;
+            let connector = TlsConnector::from(Arc::new(config));
+            let tls_stream = connector
+                .connect(domain, stream)
+                .await
+                .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
+            tracing::debug!("tls connection established");
+            Ok(tls_stream)
+        }
+    }
+
+    #[cfg(feature = "async_tls_rustls")]
+    pub use tls::async_wrap_tls;
+
+    /// perform http upgrade
+    ///
+    /// **NOTE**: low level api
+    pub async fn async_req_handshake(
+        stream: &mut WsAsyncStream,
+        mode: &Mode,
+        uri: &http::Uri,
+        protocols: String,
+        extensions: String,
+        version: u8,
+        extra_headers: HashMap<String, String>,
+    ) -> Result<(String, http::Response<()>), WsError> {
+        let (key, req_str) =
+            prepare_handshake(protocols, extensions, extra_headers, uri, mode, version);
+        stream.write_all(req_str.as_bytes()).await?;
+        let mut read_bytes = BytesMut::with_capacity(1024);
+        let mut buf: [u8; 1] = [0; 1];
+        loop {
+            let num = stream.read(&mut buf).await?;
+            read_bytes.extend_from_slice(&buf[..num]);
+            let header_complete = read_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']);
+            if header_complete || num == 0 {
+                break;
+            }
+        }
+        perform_parse_req(read_bytes, key)
+    }
+
+    pub async fn async_handle_handshake(
+        stream: &mut WsAsyncStream,
+    ) -> Result<http::Request<()>, WsError> {
+        let mut req_bytes = BytesMut::with_capacity(1024);
+        let mut buf = [0u8];
+        loop {
+            stream.read_exact(&mut buf).await?;
+            req_bytes.put_u8(buf[0]);
+            if req_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']) {
+                break;
+            }
+        }
+        handle_parse_handshake(req_bytes)
+    }
+}
+
+#[cfg(feature = "async")]
+pub use non_blocking::*;
 
 /// generate random key
 pub fn gen_key() -> String {
@@ -188,18 +345,64 @@ pub struct HandshakeResponse {
     pub headers: HashMap<String, String>,
 }
 
-/// perform http upgrade
-///
-/// **NOTE**: low level api
-pub async fn perform_handshake(
-    stream: &mut WsStream,
-    mode: &Mode,
-    uri: &http::Uri,
+pub fn standard_handshake_resp_check(key: &[u8], resp: &http::Response<()>) -> Result<(), WsError> {
+    tracing::debug!("{:?}", resp);
+    if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+        return Err(WsError::HandShakeFailed(format!(
+            "expect 101 response, got {}",
+            resp.status()
+        )));
+    }
+    let expect_key = cal_accept_key(key);
+    if let Some(accept_key) = resp.headers().get("sec-websocket-accept") {
+        if accept_key.to_str().unwrap_or_default() != expect_key {
+            return Err(WsError::HandShakeFailed("mismatch key".to_string()));
+        }
+    } else {
+        return Err(WsError::HandShakeFailed(
+            "missing `sec-websocket-accept` header".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// perform rfc standard check
+pub fn standard_handshake_req_check(req: &http::Request<()>) -> Result<(), WsError> {
+    if let Some(val) = req.headers().get("upgrade") {
+        if val != "websocket" {
+            return Err(WsError::HandShakeFailed(format!(
+                "expect `websocket`, got {:?}",
+                val
+            )));
+        }
+    } else {
+        return Err(WsError::HandShakeFailed(
+            "missing `upgrade` header".to_string(),
+        ));
+    }
+
+    if let Some(val) = req.headers().get("sec-websocket-key") {
+        if val.is_empty() {
+            return Err(WsError::HandShakeFailed(
+                "empty sec-websocket-key".to_string(),
+            ));
+        }
+    } else {
+        return Err(WsError::HandShakeFailed(
+            "missing `sec-websocket-key` header".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn prepare_handshake(
     protocols: String,
     extensions: String,
-    version: u8,
     extra_headers: HashMap<String, String>,
-) -> Result<(String, http::Response<()>), WsError> {
+    uri: &http::Uri,
+    mode: &Mode,
+    version: u8,
+) -> (String, String) {
     let key = gen_key();
     let mut headers = vec![
         format!(
@@ -232,17 +435,13 @@ pub async fn perform_handshake(
         headers = headers.join("\r\n")
     );
     tracing::debug!("handshake request\n{}", req_str);
-    stream.write_all(req_str.as_bytes()).await?;
-    let mut read_bytes = BytesMut::with_capacity(1024);
-    let mut buf: [u8; 1] = [0; 1];
-    loop {
-        let num = stream.read(&mut buf).await?;
-        read_bytes.extend_from_slice(&buf[..num]);
-        let header_complete = read_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']);
-        if header_complete || num == 0 {
-            break;
-        }
-    }
+    (key, req_str)
+}
+
+fn perform_parse_req(
+    read_bytes: BytesMut,
+    key: String,
+) -> Result<(String, http::Response<()>), WsError> {
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut resp = httparse::Response::new(&mut headers);
     let _parse_status = resp
@@ -261,42 +460,11 @@ pub async fn perform_handshake(
     for header in resp.headers.iter() {
         resp_builder = resp_builder.header(header.name, header.value);
     }
-
     tracing::debug!("protocol handshake complete");
     Ok((key, resp_builder.body(()).unwrap()))
 }
 
-pub fn standard_handshake_resp_check(key: &[u8], resp: &http::Response<()>) -> Result<(), WsError> {
-    tracing::debug!("{:?}", resp);
-    if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
-        return Err(WsError::HandShakeFailed(format!(
-            "expect 101 response, got {}",
-            resp.status()
-        )));
-    }
-    let expect_key = cal_accept_key(key);
-    if let Some(accept_key) = resp.headers().get("sec-websocket-accept") {
-        if accept_key.to_str().unwrap_or_default() != expect_key {
-            return Err(WsError::HandShakeFailed("mismatch key".to_string()));
-        }
-    } else {
-        return Err(WsError::HandShakeFailed(
-            "missing `sec-websocket-accept` header".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-pub async fn handle_handshake(stream: &mut WsStream) -> Result<http::Request<()>, WsError> {
-    let mut req_bytes = BytesMut::with_capacity(1024);
-    let mut buf = [0u8];
-    loop {
-        stream.read_exact(&mut buf).await?;
-        req_bytes.put_u8(buf[0]);
-        if req_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']) {
-            break;
-        }
-    }
+fn handle_parse_handshake(req_bytes: BytesMut) -> Result<http::Request<()>, WsError> {
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);
     let _parse_status = req
@@ -317,33 +485,4 @@ pub async fn handle_handshake(stream: &mut WsStream) -> Result<http::Request<()>
         req_builder = req_builder.header(header.name, header.value);
     }
     Ok(req_builder.body(()).unwrap())
-}
-
-/// perform rfc standard check
-pub fn standard_handshake_req_check(req: &http::Request<()>) -> Result<(), WsError> {
-    if let Some(val) = req.headers().get("upgrade") {
-        if val != "websocket" {
-            return Err(WsError::HandShakeFailed(format!(
-                "expect `websocket`, got {:?}",
-                val
-            )));
-        }
-    } else {
-        return Err(WsError::HandShakeFailed(
-            "missing `upgrade` header".to_string(),
-        ));
-    }
-
-    if let Some(val) = req.headers().get("sec-websocket-key") {
-        if val.is_empty() {
-            return Err(WsError::HandShakeFailed(
-                "empty sec-websocket-key".to_string(),
-            ));
-        }
-    } else {
-        return Err(WsError::HandShakeFailed(
-            "missing `sec-websocket-key` header".to_string(),
-        ));
-    }
-    Ok(())
 }

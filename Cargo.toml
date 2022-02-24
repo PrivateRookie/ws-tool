@@ -15,8 +15,7 @@ keywords = ["websocket", "proxy", "network"]
 
 [dependencies]
 http = "0.2"
-tokio = { version = "1", features = ["rt", "net", "io-util"] }
-tokio-util = { version = "0.6", features = ["codec"] }
+tokio = { version = "1", features = ["rt", "net", "io-util"], optional = true }
 thiserror = "1"
 rand = "0.8"
 base64 = "0.13"
@@ -24,9 +23,12 @@ tracing = "0.1"
 bytes = "1"
 httparse = "1.4"
 sha-1 = "0.9"
-tokio-stream = "0.1"
-futures = "0.3"
+tokio-stream = { version = "0.1", optional = true }
+futures = { version = "0.3", optional = true }
 serde = "1"
+rustls-connector = { version = "0.16", optional = true, features = [
+    "webpki-roots-certs",
+] }
 
 # tls deps
 tokio-rustls = { version = "0.22", optional = true }
@@ -43,10 +45,13 @@ async-http-proxy = { version = "1", features = [
 flate2 = { version = "1", optional = true }
 
 [features]
-default = []
-proxy = ["tokio-socks", "async-http-proxy"]
-rustls = ["tokio-rustls", "webpki", "webpki-roots"]
-deflate = ["flate2"]
+default = ["async"]
+blocking = []
+tls_rustls = ["blocking", "rustls-connector"]
+async = ["tokio", "tokio-stream", "futures"]
+proxy = ["async", "tokio-socks", "async-http-proxy"]
+async_tls_rustls = ["async", "tokio-rustls", "webpki", "webpki-roots"]
+# deflate = ["flate2"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -57,12 +62,8 @@ rcgen = "0.8"
 
 [[example]]
 name = "echo"
-required-features = ["rustls", "proxy"]
+# required-features = ["rustls", "proxy"]
 
 [[example]]
 name = "binance"
-required-features = ["rustls", "proxy"]
-
-[[example]]
-name = "split_binance"
-required-features = ["rustls", "proxy"]
+# required-features = ["rustls", "proxy"]

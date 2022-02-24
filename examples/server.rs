@@ -1,10 +1,8 @@
-use futures::SinkExt;
 use structopt::StructOpt;
-use tokio_stream::StreamExt;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, default_string_codec_factory},
+    codec::{default_handshake_handler, AsyncWsStringCodec},
     frame::OpCode,
     ServerBuilder,
 };
@@ -34,18 +32,23 @@ async fn main() -> Result<(), ()> {
         .unwrap();
     for (stream, addr) in listener.accept().await {
         tracing::info!("got connect from {:?}", addr);
-        let mut server = ServerBuilder::accept(
+        let mut server = ServerBuilder::async_accept(
             stream,
             default_handshake_handler,
-            default_string_codec_factory,
+            AsyncWsStringCodec::factory,
         )
         .await
         .unwrap();
-        while let Some(Ok((code, msg))) = server.next().await {
-            if code == OpCode::Close {
+
+        loop {
+            if let Ok((code, msg)) = server.receive().await {
+                if code == OpCode::Close {
+                    break;
+                }
+                server.send((None, msg)).await.unwrap();
+            } else {
                 break;
             }
-            server.send(msg).await.unwrap();
         }
     }
     Ok(())

@@ -1,8 +1,7 @@
 use structopt::StructOpt;
-use tokio_stream::StreamExt;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::default_string_check_fn, ClientBuilder};
+use ws_tool::{codec::AsyncWsStringCodec, ClientBuilder};
 
 /// websocket client connect to binance futures websocket
 #[derive(StructOpt)]
@@ -32,11 +31,11 @@ async fn main() -> Result<(), ()> {
         builder = builder.proxy(&proxy)
     }
     let mut client = builder
-        .connect_with_check(default_string_check_fn)
+        .async_connect(AsyncWsStringCodec::check_fn)
         .await
         .unwrap();
 
-    while let Some(Ok((_, msg))) = client.next().await {
+    while let Ok((_, msg)) = client.receive().await {
         println!("{}", msg.trim());
     }
     Ok(())
