@@ -46,7 +46,6 @@ async fn main() -> Result<(), ()> {
         if &input == "quit\n" {
             break;
         }
-        dbg!(&input);
         client.send((None, input.clone())).await.unwrap();
         if let Ok((_, msg)) = client.receive().await {
             println!("[RECV] > {}", msg.trim());

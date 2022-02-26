@@ -135,7 +135,7 @@ mod blocking {
     };
 
     impl ClientBuilder {
-        fn _connect(&self) -> Result<(String, http::Response<()>, WsStream), WsError> {
+        fn _connect(&self) -> Result<(String, http::Response<()>, WsStream<TcpStream>), WsError> {
             let Self {
                 uri,
                 #[cfg(feature = "proxy")]
@@ -218,7 +218,7 @@ mod blocking {
 
         pub fn connect<C, F>(&self, check_fn: F) -> Result<C, WsError>
         where
-            F: Fn(String, http::Response<()>, WsStream) -> Result<C, WsError>,
+            F: Fn(String, http::Response<()>, WsStream<TcpStream>) -> Result<C, WsError>,
         {
             let (key, resp, stream) = self._connect()?;
             check_fn(key, resp, stream)
@@ -233,7 +233,7 @@ mod blocking {
         ) -> Result<C, WsError>
         where
             F1: Fn(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: Fn(http::Request<()>, WsStream) -> Result<C, WsError>,
+            F2: Fn(http::Request<()>, WsStream<TcpStream>) -> Result<C, WsError>,
             T: ToString + std::fmt::Debug,
         {
             let mut stream = WsStream::Plain(stream);
@@ -272,7 +272,7 @@ mod non_blocking {
     impl ClientBuilder {
         async fn _async_connect(
             &self,
-        ) -> Result<(String, http::Response<()>, WsAsyncStream), WsError> {
+        ) -> Result<(String, http::Response<()>, WsAsyncStream<TcpStream>), WsError> {
             let Self {
                 uri,
                 #[cfg(feature = "proxy")]
@@ -377,7 +377,7 @@ mod non_blocking {
 
         pub async fn async_connect<C, F>(&self, check_fn: F) -> Result<C, WsError>
         where
-            F: Fn(String, http::Response<()>, WsAsyncStream) -> Result<C, WsError>,
+            F: Fn(String, http::Response<()>, WsAsyncStream<TcpStream>) -> Result<C, WsError>,
         {
             let (key, resp, stream) = self._async_connect().await?;
             check_fn(key, resp, stream)
@@ -392,7 +392,7 @@ mod non_blocking {
         ) -> Result<C, WsError>
         where
             F1: Fn(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: Fn(http::Request<()>, WsAsyncStream) -> Result<C, WsError>,
+            F2: Fn(http::Request<()>, WsAsyncStream<TcpStream>) -> Result<C, WsError>,
             T: ToString + Debug,
         {
             let mut stream = WsAsyncStream::Plain(stream);

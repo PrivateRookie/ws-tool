@@ -4,18 +4,15 @@ mod blocking {
     #[cfg(feature = "tls_rustls")]
     mod stream {
         use rustls_connector::TlsStream;
-        use std::{
-            io::{Read, Write},
-            net::TcpStream,
-        };
+        use std::io::{Read, Write};
 
-        pub enum WsStream {
-            Plain(TcpStream),
-            Tls(TlsStream<TcpStream>),
+        pub enum WsStream<S: Read + Write> {
+            Plain(S),
+            Tls(TlsStream<S>),
         }
 
-        impl WsStream {
-            pub fn stream_mut(&mut self) -> &mut TcpStream {
+        impl<S: Read + Write> WsStream<S> {
+            pub fn stream_mut(&mut self) -> &mut S {
                 match self {
                     WsStream::Plain(s) => s,
                     WsStream::Tls(tls) => tls.get_mut(),
@@ -23,7 +20,7 @@ mod blocking {
             }
         }
 
-        impl Read for WsStream {
+        impl<S: Read + Write> Read for WsStream<S> {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
                 match self {
                     WsStream::Plain(s) => s.read(buf),
@@ -32,7 +29,7 @@ mod blocking {
             }
         }
 
-        impl Write for WsStream {
+        impl<S: Read + Write> Write for WsStream<S> {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 match self {
                     WsStream::Plain(s) => s.write(buf),
@@ -56,19 +53,19 @@ mod blocking {
             net::TcpStream,
         };
 
-        pub enum WsStream {
-            Plain(TcpStream),
+        pub enum WsStream<S> {
+            Plain(S),
         }
 
-        impl WsStream {
-            pub fn stream_mut(&mut self) -> &mut TcpStream {
+        impl<S> WsStream<S> {
+            pub fn stream_mut(&mut self) -> &mut S {
                 match self {
                     WsStream::Plain(s) => s,
                 }
             }
         }
 
-        impl Read for WsStream {
+        impl<S: Read> Read for WsStream {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
                 match self {
                     WsStream::Plain(s) => s.read(buf),
@@ -76,7 +73,7 @@ mod blocking {
             }
         }
 
-        impl Write for WsStream {
+        impl<S: Write> Write for WsStream {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 match self {
                     WsStream::Plain(s) => s.write(buf),
@@ -102,25 +99,24 @@ mod non_blocking {
     #[cfg(feature = "async_tls_rustls")]
     mod ws_stream {
         use tokio::io::{AsyncRead, AsyncWrite};
-        use tokio::net::TcpStream;
         use tokio_rustls::client::TlsStream;
 
         #[derive(Debug)]
-        pub enum WsAsyncStream {
-            Plain(TcpStream),
-            Tls(TlsStream<TcpStream>),
+        pub enum WsAsyncStream<S: AsyncRead + AsyncWrite> {
+            Plain(S),
+            Tls(TlsStream<S>),
         }
 
-        impl WsAsyncStream {
-            pub fn set_nodelay(&mut self) -> std::io::Result<()> {
+        impl<S: AsyncWrite + AsyncRead> WsAsyncStream<S> {
+            pub fn stream_mut(&mut self) -> &mut S {
                 match self {
-                    WsAsyncStream::Plain(s) => s.set_nodelay(true),
-                    WsAsyncStream::Tls(s) => s.get_mut().0.set_nodelay(true),
+                    WsAsyncStream::Plain(s) => s,
+                    WsAsyncStream::Tls(s) => s.get_mut().0,
                 }
             }
         }
 
-        impl AsyncRead for WsAsyncStream {
+        impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WsAsyncStream<S> {
             fn poll_read(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
@@ -133,7 +129,7 @@ mod non_blocking {
             }
         }
 
-        impl AsyncWrite for WsAsyncStream {
+        impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for WsAsyncStream<S> {
             fn poll_write(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
@@ -170,22 +166,21 @@ mod non_blocking {
     #[cfg(not(feature = "async_tls_rustls"))]
     mod ws_stream {
         use tokio::io::{AsyncRead, AsyncWrite};
-        use tokio::net::TcpStream;
 
         #[derive(Debug)]
-        pub enum WsAsyncStream {
-            Plain(TcpStream),
+        pub enum WsAsyncStream<S> {
+            Plain(S),
         }
 
-        impl WsAsyncStream {
-            pub fn set_nodelay(&mut self) -> std::io::Result<()> {
+        impl<S> WsAsyncStream<S> {
+            pub fn stream_mut(&mut self) -> &mut S {
                 match self {
-                    WsAsyncStream::Plain(s) => s.set_nodelay(true),
+                    Self::Plain(s) => s,
                 }
             }
         }
 
-        impl AsyncRead for WsAsyncStream {
+        impl<S: AsyncRead + Unpin> AsyncRead for WsAsyncStream<S> {
             fn poll_read(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
@@ -197,7 +192,7 @@ mod non_blocking {
             }
         }
 
-        impl AsyncWrite for WsAsyncStream {
+        impl<S: AsyncWrite + Unpin> AsyncWrite for WsAsyncStream<S> {
             fn poll_write(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,

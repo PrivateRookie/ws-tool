@@ -180,8 +180,8 @@ mod blocking {
     /// perform http upgrade
     ///
     /// **NOTE**: low level api
-    pub fn req_handshake(
-        stream: &mut WsStream,
+    pub fn req_handshake<S: Read + Write>(
+        stream: &mut WsStream<S>,
         mode: &Mode,
         uri: &http::Uri,
         protocols: String,
@@ -205,7 +205,9 @@ mod blocking {
         perform_parse_req(read_bytes, key)
     }
 
-    pub fn handle_handshake(stream: &mut WsStream) -> Result<http::Request<()>, WsError> {
+    pub fn handle_handshake<S: Read + Write>(
+        stream: &mut WsStream<S>,
+    ) -> Result<http::Request<()>, WsError> {
         let mut req_bytes = BytesMut::with_capacity(1024);
         let mut buf = [0u8];
         loop {
@@ -227,7 +229,7 @@ mod non_blocking {
     use std::collections::HashMap;
 
     use bytes::{BufMut, BytesMut};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
     use crate::{errors::WsError, protocol::prepare_handshake, stream::WsAsyncStream};
 
@@ -280,8 +282,8 @@ mod non_blocking {
     /// perform http upgrade
     ///
     /// **NOTE**: low level api
-    pub async fn async_req_handshake(
-        stream: &mut WsAsyncStream,
+    pub async fn async_req_handshake<S: AsyncRead + AsyncWrite + Unpin>(
+        stream: &mut WsAsyncStream<S>,
         mode: &Mode,
         uri: &http::Uri,
         protocols: String,
@@ -305,8 +307,8 @@ mod non_blocking {
         perform_parse_req(read_bytes, key)
     }
 
-    pub async fn async_handle_handshake(
-        stream: &mut WsAsyncStream,
+    pub async fn async_handle_handshake<S: AsyncRead + AsyncWrite + Unpin>(
+        stream: &mut WsAsyncStream<S>,
     ) -> Result<http::Request<()>, WsError> {
         let mut req_bytes = BytesMut::with_capacity(1024);
         let mut buf = [0u8];
