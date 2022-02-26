@@ -47,7 +47,7 @@ mod blocking {
         pub fn receive(&mut self) -> Result<(OpCode, String), WsError> {
             let frame = self.frame_codec.receive()?;
             let data = frame.payload_data_unmask();
-            let s = if self.validate_utf8 {
+            let s = if self.validate_utf8 && frame.opcode() == OpCode::Text {
                 String::from_utf8(data.to_vec()).map_err(|_| WsError::ProtocolError {
                     close_code: 1001,
                     error: ProtocolError::InvalidUtf8,
@@ -120,7 +120,7 @@ mod non_blocking {
         pub async fn receive(&mut self) -> Result<(OpCode, String), WsError> {
             let frame = self.frame_codec.receive().await?;
             let data = frame.payload_data_unmask();
-            let s = if self.validate_utf8 {
+            let s = if self.validate_utf8 && frame.opcode() == OpCode::Text {
                 String::from_utf8(data.to_vec()).map_err(|_| WsError::ProtocolError {
                     close_code: 1001,
                     error: ProtocolError::InvalidUtf8,
@@ -141,7 +141,6 @@ mod non_blocking {
         }
     }
 }
-
 
 #[cfg(feature = "async")]
 pub use non_blocking::AsyncWsStringCodec;
