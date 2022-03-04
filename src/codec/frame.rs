@@ -531,9 +531,9 @@ mod non_block {
             self.read_state.async_receive(&mut self.stream).await
         }
 
-        pub async fn send(&mut self, code: OpCode, payload: &[u8]) -> Result<usize, WsError> {
+        pub async fn send<T: AsRef<[u8]>>(&mut self, code: OpCode, payload: T) -> Result<usize, WsError> {
             self.write_state
-                .async_send(payload, code, &mut self.stream)
+                .async_send(payload.as_ref(), code, &mut self.stream)
                 .await
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }

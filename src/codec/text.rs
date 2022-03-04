@@ -44,6 +44,7 @@ mod blocking {
             Ok(Self::new_with(stream, config, true))
         }
 
+        /// for close frame with body, first two bytes of string are close reason
         pub fn receive(&mut self) -> Result<(OpCode, String), WsError> {
             let frame = self.frame_codec.receive()?;
             let data = frame.payload_data_unmask();
@@ -73,6 +74,9 @@ pub use blocking::WsStringCodec;
 
 #[cfg(feature = "async")]
 mod non_blocking {
+    use std::borrow::Borrow;
+
+    use bytes::Buf;
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::{
@@ -81,6 +85,8 @@ mod non_blocking {
         frame::OpCode,
         protocol::standard_handshake_resp_check,
     };
+
+    use super::StrMessage;
 
     pub struct AsyncWsStringCodec<S: AsyncRead + AsyncWrite> {
         frame_codec: AsyncWsFrameCodec<S>,
@@ -131,16 +137,72 @@ mod non_blocking {
             Ok((frame.opcode(), s))
         }
 
-        pub async fn send<T: Into<Option<OpCode>>>(
-            &mut self,
-            (code, content): (T, String),
-        ) -> Result<usize, WsError> {
-            self.frame_codec
-                .send(code.into().unwrap_or(OpCode::Text), content.as_bytes())
-                .await
+        pub async fn send<T: Into<StrMessage>>(&mut self, msg: T) -> Result<usize, WsError> {
+            let msg: StrMessage = msg.into();
+            if let Some(close_code) = msg.close_code {
+                if msg.code == OpCode::Close {
+                    self.frame_codec
+                        .send(
+                            msg.code,
+                            close_code.to_be_bytes().chain(msg.data.as_bytes()).reader(),
+                        )
+                        .await
+                } else {
+                    self.frame_codec.send(msg.code, msg.data.as_bytes()).await
+                }
+            } else {
+                self.frame_codec.send(msg.code, msg.data.as_bytes()).await
+            }
         }
     }
 }
 
 #[cfg(feature = "async")]
 pub use non_blocking::AsyncWsStringCodec;
+
+use crate::frame::OpCode;
+
+#[derive(Debug, Clone)]
+pub struct StrMessage {
+    pub data: String,
+    pub code: OpCode,
+    /// available in close frame only
+    ///
+    /// see [status code](https://datatracker.ietf.org/doc/html/rfc6455#section-7.4)
+    pub close_code: Option<u16>,
+}
+
+impl From<(OpCode, String)> for StrMessage {
+    fn from(data: (OpCode, String)) -> Self {
+        let close_code = if data.0 == OpCode::Close {
+            Some(1000)
+        } else {
+            None
+        };
+        Self {
+            data: data.1,
+            code: data.0,
+            close_code,
+        }
+    }
+}
+
+impl From<(u16, String)> for StrMessage {
+    fn from(data: (u16, String)) -> Self {
+        Self {
+            code: OpCode::Close,
+            close_code: Some(data.0),
+            data: data.1,
+        }
+    }
+}
+
+impl From<String> for StrMessage {
+    fn from(data: String) -> Self {
+        Self {
+            data,
+            code: OpCode::Text,
+            close_code: None,
+        }
+    }
+}
