@@ -35,8 +35,8 @@ async fn main() -> Result<(), ()> {
         .await
         .unwrap();
 
-    while let Ok((_, msg)) = client.receive().await {
-        println!("{}", msg.trim());
+    while let Ok(msg) = client.receive().await {
+        println!("{}", msg.data.trim());
     }
     Ok(())
 }

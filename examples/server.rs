@@ -41,8 +41,8 @@ async fn main() -> Result<(), ()> {
         .unwrap();
 
         loop {
-            if let Ok((code, msg)) = server.receive().await {
-                if code == OpCode::Close {
+            if let Ok(msg) = server.receive().await {
+                if msg.code == OpCode::Close {
                     break;
                 }
                 server.send(msg).await.unwrap();

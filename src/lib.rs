@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+use bytes::{BytesMut, Bytes};
+use frame::{Frame, OpCode};
+
 /// websocket error definitions
 pub mod errors;
 /// websocket transport unit
@@ -414,3 +417,88 @@ mod non_blocking {
 }
 
 pub struct ServerBuilder {}
+
+pub trait DefaultCode {
+    fn default_code(&self) -> OpCode;
+}
+
+impl DefaultCode for String {
+    fn default_code(&self) -> OpCode {
+        OpCode::Text
+    }
+}
+
+impl DefaultCode for &[u8] {
+    fn default_code(&self) -> OpCode {
+        OpCode::Binary
+    }
+}
+
+impl DefaultCode for BytesMut {
+    fn default_code(&self) -> OpCode {
+        OpCode::Binary
+    }
+}
+
+impl DefaultCode for Bytes {
+    fn default_code(&self) -> OpCode {
+        OpCode::Binary
+    }
+}
+
+impl DefaultCode for Frame {
+    fn default_code(&self) -> OpCode {
+        self.opcode()
+    }
+}
+
+pub struct Message<T: AsRef<[u8]> + DefaultCode> {
+    pub code: OpCode,
+    pub data: T,
+
+    /// available in close frame only
+    ///
+    /// see [status code](https://datatracker.ietf.org/doc/html/rfc6455#section-7.4)
+    pub close_code: Option<u16>,
+}
+
+impl<T: AsRef<[u8]> + DefaultCode> Message<T> {
+    pub fn into(self) -> T {
+        self.data
+    }
+}
+
+impl<T: AsRef<[u8]> + DefaultCode> From<(OpCode, T)> for Message<T> {
+    fn from(data: (OpCode, T)) -> Self {
+        let close_code = if data.0 == OpCode::Close {
+            Some(1000)
+        } else {
+            None
+        };
+        Self {
+            data: data.1,
+            code: data.0,
+            close_code,
+        }
+    }
+}
+
+impl<T: AsRef<[u8]> + DefaultCode> From<(u16, T)> for Message<T> {
+    fn from(data: (u16, T)) -> Self {
+        Self {
+            code: OpCode::Close,
+            close_code: Some(data.0),
+            data: data.1,
+        }
+    }
+}
+
+impl<T: AsRef<[u8]> + DefaultCode> From<T> for Message<T> {
+    fn from(data: T) -> Self {
+        Self {
+            code: data.default_code(),
+            data,
+            close_code: None,
+        }
+    }
+}
