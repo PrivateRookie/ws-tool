@@ -51,9 +51,7 @@ mod blocking {
             data.extend_from_slice(&frame.payload_data_unmask());
             let op_code = frame.opcode();
             let close_code = if op_code == OpCode::Close {
-                let c = Some(data.get_u16());
-                data.advance(2);
-                c
+                Some(data.get_u16())
             } else {
                 None
             };
@@ -135,9 +133,7 @@ mod non_blocking {
             data.extend_from_slice(&frame.payload_data_unmask());
             let op_code = frame.opcode();
             let close_code = if op_code == OpCode::Close {
-                let c = Some(data.get_u16());
-                data.advance(2);
-                c
+                Some(data.get_u16())
             } else {
                 None
             };

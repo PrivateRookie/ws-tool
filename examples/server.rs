@@ -30,26 +30,29 @@ async fn main() -> Result<(), ()> {
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", args.host, args.port))
         .await
         .unwrap();
-    for (stream, addr) in listener.accept().await {
-        tracing::info!("got connect from {:?}", addr);
-        let mut server = ServerBuilder::async_accept(
-            stream,
-            default_handshake_handler,
-            AsyncWsStringCodec::factory,
-        )
-        .await
-        .unwrap();
+    loop {
+        let (stream, addr) = listener.accept().await.unwrap();
+        tokio::spawn(async move {
+            tracing::info!("got connect from {:?}", addr);
+            let mut server = ServerBuilder::async_accept(
+                stream,
+                default_handshake_handler,
+                AsyncWsStringCodec::factory,
+            )
+            .await
+            .unwrap();
 
-        loop {
-            if let Ok(msg) = server.receive().await {
-                if msg.code == OpCode::Close {
+            loop {
+                if let Ok(msg) = server.receive().await {
+                    if msg.code == OpCode::Close {
+                        break;
+                    }
+                    server.send(msg).await.unwrap();
+                } else {
                     break;
                 }
-                server.send(msg).await.unwrap();
-            } else {
-                break;
             }
-        }
+            tracing::info!("one conn down");
+        });
     }
-    Ok(())
 }

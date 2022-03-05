@@ -53,7 +53,6 @@ mod blocking {
             let mut data = frame.payload_data_unmask();
             let close_code = if frame.opcode() == OpCode::Close {
                 let close_code = data.get_u16();
-                data.advance(2);
                 Some(close_code)
             } else {
                 None
@@ -145,9 +144,9 @@ mod non_blocking {
         pub async fn receive(&mut self) -> Result<Message<String>, WsError> {
             let frame = self.frame_codec.receive().await?;
             let mut data = frame.payload_data_unmask();
-            let close_code = if frame.opcode() == OpCode::Close {
+            // TODO check protocol error
+            let close_code = if frame.opcode() == OpCode::Close && data.len() >= 2 {
                 let close_code = data.get_u16();
-                data.advance(2);
                 Some(close_code)
             } else {
                 None
