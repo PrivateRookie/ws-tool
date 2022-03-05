@@ -372,7 +372,7 @@ impl<'a> Payload<'a> {
             let buf: Vec<u8> = arr
                 .iter()
                 .enumerate()
-                .map(|(i, v)| v ^ key[i + offset])
+                .map(|(i, v)| v ^ key[(i + offset) % 4])
                 .collect();
             dest[offset..(offset + arr.len())].copy_from_slice(&buf);
             offset += arr.len()
