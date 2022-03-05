@@ -45,7 +45,7 @@ async fn main() -> Result<(), ()> {
                 if code == OpCode::Close {
                     break;
                 }
-                server.send((None, msg)).await.unwrap();
+                server.send(msg).await.unwrap();
             } else {
                 break;
             }

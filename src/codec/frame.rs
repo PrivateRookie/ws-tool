@@ -246,7 +246,7 @@ mod blocking {
     use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
     use crate::{
         errors::WsError,
-        frame::{Frame, OpCode},
+        frame::{Frame, OpCode, Payload},
         protocol::standard_handshake_resp_check,
     };
     use std::io::{Read, Write};
@@ -286,9 +286,9 @@ mod blocking {
     }
 
     impl FrameWriteState {
-        fn send_one<S: Write>(
+        fn send_one<'a, S: Write>(
             &mut self,
-            payload: &[u8],
+            payload: Payload<'a>,
             fin: bool,
             mask: bool,
             code: OpCode,
@@ -301,34 +301,23 @@ mod blocking {
             stream.write(&frame.0)
         }
 
-        pub fn send<S: Write>(
+        pub fn send<'a, S: Write>(
             &mut self,
-            payload: &[u8],
+            payload: Payload,
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<usize> {
             let split_size = self.config.auto_fragment_size;
-            let data = payload;
             if split_size > 0 {
-                let mut idx = 0;
-                let mut fin = idx + split_size >= data.len();
-                let mut total = 0;
-                while (idx + split_size) <= data.len() {
-                    let end = data.len().min(idx + split_size);
-                    let send = self.send_one(
-                        &data[idx..end],
-                        fin,
-                        self.config.mask,
-                        code.clone(),
-                        stream,
-                    )?;
-                    total += send;
-                    idx = end;
-                    fin = idx + split_size >= data.len();
+                let parts = payload.split_with(split_size);
+                let total = parts.len();
+                for (idx, part) in parts.into_iter().enumerate() {
+                    let fin = idx + 1 == total;
+                    self.send_one(part, fin, self.config.mask, code.clone(), stream)?;
                 }
-                Ok(total)
+                Ok(payload.len())
             } else {
-                self.send_one(&data, true, self.config.mask, code, stream)
+                self.send_one(payload, true, self.config.mask, code, stream)
             }
         }
     }
@@ -375,9 +364,13 @@ mod blocking {
             self.read_state.receive(&mut self.stream)
         }
 
-        pub fn send(&mut self, code: OpCode, payload: &[u8]) -> Result<usize, WsError> {
+        pub fn send<'a, P: Into<Payload<'a>>>(
+            &mut self,
+            code: OpCode,
+            payload: P,
+        ) -> Result<usize, WsError> {
             self.write_state
-                .send(payload, code, &mut self.stream)
+                .send(payload.into(), code, &mut self.stream)
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }
     }
@@ -393,7 +386,7 @@ mod non_block {
     use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
     use crate::{
         errors::WsError,
-        frame::{Frame, OpCode},
+        frame::{Frame, OpCode, Payload},
         protocol::standard_handshake_resp_check,
     };
 
@@ -438,9 +431,9 @@ mod non_block {
     }
 
     impl FrameWriteState {
-        async fn async_send_one<S: AsyncWrite + Unpin>(
+        async fn async_send_one<'a, S: AsyncWrite + Unpin>(
             &mut self,
-            payload: &[u8],
+            payload: Payload<'a>,
             fin: bool,
             mask: bool,
             code: OpCode,
@@ -453,36 +446,24 @@ mod non_block {
             stream.write(&frame.0).await
         }
 
-        pub async fn async_send<S: AsyncWrite + Unpin>(
+        pub async fn async_send<'a, S: AsyncWrite + Unpin>(
             &mut self,
-            payload: &[u8],
+            payload: Payload<'a>,
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<usize> {
             let split_size = self.config.auto_fragment_size;
-            let data = payload;
             if split_size > 0 {
-                let mut idx = 0;
-                let mut fin = idx + split_size >= data.len();
-                let mut total = 0;
-                while (idx + split_size) <= data.len() {
-                    let end = data.len().min(idx + split_size);
-                    let send = self
-                        .async_send_one(
-                            &data[idx..end],
-                            fin,
-                            self.config.mask,
-                            code.clone(),
-                            stream,
-                        )
+                let parts = payload.split_with(split_size);
+                let total = parts.len();
+                for (idx, part) in parts.into_iter().enumerate() {
+                    let fin = idx + 1 == total;
+                    self.async_send_one(part, fin, self.config.mask, code.clone(), stream)
                         .await?;
-                    total += send;
-                    idx = end;
-                    fin = idx + split_size >= data.len();
                 }
-                Ok(total)
+                Ok(payload.len())
             } else {
-                self.async_send_one(&data, true, self.config.mask, code, stream)
+                self.async_send_one(payload, true, self.config.mask, code, stream)
                     .await
             }
         }
@@ -531,9 +512,13 @@ mod non_block {
             self.read_state.async_receive(&mut self.stream).await
         }
 
-        pub async fn send<T: AsRef<[u8]>>(&mut self, code: OpCode, payload: T) -> Result<usize, WsError> {
+        pub async fn send<'a, P: Into<Payload<'a>>>(
+            &mut self,
+            code: OpCode,
+            payload: P,
+        ) -> Result<usize, WsError> {
             self.write_state
-                .async_send(payload.as_ref(), code, &mut self.stream)
+                .async_send(payload.into(), code, &mut self.stream)
                 .await
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }

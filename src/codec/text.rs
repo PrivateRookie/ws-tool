@@ -9,6 +9,8 @@ mod blocking {
         protocol::standard_handshake_resp_check,
     };
 
+    use super::StrMessage;
+
     pub struct WsStringCodec<S: Read + Write> {
         frame_codec: WsFrameCodec<S>,
         validate_utf8: bool,
@@ -59,12 +61,20 @@ mod blocking {
             Ok((frame.opcode(), s))
         }
 
-        pub fn send<T: Into<Option<OpCode>>>(
-            &mut self,
-            (code, content): (T, String),
-        ) -> Result<usize, WsError> {
-            self.frame_codec
-                .send(code.into().unwrap_or(OpCode::Text), content.as_bytes())
+        pub fn send<T: Into<StrMessage>>(&mut self, msg: T) -> Result<usize, WsError> {
+            let msg: StrMessage = msg.into();
+            if let Some(close_code) = msg.close_code {
+                if msg.code == OpCode::Close {
+                    self.frame_codec.send(
+                        msg.code,
+                        vec![&close_code.to_be_bytes()[..], msg.data.as_bytes()],
+                    )
+                } else {
+                    self.frame_codec.send(msg.code, msg.data.as_bytes())
+                }
+            } else {
+                self.frame_codec.send(msg.code, msg.data.as_bytes())
+            }
         }
     }
 }
@@ -74,9 +84,6 @@ pub use blocking::WsStringCodec;
 
 #[cfg(feature = "async")]
 mod non_blocking {
-    use std::borrow::Borrow;
-
-    use bytes::Buf;
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::{
@@ -144,7 +151,7 @@ mod non_blocking {
                     self.frame_codec
                         .send(
                             msg.code,
-                            close_code.to_be_bytes().chain(msg.data.as_bytes()).reader(),
+                            vec![&close_code.to_be_bytes()[..], msg.data.as_bytes()],
                         )
                         .await
                 } else {

@@ -76,13 +76,10 @@ async fn update_report() -> Result<(), WsError> {
         "ws://localhost:9002/updateReports?agent={}",
         AGENT
     ))
-    .async_connect(AsyncWsFrameCodec::check_fn)
+    .async_connect(AsyncWsStringCodec::check_fn)
     .await
     .unwrap();
-    client
-        .send(OpCode::Close, &1000u16.to_be_bytes())
-        .await
-        .map(|_| ())
+    client.send((1000u16, String::new())).await.map(|_| ())
 }
 
 #[tokio::main]
