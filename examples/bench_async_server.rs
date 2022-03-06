@@ -1,11 +1,36 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use structopt::StructOpt;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, AsyncWsBytesCodec, AsyncWsFrameCodec, AsyncWsStringCodec},
+    codec::{default_handshake_handler, AsyncWsStringCodec, AsyncWsBytesCodec},
     frame::OpCode,
     ServerBuilder,
 };
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Request {
+    c: i32,
+}
+
+fn get_timestamp() -> i64 {
+    //Gets the current unix timestamp of the server
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(n) => return n.as_secs() as i64,
+        Err(_e) => return 0,
+    }
+}
+
+fn get_event(c: i32) -> String {
+    let event = json!({
+        "c": c,
+        "ts": get_timestamp()
+    });
+    event.to_string()
+}
 
 /// websocket client connect to binance futures websocket
 #[derive(StructOpt)]
@@ -21,7 +46,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::ERROR)
+        .with_max_level(Level::INFO)
         .finish()
         .try_init()
         .expect("failed to init log");
@@ -37,22 +62,22 @@ async fn main() -> Result<(), ()> {
             let mut server = ServerBuilder::async_accept(
                 stream,
                 default_handshake_handler,
-                // AsyncWsStringCodec::factory,
-                AsyncWsFrameCodec::factory,
+                AsyncWsStringCodec::factory,
             )
             .await
             .unwrap();
 
+            server.send(get_event(0)).await.unwrap();
+
             loop {
                 if let Ok(msg) = server.receive().await {
-                    // if msg.code == OpCode::Close {
-                    //     break;
-                    // }
-                    // server.send(msg).await.unwrap();
-                    server
-                        .send(msg.opcode(), &msg.payload_data_unmask())
-                        .await
-                        .unwrap();
+                    if msg.code == OpCode::Close {
+                        break;
+                    }
+                    if msg.code == OpCode::Text {
+                        let req: Request = serde_json::from_str(&msg.data).unwrap();
+                        server.send(get_event(req.c)).await.unwrap();
+                    }
                 } else {
                     break;
                 }
