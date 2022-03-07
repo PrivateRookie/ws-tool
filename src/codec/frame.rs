@@ -1,7 +1,7 @@
 use crate::errors::{ProtocolError, WsError};
 use crate::frame::{get_bit, parse_opcode, parse_payload_len, Frame, OpCode};
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
-use bytes::{Buf, BytesMut};
+use bytes::{BytesMut};
 use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
@@ -100,9 +100,7 @@ impl FrameReadState {
     }
 
     fn consume_frame(&mut self, len: usize) -> Frame {
-        let mut data = BytesMut::with_capacity(len);
-        data.extend_from_slice(&self.read_data[..len]);
-        self.read_data.advance(len);
+        let data = self.read_data.split_to(len);
         Frame(data)
     }
 
@@ -293,12 +291,12 @@ mod blocking {
             mask: bool,
             code: OpCode,
             stream: &mut S,
-        ) -> IOResult<usize> {
+        ) -> IOResult<()> {
             let mut frame = Frame::new_with_opcode(code);
             frame.set_fin(fin);
             frame.set_mask(mask);
             frame.set_payload(payload);
-            stream.write(&frame.0)
+            stream.write_all(&frame.0)
         }
 
         pub fn send<'a, S: Write>(
@@ -308,6 +306,7 @@ mod blocking {
             stream: &mut S,
         ) -> IOResult<usize> {
             let split_size = self.config.auto_fragment_size;
+            let len = payload.len();
             if split_size > 0 {
                 let parts = payload.split_with(split_size);
                 let total = parts.len();
@@ -315,10 +314,10 @@ mod blocking {
                     let fin = idx + 1 == total;
                     self.send_one(part, fin, self.config.mask, code.clone(), stream)?;
                 }
-                Ok(payload.len())
             } else {
-                self.send_one(payload, true, self.config.mask, code, stream)
+                self.send_one(payload, true, self.config.mask, code, stream)?;
             }
+            Ok(len)
         }
     }
 

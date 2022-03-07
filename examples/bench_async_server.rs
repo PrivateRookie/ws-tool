@@ -6,7 +6,7 @@ use structopt::StructOpt;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, AsyncWsStringCodec, AsyncWsBytesCodec},
+    codec::{default_handshake_handler, AsyncWsStringCodec},
     frame::OpCode,
     ServerBuilder,
 };
