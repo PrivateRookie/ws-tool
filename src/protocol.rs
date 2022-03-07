@@ -242,34 +242,57 @@ mod non_blocking {
 
     #[cfg(feature = "async_tls_rustls")]
     mod tls {
+        use std::convert::TryFrom;
         use std::io::BufReader;
         use std::{collections::HashSet, path::PathBuf};
         // use std::path::PathBuf;
         use crate::errors::WsError;
+        use rustls_connector::rustls::OwnedTrustAnchor;
         use std::sync::Arc;
         use tokio::net::TcpStream;
+        use tokio_rustls::rustls::RootCertStore;
         use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
-        use webpki::DNSNameRef;
 
         pub async fn async_wrap_tls(
             stream: TcpStream,
             host: &str,
             certs: &HashSet<PathBuf>,
         ) -> Result<TlsStream<TcpStream>, WsError> {
-            let mut config = ClientConfig::new();
+            let mut root_store = RootCertStore::empty();
+            root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(
+                |ta| {
+                    OwnedTrustAnchor::from_subject_spki_name_constraints(
+                        ta.subject,
+                        ta.spki,
+                        ta.name_constraints,
+                    )
+                },
+            ));
+            let mut trust_anchors = vec![];
             for cert_path in certs {
                 let mut pem = std::fs::File::open(cert_path).map_err(|_| {
                     WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
                 })?;
                 let mut cert = BufReader::new(&mut pem);
-                config.root_store.add_pem_file(&mut cert).map_err(|_| {
-                    WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-                })?;
+                let certs = rustls_pemfile::certs(&mut cert)
+                    .map_err(|e| WsError::LoadCertFailed(e.to_string()))?;
+                for item in certs {
+                    let ta = webpki::TrustAnchor::try_from_cert_der(&item[..])
+                        .map_err(|e| WsError::LoadCertFailed(e.to_string()))?;
+                    let anchor = OwnedTrustAnchor::from_subject_spki_name_constraints(
+                        ta.subject,
+                        ta.spki,
+                        ta.name_constraints,
+                    );
+                    trust_anchors.push(anchor);
+                }
             }
-            config
-                .root_store
-                .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-            let domain = DNSNameRef::try_from_ascii_str(host)
+            root_store.add_server_trust_anchors(trust_anchors.into_iter());
+            let config = ClientConfig::builder()
+                .with_safe_defaults()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+            let domain = tokio_rustls::rustls::ServerName::try_from(host)
                 .map_err(|e| WsError::TlsDnsFailed(e.to_string()))?;
             let connector = TlsConnector::from(Arc::new(config));
             let tls_stream = connector

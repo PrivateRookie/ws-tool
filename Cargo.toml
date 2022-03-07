@@ -30,8 +30,9 @@ rustls-connector = { version = "0.16", optional = true, features = [
 ] }
 
 # tls deps
-tokio-rustls = { version = "0.22", optional = true }
-webpki = { version = "0.21", optional = true }
+tokio-rustls = { version = "0.23", optional = true }
+rustls-pemfile = {version = "0.3", optional = true }
+webpki = { version = "0.22", optional = true }
 webpki-roots = { version = "0.21", optional = true }
 
 # proxy deps
@@ -49,7 +50,7 @@ blocking = []
 tls_rustls = ["blocking", "rustls-connector"]
 async = ["tokio", "tokio-stream", "futures"]
 proxy = ["async", "tokio-socks", "async-http-proxy"]
-async_tls_rustls = ["async", "tokio-rustls", "webpki", "webpki-roots"]
+async_tls_rustls = ["async", "tokio-rustls", "webpki", "webpki-roots", "rustls-pemfile"]
 # deflate = ["flate2"]
 
 [dev-dependencies]
@@ -57,8 +58,6 @@ tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.2"
 structopt = "0.3"
 rcgen = "0.8"
-serde = { version = "1", features = ["derive"] }
-serde_json = "*"
 
 # benchmark deps
 tungstenite = "0.17.2"

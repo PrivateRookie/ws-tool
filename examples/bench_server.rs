@@ -32,6 +32,7 @@ fn main() -> Result<(), ()> {
     let listener = std::net::TcpListener::bind(format!("{}:{}", args.host, args.port)).unwrap();
     loop {
         let (stream, addr) = listener.accept().unwrap();
+        stream.set_nodelay(true).unwrap();
         std::thread::spawn(move || {
             tracing::info!("got connect from {:?}", addr);
             let mut server =

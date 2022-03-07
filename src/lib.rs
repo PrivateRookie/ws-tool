@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use bytes::{BytesMut, Bytes};
+use bytes::{Bytes, BytesMut};
 use frame::{Frame, OpCode};
 
 /// websocket error definitions
@@ -128,7 +128,10 @@ impl ClientBuilder {
 
 #[cfg(feature = "blocking")]
 mod blocking {
-    use std::{io::Write, net::TcpStream};
+    use std::{
+        io::{Read, Write},
+        net::TcpStream,
+    };
 
     use crate::{
         errors::WsError,
@@ -229,14 +232,15 @@ mod blocking {
     }
 
     impl ServerBuilder {
-        pub fn accept<F1, F2, T, C>(
-            stream: TcpStream,
+        pub fn accept<F1, F2, T, C, S>(
+            stream: S,
             handshake_handler: F1,
             codec_factory: F2,
         ) -> Result<C, WsError>
         where
+            S: Read + Write,
             F1: Fn(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: Fn(http::Request<()>, WsStream<TcpStream>) -> Result<C, WsError>,
+            F2: Fn(http::Request<()>, WsStream<S>) -> Result<C, WsError>,
             T: ToString + std::fmt::Debug,
         {
             let mut stream = WsStream::Plain(stream);
@@ -261,7 +265,10 @@ mod blocking {
 mod non_blocking {
     use std::fmt::Debug;
 
-    use tokio::{io::AsyncWriteExt, net::TcpStream};
+    use tokio::{
+        io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+        net::TcpStream,
+    };
 
     use crate::{
         errors::WsError,
@@ -388,14 +395,15 @@ mod non_blocking {
     }
 
     impl ServerBuilder {
-        pub async fn async_accept<F1, F2, T, C>(
-            stream: tokio::net::TcpStream,
+        pub async fn async_accept<F1, F2, T, C, S>(
+            stream: S,
             handshake_handler: F1,
             codec_factory: F2,
         ) -> Result<C, WsError>
         where
+            S: AsyncRead + AsyncWrite + Unpin,
             F1: Fn(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: Fn(http::Request<()>, WsAsyncStream<TcpStream>) -> Result<C, WsError>,
+            F2: Fn(http::Request<()>, WsAsyncStream<S>) -> Result<C, WsError>,
             T: ToString + Debug,
         {
             let mut stream = WsAsyncStream::Plain(stream);
