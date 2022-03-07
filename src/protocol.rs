@@ -8,60 +8,80 @@ use crate::errors::WsError;
 
 const GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-/// close status code to indicate reason for closure
-#[derive(Debug, Clone)]
-pub enum StatusCode {
+/// helper struct for using close code
+pub struct StatusCode;
+
+impl StatusCode {
     /// 1000 indicates a normal closure, meaning that the purpose for
     /// which the connection was established has been fulfilled.
-    C1000,
+    pub fn normal() -> u16 {
+        1000
+    }
 
     /// 1001 indicates that an endpoint is "going away", such as a server
     /// going down or a browser having navigated away from a page.
-    C1001,
+    pub fn going_away() -> u16 {
+        1001
+    }
 
     /// 1002 indicates that an endpoint is terminating the connection due
     /// to a protocol error.
-    C1002,
+    pub fn protocol_error() -> u16 {
+        1002
+    }
 
     /// 1003 indicates that an endpoint is terminating the connection
     /// because it has received a type of data it cannot accept (e.g., an
     /// endpoint that understands only text data MAY send this if it
     /// receives a binary message).
-    C1003,
-
+    pub fn terminate() -> u16 {
+        1003
+    }
     /// Reserved.  The specific meaning might be defined in the future.
-    C1004,
+    pub fn reserved() -> u16 {
+        1004
+    }
 
     /// 1005 is a reserved value and MUST NOT be set as a status code in a
     /// Close control frame by an endpoint.  It is designated for use in
     /// applications expecting a status code to indicate that no status
     /// code was actually present.
-    C1005,
+    pub fn app_reserved() -> u16 {
+        1005
+    }
 
     /// 1006 is a reserved value and MUST NOT be set as a status code in a
     /// Close control frame by an endpoint.  It is designated for use in
     /// applications expecting a status code to indicate that the
     /// connection was closed abnormally, e.g., without sending or
     /// receiving a Close control frame.
-    C1006,
+    pub fn abnormal_reserved() -> u16 {
+        1006
+    }
 
     /// 1007 indicates that an endpoint is terminating the connection
     /// because it has received data within a message that was not
     /// consistent with the type of the message (e.g., non-UTF-8 \[RFC3629\]
     /// data within a text message).
-    C1007,
+    pub fn non_consistent() -> u16 {
+        1007
+    }
 
     /// 1008 indicates that an endpoint is terminating the connection
     /// because it has received a message that violates its policy.  This
     /// is a generic status code that can be returned when there is no
     /// other more suitable status code (e.g., 1003 or 1009) or if there
     /// is a need to hide specific details about the policy.
-    C1008,
+    pub fn violate_policy() -> u16 {
+        1008
+    }
 
     /// 1009 indicates that an endpoint is terminating the connection
     /// because it has received a message that is too big for it to
     /// process.
-    C1009,
+    pub fn too_big() -> u16 {
+        1009
+    }
 
     /// 1010 indicates that an endpoint (client) is terminating the
     /// connection because it has expected the server to negotiate one or
@@ -70,40 +90,25 @@ pub enum StatusCode {
     /// are needed SHOULD appear in the /reason/ part of the Close frame.
     /// Note that this status code is not used by the server, because it
     /// can fail the WebSocket handshake instead.
-    C1010,
+    pub fn require_ext() -> u16 {
+        1010
+    }
 
     /// 1011 indicates that a server is terminating the connection because
-    /// it encountered an
-    C1011,
+    /// it encountered an unexpected condition that prevented it from
+    /// fulfilling the request.
+    pub fn unexpected_condition() -> u16 {
+        1011
+    }
 
     /// 1015 is a reserved value and MUST NOT be set as a status code in a
     /// Close control frame by an endpoint.  It is designated for use in
     /// applications expecting a status code to indicate that the
     /// connection was closed due to a failure to perform a TLS handshake
     /// (e.g., the server certificate can't be verified).
-    C1015,
-
-    /// Status codes in the range 0-999 are not used.
-    C0_999,
-
-    // Status codes in the range 1000-2999 are reserved for definition by
-    // this protocol, its future revisions, and extensions specified in a
-    // permanent and readily available public specification.
-    C1000_2999,
-
-    /// Status codes in the range 3000-3999 are reserved for use by
-    /// libraries, frameworks, and applications.  These status codes are
-    /// registered directly with IANA.  The interpretation of these codes
-    /// is undefined by this protocol.
-    C3000_3999,
-
-    /// Status codes in the range 4000-4999 are reserved for private use
-    /// and thus can't be registered.  Such codes can be used by prior
-    /// agreements between WebSocket applications.  The interpretation of
-    /// these codes is undefined by this protocol.
-    C4000_4999,
-
-    Unknown,
+    pub fn platform_fail() -> u16 {
+        1015
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

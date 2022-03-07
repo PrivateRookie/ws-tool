@@ -1,6 +1,6 @@
 [package]
 name = "ws-tool"
-version = "0.4.0-alpha"
+version = "0.4.0-beta"
 authors = ["PrivateRookie <996514515@qq.com>"]
 edition = "2018"
 description = "an easy to use websocket tool"
@@ -25,7 +25,6 @@ httparse = "1.4"
 sha-1 = "0.9"
 tokio-stream = { version = "0.1", optional = true }
 futures = { version = "0.3", optional = true }
-serde = "1"
 rustls-connector = { version = "0.16", optional = true, features = [
     "webpki-roots-certs",
 ] }
@@ -58,7 +57,11 @@ tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.2"
 structopt = "0.3"
 rcgen = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "*"
 
+# benchmark deps
+tungstenite = "0.17.2"
 
 [[example]]
 name = "echo"

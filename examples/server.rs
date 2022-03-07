@@ -2,8 +2,7 @@ use structopt::StructOpt;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, AsyncWsStringCodec},
-    frame::OpCode,
+    codec::{default_handshake_handler, AsyncWsFrameCodec},
     ServerBuilder,
 };
 
@@ -21,7 +20,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::ERROR)
         .finish()
         .try_init()
         .expect("failed to init log");
@@ -30,26 +29,33 @@ async fn main() -> Result<(), ()> {
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", args.host, args.port))
         .await
         .unwrap();
-    for (stream, addr) in listener.accept().await {
-        tracing::info!("got connect from {:?}", addr);
-        let mut server = ServerBuilder::async_accept(
-            stream,
-            default_handshake_handler,
-            AsyncWsStringCodec::factory,
-        )
-        .await
-        .unwrap();
+    // loop {
+    let (stream, addr) = listener.accept().await.unwrap();
 
-        loop {
-            if let Ok((code, msg)) = server.receive().await {
-                if code == OpCode::Close {
-                    break;
-                }
-                server.send((None, msg)).await.unwrap();
-            } else {
-                break;
-            }
+    tracing::info!("got connect from {:?}", addr);
+    let mut server = ServerBuilder::async_accept(
+        stream,
+        default_handshake_handler,
+        // AsyncWsStringCodec::factory,
+        AsyncWsFrameCodec::factory,
+    )
+    .await
+    .unwrap();
+
+    loop {
+        if let Ok(msg) = server.receive().await {
+            // if msg.code == OpCode::Close {
+            //     break;
+            // }
+            // server.send(msg).await.unwrap();
+            server
+                .send(msg.opcode(), &msg.payload_data_unmask())
+                .await
+                .unwrap();
+        } else {
+            break;
         }
     }
+    // }
     Ok(())
 }

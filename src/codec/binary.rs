@@ -2,13 +2,14 @@
 mod blocking {
     use std::io::{Read, Write};
 
-    use bytes::BytesMut;
+    use bytes::{Buf, BytesMut};
 
     use crate::{
         codec::{FrameConfig, WsFrameCodec},
         errors::WsError,
         frame::OpCode,
         protocol::standard_handshake_resp_check,
+        Message,
     };
 
     pub struct WsBytesCodec<S: Read + Write> {
@@ -44,19 +45,35 @@ mod blocking {
             self.frame_codec.stream_mut()
         }
 
-        pub fn receive(&mut self) -> Result<(OpCode, BytesMut), WsError> {
+        pub fn receive(&mut self) -> Result<Message<BytesMut>, WsError> {
             let frame = self.frame_codec.receive()?;
             let mut data = BytesMut::new();
             data.extend_from_slice(&frame.payload_data_unmask());
-            Ok((frame.opcode(), data))
+            let op_code = frame.opcode();
+            let close_code = if op_code == OpCode::Close {
+                Some(data.get_u16())
+            } else {
+                None
+            };
+            Ok(Message {
+                code: frame.opcode(),
+                data,
+                close_code,
+            })
         }
 
-        pub fn send<T: Into<Option<OpCode>>>(
-            &mut self,
-            (code, content): (T, &[u8]),
-        ) -> Result<usize, WsError> {
-            self.frame_codec
-                .send(code.into().unwrap_or(OpCode::Binary), content)
+        pub fn send<'a, T: Into<Message<&'a [u8]>>>(&mut self, msg: T) -> Result<usize, WsError> {
+            let msg: Message<&'a [u8]> = msg.into();
+            if let Some(close_code) = msg.close_code {
+                if msg.code == OpCode::Close {
+                    self.frame_codec
+                        .send(msg.code, vec![&close_code.to_be_bytes()[..], msg.data])
+                } else {
+                    self.frame_codec.send(msg.code, msg.data)
+                }
+            } else {
+                self.frame_codec.send(msg.code, msg.data)
+            }
         }
     }
 }
@@ -66,7 +83,7 @@ pub use blocking::WsBytesCodec;
 
 #[cfg(feature = "async")]
 mod non_blocking {
-    use bytes::BytesMut;
+    use bytes::{Buf, BytesMut};
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::{
@@ -74,6 +91,7 @@ mod non_blocking {
         errors::WsError,
         frame::OpCode,
         protocol::standard_handshake_resp_check,
+        Message,
     };
 
     pub struct AsyncWsBytesCodec<S: AsyncRead + AsyncWrite> {
@@ -109,20 +127,39 @@ mod non_blocking {
             self.frame_codec.stream_mut()
         }
 
-        pub async fn receive(&mut self) -> Result<(OpCode, BytesMut), WsError> {
+        pub async fn receive(&mut self) -> Result<Message<BytesMut>, WsError> {
             let frame = self.frame_codec.receive().await?;
             let mut data = BytesMut::new();
             data.extend_from_slice(&frame.payload_data_unmask());
-            Ok((frame.opcode(), data))
+            let op_code = frame.opcode();
+            let close_code = if op_code == OpCode::Close {
+                Some(data.get_u16())
+            } else {
+                None
+            };
+            Ok(Message {
+                code: frame.opcode(),
+                data,
+                close_code,
+            })
         }
 
-        pub async fn send<T: Into<Option<OpCode>>>(
+        pub async fn send<'a, T: Into<Message<&'a [u8]>>>(
             &mut self,
-            (code, content): (T, &[u8]),
+            msg: T,
         ) -> Result<usize, WsError> {
-            self.frame_codec
-                .send(code.into().unwrap_or(OpCode::Binary), content)
-                .await
+            let msg: Message<&'a [u8]> = msg.into();
+            if let Some(close_code) = msg.close_code {
+                if msg.code == OpCode::Close {
+                    self.frame_codec
+                        .send(msg.code, vec![&close_code.to_be_bytes()[..], msg.data])
+                        .await
+                } else {
+                    self.frame_codec.send(msg.code, msg.data).await
+                }
+            } else {
+                self.frame_codec.send(msg.code, msg.data).await
+            }
         }
     }
 }

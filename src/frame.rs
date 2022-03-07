@@ -294,6 +294,116 @@ impl Default for Frame {
     }
 }
 
+pub struct Payload<'a>(Vec<&'a [u8]>);
+
+impl<'a> From<&'a [u8]> for Payload<'a> {
+    fn from(data: &'a [u8]) -> Self {
+        Self(vec![data])
+    }
+}
+impl<'a> From<Vec<&'a [u8]>> for Payload<'a> {
+    fn from(data: Vec<&'a [u8]>) -> Self {
+        Self(data)
+    }
+}
+
+impl<'a> From<&'a [&'a [u8]]> for Payload<'a> {
+    fn from(data: &'a [&'a [u8]]) -> Self {
+        Self(data.to_vec())
+    }
+}
+
+impl<'a> From<&'a BytesMut> for Payload<'a> {
+    fn from(src: &'a BytesMut) -> Self {
+        Self(vec![src])
+    }
+}
+
+impl<'a> From<&'a Bytes> for Payload<'a> {
+    fn from(src: &'a Bytes) -> Self {
+        Self(vec![src])
+    }
+}
+
+impl<'a> Payload<'a> {
+    pub fn len(&self) -> usize {
+        self.0.iter().map(|i| i.len()).sum()
+    }
+
+    pub fn iter(&self) -> PayloadIterator<'_> {
+        PayloadIterator {
+            payload: self,
+            array_idx: 0,
+            offset: 0,
+            idx: 0,
+        }
+    }
+
+    pub fn split_with(&self, size: usize) -> Vec<Payload> {
+        let mut ret = vec![];
+        let last = self.0.iter().fold(vec![], |mut acc: Vec<&'a [u8]>, &arr| {
+            let pre_len: usize = acc.iter().map(|x| x.len()).sum();
+            let arr_len = arr.len();
+            if pre_len + arr_len <= size {
+                acc.push(&arr);
+                acc
+            } else {
+                let stop = arr_len + pre_len - size;
+                acc.push(&arr[..stop]);
+                ret.push(acc.into());
+                vec![&arr[stop..]]
+            }
+        });
+        ret.push(last.into());
+        ret
+    }
+
+    pub fn copy_to(&self, dest: &mut [u8]) {
+        let mut offset = 0;
+        self.0.iter().for_each(|arr| {
+            dest[offset..(offset + arr.len())].copy_from_slice(arr);
+            offset += arr.len()
+        })
+    }
+
+    pub fn copy_with_key(&self, dest: &mut [u8], key: [u8; 4]) {
+        let mut offset = 0;
+        self.0.iter().for_each(|arr| {
+            let buf: Vec<u8> = arr
+                .iter()
+                .enumerate()
+                .map(|(i, v)| v ^ key[(i + offset) % 4])
+                .collect();
+            dest[offset..(offset + arr.len())].copy_from_slice(&buf);
+            offset += arr.len()
+        })
+    }
+}
+
+pub struct PayloadIterator<'a> {
+    payload: &'a Payload<'a>,
+    array_idx: usize,
+    offset: usize,
+    idx: usize,
+}
+
+impl<'a> Iterator for PayloadIterator<'a> {
+    type Item = &'a u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let ret = self.payload.0.get(self.array_idx).and_then(|arr| {
+            // advance
+            self.idx += 1;
+            if self.idx >= arr.len() + self.offset {
+                self.array_idx += 1;
+                self.offset += arr.len();
+            }
+            arr.get(self.idx - self.offset)
+        });
+        ret
+    }
+}
+
 /// helper construct methods
 impl Frame {
     // TODO should init with const array to avoid computing?
@@ -303,7 +413,7 @@ impl Frame {
         frame
     }
 
-    pub fn new_with_payload(opcode: OpCode, payload: &[u8]) -> Self {
+    pub fn new_with_payload<'a, P: Into<Payload<'a>>>(opcode: OpCode, payload: P) -> Self {
         let mut frame = Frame::default();
         frame.set_opcode(opcode);
         frame.set_payload(payload);
@@ -314,7 +424,8 @@ impl Frame {
     ///
     /// **NOTE!** avoid calling this method multi times, since it need to calculate mask
     /// every time
-    pub fn set_payload(&mut self, payload: &[u8]) {
+    pub fn set_payload<'a, P: Into<Payload<'a>>>(&mut self, payload: P) {
+        let payload: Payload = payload.into();
         let len = payload.len();
         let offset = self.set_payload_len(len as u64);
         let mask = self.mask();
@@ -325,15 +436,10 @@ impl Frame {
             start_idx += 4;
             end_idx += 4;
             self.0.resize(end_idx, 0x0);
-            let data = payload
-                .iter()
-                .enumerate()
-                .map(|(idx, v)| v ^ masking_key[idx % 4])
-                .collect::<Vec<u8>>();
-            self.0[start_idx..end_idx].copy_from_slice(&data);
+            payload.copy_with_key(&mut self.0[start_idx..end_idx], masking_key);
         } else {
             self.0.resize(end_idx, 0x0);
-            self.0[start_idx..end_idx].copy_from_slice(payload)
+            payload.copy_to(&mut self.0[start_idx..end_idx])
         }
     }
 

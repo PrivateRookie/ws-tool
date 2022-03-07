@@ -15,10 +15,10 @@ async fn get_case_count() -> Result<usize, WsError> {
         .async_connect(AsyncWsStringCodec::check_fn)
         .await
         .unwrap();
-    let (_, count) = client.receive().await.unwrap();
+    let msg = client.receive().await.unwrap();
     client.receive().await.unwrap();
     // send_close(&mut client, 1001, "".to_string()).await.unwrap();
-    Ok(count.parse().unwrap())
+    Ok(msg.data.parse().unwrap())
 }
 
 async fn run_test(case: usize) -> Result<(), WsError> {
@@ -76,13 +76,10 @@ async fn update_report() -> Result<(), WsError> {
         "ws://localhost:9002/updateReports?agent={}",
         AGENT
     ))
-    .async_connect(AsyncWsFrameCodec::check_fn)
+    .async_connect(AsyncWsStringCodec::check_fn)
     .await
     .unwrap();
-    client
-        .send(OpCode::Close, &1000u16.to_be_bytes())
-        .await
-        .map(|_| ())
+    client.send((1000u16, String::new())).await.map(|_| ())
 }
 
 #[tokio::main]
