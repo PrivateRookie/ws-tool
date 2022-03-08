@@ -391,7 +391,7 @@ impl<'a> Iterator for PayloadIterator<'a> {
     type Item = &'a u8;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let ret = self.payload.0.get(self.array_idx).and_then(|arr| {
+        self.payload.0.get(self.array_idx).and_then(|arr| {
             // advance
             self.idx += 1;
             if self.idx >= arr.len() + self.offset {
@@ -399,14 +399,36 @@ impl<'a> Iterator for PayloadIterator<'a> {
                 self.offset += arr.len();
             }
             arr.get(self.idx - self.offset)
-        });
-        ret
+        })
     }
 }
 
 /// helper construct methods
 impl Frame {
-    // TODO should init with const array to avoid computing?
+    pub fn new<'a, P: Into<Payload<'a>>>(fin: bool, code: OpCode, mask: bool, payload: P) -> Self {
+        let payload: Payload = payload.into();
+        let payload_len = payload.len();
+        let mut buf_len = 1 + payload_len;
+        if mask {
+            buf_len += 4;
+        }
+        if payload_len <= 125 {
+            buf_len += 1;
+        } else if payload_len <= 65535 {
+            buf_len += 3;
+        } else {
+            buf_len += 9;
+        }
+        let mut buf = BytesMut::new();
+        buf.resize(buf_len, 0);
+        let mut frame = Frame(buf);
+        frame.set_fin(fin);
+        frame.set_opcode(code);
+        frame.set_mask(mask);
+        frame.set_payload(payload);
+        frame
+    }
+
     pub fn new_with_opcode(opcode: OpCode) -> Self {
         let mut frame = Frame::default();
         frame.set_opcode(opcode);
@@ -435,10 +457,10 @@ impl Frame {
             let masking_key = self.set_masking_key().unwrap();
             start_idx += 4;
             end_idx += 4;
-            self.0.resize(end_idx, 0x0);
+            // self.0.resize(end_idx, 0x0);
             payload.copy_with_key(&mut self.0[start_idx..end_idx], masking_key);
         } else {
-            self.0.resize(end_idx, 0x0);
+            // self.0.resize(end_idx, 0x0);
             payload.copy_to(&mut self.0[start_idx..end_idx])
         }
     }

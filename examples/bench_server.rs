@@ -40,13 +40,17 @@ fn main() -> Result<(), ()> {
                     .unwrap();
 
             loop {
-                if let Ok(msg) = server.receive() {
-                    if msg.code == OpCode::Close {
-                        break;
+                match server.receive() {
+                    Ok(msg) => {
+                        if msg.code == OpCode::Close {
+                            break;
+                        }
+                        server.send(&msg.data[..]).unwrap();
                     }
-                    server.send(&msg.data[..]).unwrap();
-                } else {
-                    break;
+                    Err(e) => {
+                        dbg!(e);
+                        break;
+                    },
                 }
             }
             tracing::info!("one conn down");

@@ -1,8 +1,10 @@
 use crate::errors::{ProtocolError, WsError};
 use crate::frame::{get_bit, parse_opcode, parse_payload_len, Frame, OpCode};
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
-use bytes::{BytesMut};
+use bytes::BytesMut;
 use std::fmt::Debug;
+
+const BUF_SIZE: usize = 1024 * 8;
 
 #[derive(Debug, Clone)]
 pub struct FrameConfig {
@@ -29,7 +31,7 @@ type IOResult<T> = std::io::Result<T>;
 struct FrameReadState {
     fragmented: bool,
     config: FrameConfig,
-    read_buf: [u8; 1024 * 4],
+    read_buf: [u8; BUF_SIZE],
     read_data: BytesMut,
     fragmented_data: BytesMut,
     fragmented_type: OpCode,
@@ -40,8 +42,8 @@ impl FrameReadState {
         Self {
             config: FrameConfig::default(),
             fragmented: false,
-            read_buf: [0; 1024 * 4],
-            read_data: BytesMut::with_capacity(1024 * 4),
+            read_buf: [0; BUF_SIZE],
+            read_data: BytesMut::with_capacity(BUF_SIZE),
             fragmented_data: BytesMut::new(),
             fragmented_type: OpCode::default(),
         }
@@ -262,14 +264,22 @@ mod blocking {
             Ok(count)
         }
 
+        fn poll_with_size<S: Read>(&mut self, stream: &mut S, size: usize) -> IOResult<usize> {
+            let start = self.read_data.len();
+            self.read_data.resize(size, 0);
+            stream.read_exact(&mut self.read_data[start..size])?;
+            Ok(size - start)
+        }
+
         fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<Frame, WsError> {
             while !self.leading_bits_ok() {
                 self.poll(stream)?;
             }
             let len = self.parse_frame_header()?;
-            while !self.body_ok(len) {
-                self.poll(stream)?;
-            }
+            // while !self.body_ok(len) {
+            //     self.poll(stream)?;
+            // }
+            self.poll_with_size(stream, len)?;
             Ok(self.consume_frame(len))
         }
 
@@ -292,10 +302,7 @@ mod blocking {
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<()> {
-            let mut frame = Frame::new_with_opcode(code);
-            frame.set_fin(fin);
-            frame.set_mask(mask);
-            frame.set_payload(payload);
+            let frame = Frame::new(fin, code, mask, payload);
             stream.write_all(&frame.0)
         }
 
@@ -402,6 +409,13 @@ mod non_block {
             Ok(count)
         }
 
+        async fn async_poll_with_size<S:  AsyncRead + Unpin>(&mut self, stream: &mut S, size: usize) -> IOResult<usize> {
+            let start = self.read_data.len();
+            self.read_data.resize(size, 0);
+            stream.read_exact(&mut self.read_data[start..size]).await?;
+            Ok(size - start)
+        }
+
         async fn async_read_one_frame<S: AsyncRead + Unpin>(
             &mut self,
             stream: &mut S,
@@ -410,9 +424,10 @@ mod non_block {
                 self.async_poll(stream).await?;
             }
             let len = self.parse_frame_header()?;
-            while !self.body_ok(len) {
-                self.async_poll(stream).await?;
-            }
+            // while !self.body_ok(len) {
+            //     self.async_poll(stream).await?;
+            // }
+            self.async_poll_with_size(stream, len).await?;
             Ok(self.consume_frame(len))
         }
 
@@ -438,10 +453,7 @@ mod non_block {
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<usize> {
-            let mut frame = Frame::new_with_opcode(code);
-            frame.set_fin(fin);
-            frame.set_mask(mask);
-            frame.set_payload(payload);
+            let frame = Frame::new(fin, code, mask, payload);
             stream.write(&frame.0).await
         }
 
