@@ -39,6 +39,8 @@ async fn main() -> Result<(), ()> {
     let args = Args::from_args();
     tracing_subscriber::fmt::fmt()
         .with_max_level(args.level)
+        .with_file(true)
+        .with_line_number(true)
         .finish()
         .try_init()
         .expect("failed to init log");

@@ -4,8 +4,6 @@ use crate::protocol::{cal_accept_key, standard_handshake_req_check};
 use bytes::BytesMut;
 use std::fmt::Debug;
 
-const BUF_SIZE: usize = 1024 * 8;
-
 #[derive(Debug, Clone)]
 pub struct FrameConfig {
     pub check_rsv: bool,
@@ -31,7 +29,7 @@ type IOResult<T> = std::io::Result<T>;
 struct FrameReadState {
     fragmented: bool,
     config: FrameConfig,
-    read_buf: [u8; BUF_SIZE],
+    read_idx: usize,
     read_data: BytesMut,
     fragmented_data: BytesMut,
     fragmented_type: OpCode,
@@ -42,8 +40,8 @@ impl FrameReadState {
         Self {
             config: FrameConfig::default(),
             fragmented: false,
-            read_buf: [0; BUF_SIZE],
-            read_data: BytesMut::with_capacity(BUF_SIZE),
+            read_idx: 0,
+            read_data: BytesMut::new(),
             fragmented_data: BytesMut::new(),
             fragmented_type: OpCode::default(),
         }
@@ -52,6 +50,7 @@ impl FrameReadState {
     pub fn with_remain(config: FrameConfig, read_data: BytesMut) -> Self {
         Self {
             config,
+            read_idx: read_data.len(),
             read_data,
             ..Self::new()
         }
@@ -107,6 +106,7 @@ impl FrameReadState {
 
     fn consume_frame(&mut self, len: usize) -> Frame {
         let data = self.read_data.split_to(len);
+        self.read_idx = self.read_data.len();
         Frame(data)
     }
 
@@ -257,14 +257,16 @@ mod blocking {
 
     impl FrameReadState {
         fn poll<S: Read>(&mut self, stream: &mut S) -> IOResult<usize> {
-            let count = stream.read(&mut self.read_buf)?;
+            self.read_data.resize(self.read_idx + 1024, 0);
+            let count = stream.read(&mut self.read_data[self.read_idx..])?;
+            self.read_idx += count;
+            self.read_data.resize(self.read_idx, 0);
             if count == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::ConnectionAborted,
                     "read eof",
                 ));
             }
-            self.read_data.extend_from_slice(&self.read_buf[..count]);
             Ok(count)
         }
 
@@ -280,9 +282,6 @@ mod blocking {
                 self.poll(stream)?;
             }
             let len = self.parse_frame_header()?;
-            // while !self.body_ok(len) {
-            //     self.poll(stream)?;
-            // }
             self.poll_with_size(stream, len)?;
             Ok(self.consume_frame(len))
         }
@@ -403,14 +402,16 @@ mod non_block {
 
     impl FrameReadState {
         async fn async_poll<S: AsyncRead + Unpin>(&mut self, stream: &mut S) -> IOResult<usize> {
-            let count = stream.read(&mut self.read_buf).await?;
+            self.read_data.resize(self.read_idx + 1024, 0);
+            let count = stream.read(&mut self.read_data[self.read_idx..]).await?;
+            self.read_idx += count;
+            self.read_data.resize(self.read_idx, 0);
             if count == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::ConnectionAborted,
                     "read eof",
                 ));
             }
-            self.read_data.extend_from_slice(&self.read_buf[..count]);
             Ok(count)
         }
 

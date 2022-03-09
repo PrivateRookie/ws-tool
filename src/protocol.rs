@@ -335,7 +335,7 @@ mod non_blocking {
             }
 
             if let Some(idx) = idx {
-                let header_bytes = read_bytes.split_to(idx);
+                let header_bytes = read_bytes.split_to(idx + 4);
                 break (header_bytes, read_bytes);
             }
         };
@@ -348,8 +348,8 @@ mod non_blocking {
         let mut read_bytes = BytesMut::with_capacity(1024);
         let mut buf: [u8; 1024] = [0; 1024];
         let (req, remain) = loop {
-            let num = stream.read_exact(&mut buf).await?;
-            read_bytes.copy_from_slice(&buf[..num]);
+            let num = stream.read(&mut buf).await?;
+            read_bytes.extend_from_slice(&buf[..num]);
             let idx = read_bytes
                 .windows(4)
                 .position(|sep| sep == [b'\r', b'\n', b'\r', b'\n']);
@@ -357,7 +357,7 @@ mod non_blocking {
                 break (read_bytes, BytesMut::new());
             }
             if let Some(idx) = idx {
-                let req_bytes = read_bytes.split_to(idx);
+                let req_bytes = read_bytes.split_to(idx + 4);
                 break (req_bytes, read_bytes);
             }
         };
