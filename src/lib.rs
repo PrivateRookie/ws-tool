@@ -265,6 +265,7 @@ mod blocking {
 mod non_blocking {
     use std::fmt::Debug;
 
+    use bytes::BytesMut;
     use tokio::{
         io::{AsyncRead, AsyncWrite, AsyncWriteExt},
         net::TcpStream,
@@ -282,7 +283,15 @@ mod non_blocking {
     impl ClientBuilder {
         async fn _async_connect(
             &self,
-        ) -> Result<(String, http::Response<()>, WsAsyncStream<TcpStream>), WsError> {
+        ) -> Result<
+            (
+                String,
+                http::Response<()>,
+                BytesMut,
+                WsAsyncStream<TcpStream>,
+            ),
+            WsError,
+        > {
             let Self {
                 uri,
                 #[cfg(feature = "proxy")]
@@ -364,7 +373,7 @@ mod non_blocking {
                     }
                 }
             };
-            let (key, resp) = async_req_handshake(
+            let (key, resp, remain) = async_req_handshake(
                 &mut stream,
                 &mode,
                 &uri,
@@ -382,15 +391,20 @@ mod non_blocking {
                 headers.clone(),
             )
             .await?;
-            Ok((key, resp, stream))
+            Ok((key, resp, remain, stream))
         }
 
         pub async fn async_connect<C, F>(&self, check_fn: F) -> Result<C, WsError>
         where
-            F: Fn(String, http::Response<()>, WsAsyncStream<TcpStream>) -> Result<C, WsError>,
+            F: Fn(
+                String,
+                http::Response<()>,
+                BytesMut,
+                WsAsyncStream<TcpStream>,
+            ) -> Result<C, WsError>,
         {
-            let (key, resp, stream) = self._async_connect().await?;
-            check_fn(key, resp, stream)
+            let (key, resp, remain, stream) = self._async_connect().await?;
+            check_fn(key, resp, remain, stream)
         }
     }
 
@@ -403,11 +417,11 @@ mod non_blocking {
         where
             S: AsyncRead + AsyncWrite + Unpin,
             F1: Fn(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: Fn(http::Request<()>, WsAsyncStream<S>) -> Result<C, WsError>,
+            F2: Fn(http::Request<()>, BytesMut, WsAsyncStream<S>) -> Result<C, WsError>,
             T: ToString + Debug,
         {
             let mut stream = WsAsyncStream::Plain(stream);
-            let req = async_handle_handshake(&mut stream).await?;
+            let (req, remain) = async_handle_handshake(&mut stream).await?;
             let (req, resp) = handshake_handler(req)?;
             let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
             resp.headers().iter().for_each(|(k, v)| {
@@ -419,7 +433,7 @@ mod non_blocking {
             if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
                 return Err(WsError::HandShakeFailed(resp.body().to_string()));
             }
-            codec_factory(req, stream)
+            codec_factory(req, remain, stream)
         }
     }
 }

@@ -49,6 +49,14 @@ impl FrameReadState {
         }
     }
 
+    pub fn with_remain(config: FrameConfig, read_data: BytesMut) -> Self {
+        Self {
+            config,
+            read_data,
+            ..Self::new()
+        }
+    }
+
     pub fn with_config(config: FrameConfig) -> Self {
         Self {
             config,
@@ -62,10 +70,6 @@ impl FrameReadState {
 
     pub fn get_leading_bits(&self) -> u8 {
         self.read_data[0] >> 4
-    }
-
-    pub fn body_ok(&self, expect_len: usize) -> bool {
-        self.read_data.len() >= expect_len
     }
 
     fn parse_frame_header(&mut self) -> Result<usize, WsError> {
@@ -387,6 +391,7 @@ pub use blocking::WsFrameCodec;
 
 #[cfg(feature = "async")]
 mod non_block {
+    use bytes::BytesMut;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
     use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
@@ -409,7 +414,11 @@ mod non_block {
             Ok(count)
         }
 
-        async fn async_poll_with_size<S:  AsyncRead + Unpin>(&mut self, stream: &mut S, size: usize) -> IOResult<usize> {
+        async fn async_poll_with_size<S: AsyncRead + Unpin>(
+            &mut self,
+            stream: &mut S,
+            size: usize,
+        ) -> IOResult<usize> {
             let start = self.read_data.len();
             self.read_data.resize(size, 0);
             stream.read_exact(&mut self.read_data[start..size]).await?;
@@ -495,24 +504,33 @@ mod non_block {
             }
         }
 
-        pub fn new_with(stream: S, config: FrameConfig) -> Self {
+        pub fn new_with(stream: S, config: FrameConfig, read_bytes: BytesMut) -> Self {
             Self {
                 stream,
-                read_state: FrameReadState::with_config(config.clone()),
+                read_state: FrameReadState::with_remain(config.clone(), read_bytes),
                 write_state: FrameWriteState::with_config(config),
             }
         }
 
-        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+        pub fn factory(
+            _req: http::Request<()>,
+            remain: BytesMut,
+            stream: S,
+        ) -> Result<Self, WsError> {
             let mut config = FrameConfig::default();
             // do not mask server side frame
             config.mask = false;
-            Ok(Self::new_with(stream, config))
+            Ok(Self::new_with(stream, config, remain))
         }
 
-        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+        pub fn check_fn(
+            key: String,
+            resp: http::Response<()>,
+            remain: BytesMut,
+            stream: S,
+        ) -> Result<Self, WsError> {
             standard_handshake_resp_check(key.as_bytes(), &resp)?;
-            Ok(Self::new_with(stream, FrameConfig::default()))
+            Ok(Self::new_with(stream, FrameConfig::default(), remain))
         }
 
         pub fn stream_mut(&mut self) -> &mut S {

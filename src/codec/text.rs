@@ -95,7 +95,7 @@ pub use blocking::WsStringCodec;
 
 #[cfg(feature = "async")]
 mod non_blocking {
-    use bytes::Buf;
+    use bytes::{Buf, BytesMut};
     use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::{
@@ -119,9 +119,14 @@ mod non_blocking {
             }
         }
 
-        pub fn new_with(stream: S, config: FrameConfig, validate_utf8: bool) -> Self {
+        pub fn new_with(
+            stream: S,
+            config: FrameConfig,
+            remain: BytesMut,
+            validate_utf8: bool,
+        ) -> Self {
             Self {
-                frame_codec: AsyncWsFrameCodec::new_with(stream, config),
+                frame_codec: AsyncWsFrameCodec::new_with(stream, config, remain),
                 validate_utf8,
             }
         }
@@ -130,15 +135,24 @@ mod non_blocking {
             self.frame_codec.stream_mut()
         }
 
-        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+        pub fn check_fn(
+            key: String,
+            resp: http::Response<()>,
+            remain: BytesMut,
+            stream: S,
+        ) -> Result<Self, WsError> {
             standard_handshake_resp_check(key.as_bytes(), &resp)?;
-            Ok(Self::new_with(stream, FrameConfig::default(), true))
+            Ok(Self::new_with(stream, FrameConfig::default(), remain, true))
         }
 
-        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+        pub fn factory(
+            _req: http::Request<()>,
+            remain: BytesMut,
+            stream: S,
+        ) -> Result<Self, WsError> {
             let mut config = FrameConfig::default();
             config.mask = false;
-            Ok(Self::new_with(stream, config, true))
+            Ok(Self::new_with(stream, config, remain, true))
         }
 
         pub async fn receive(&mut self) -> Result<Message<String>, WsError> {

@@ -105,22 +105,31 @@ mod non_blocking {
             }
         }
 
-        pub fn new_with(stream: S, config: FrameConfig) -> Self {
+        pub fn new_with(stream: S, config: FrameConfig, read_bytes: BytesMut) -> Self {
             Self {
-                frame_codec: AsyncWsFrameCodec::new_with(stream, config),
+                frame_codec: AsyncWsFrameCodec::new_with(stream, config, read_bytes),
             }
         }
 
-        pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+        pub fn factory(
+            _req: http::Request<()>,
+            remain: BytesMut,
+            stream: S,
+        ) -> Result<Self, WsError> {
             let mut config = FrameConfig::default();
             // do not mask server side frame
             config.mask = false;
-            Ok(Self::new_with(stream, config))
+            Ok(Self::new_with(stream, config, remain))
         }
 
-        pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+        pub fn check_fn(
+            key: String,
+            resp: http::Response<()>,
+            remain: BytesMut,
+            stream: S,
+        ) -> Result<Self, WsError> {
             standard_handshake_resp_check(key.as_bytes(), &resp)?;
-            Ok(Self::new_with(stream, FrameConfig::default()))
+            Ok(Self::new_with(stream, FrameConfig::default(), remain))
         }
 
         pub fn stream_mut(&mut self) -> &mut S {
