@@ -468,13 +468,14 @@ impl Frame {
             let masking_key = self.set_masking_key().unwrap();
             start_idx += 4;
             end_idx += 4;
-            // self.0.resize(end_idx, 0x0);
+            self.0.resize(end_idx, 0x0);
             payload.copy_with_key(&mut self.0[start_idx..end_idx], masking_key);
         } else {
-            // self.0.resize(end_idx, 0x0);
+            self.0.resize(end_idx, 0x0);
             payload.copy_to(&mut self.0[start_idx..end_idx])
         }
     }
+
 
     pub fn as_bytes(&self) -> &[u8] {
         let (occ, len) = self.payload_len_with_occ();

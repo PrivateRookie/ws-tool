@@ -1,10 +1,5 @@
 use structopt::StructOpt;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{
-    codec::{default_handshake_handler, WsBytesCodec},
-    frame::OpCode,
-    ServerBuilder,
-};
 
 /// websocket client connect to binance futures websocket
 #[derive(StructOpt)]
@@ -35,19 +30,13 @@ fn main() -> Result<(), ()> {
         stream.set_nodelay(true).unwrap();
         std::thread::spawn(move || {
             tracing::info!("got connect from {:?}", addr);
-            let mut server =
-                ServerBuilder::accept(stream, default_handshake_handler, WsBytesCodec::factory)
-                    .unwrap();
-
+            let mut ws = tungstenite::accept(stream).unwrap();
             loop {
-                if let Ok(msg) = server.receive() {
-                    if msg.code == OpCode::Close {
-                        break;
-                    }
-                    server.send(&msg.data[..]).unwrap();
-                } else {
+                let msg = ws.read_message().unwrap();
+                if msg.is_close() {
                     break;
                 }
+                ws.write_message(msg).unwrap();
             }
             tracing::info!("one conn down");
         });
