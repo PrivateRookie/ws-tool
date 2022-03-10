@@ -107,7 +107,15 @@ impl FrameReadState {
     fn consume_frame(&mut self, len: usize) -> Frame {
         let data = self.read_data.split_to(len);
         self.read_idx = self.read_data.len();
-        Frame(data)
+        let mut frame = Frame(data);
+        if let Some(key) = frame.masking_key() {
+            frame
+                .payload_mut()
+                .iter_mut()
+                .enumerate()
+                .for_each(|(idx, num)| *num = *num ^ key[idx % 4])
+        }
+        frame
     }
 
     fn check_frame(&mut self, frame: Frame) -> Result<Option<Frame>, WsError> {

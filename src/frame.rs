@@ -259,19 +259,20 @@ impl Frame {
     }
 
     /// return unmask(if masked) payload data
-    pub fn payload_data_unmask(&self) -> Bytes {
-        match self.masking_key() {
-            Some(masking_key) => {
-                let slice = self
-                    .payload_data()
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, num)| num ^ masking_key[idx % 4])
-                    .collect::<Vec<u8>>();
-                Bytes::copy_from_slice(&slice)
-            }
-            None => Bytes::copy_from_slice(self.payload_data()),
-        }
+    pub fn payload_data_unmask(&self) -> &[u8] {
+        // match self.masking_key() {
+        //     Some(masking_key) => {
+        //         let slice = self
+        //             .payload_data()
+        //             .iter()
+        //             .enumerate()
+        //             .map(|(idx, num)| num ^ masking_key[idx % 4])
+        //             .collect::<Vec<u8>>();
+        //         Bytes::copy_from_slice(&slice)
+        //     }
+        //     None => Bytes::copy_from_slice(self.payload_data()),
+        // }
+        self.payload_data()
     }
 
     pub fn payload_data(&self) -> &[u8] {
@@ -282,6 +283,16 @@ impl Frame {
             start_idx += 4;
         }
         &self.0[start_idx..start_idx + (len as usize)]
+    }
+
+    pub fn payload_mut(&mut self) -> &mut [u8] {
+        let mut start_idx = 1;
+        let (len_occupied, len) = self.payload_len_with_occ();
+        start_idx += len_occupied;
+        if self.mask() {
+            start_idx += 4;
+        }
+        &mut self.0[start_idx..start_idx + (len as usize)]
     }
 }
 

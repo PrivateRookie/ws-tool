@@ -35,7 +35,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                 let data = frame.payload_data_unmask();
                 match &code {
                     OpCode::Text | OpCode::Binary => {
-                        client.send(code, &data).await?;
+                        client.send(code, data).await?;
                     }
                     OpCode::Close => {
                         let mut data = BytesMut::new();
@@ -44,7 +44,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                         break;
                     }
                     OpCode::Ping => {
-                        client.send(code, &data).await?;
+                        client.send(code, data).await?;
                     }
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {

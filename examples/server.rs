@@ -117,7 +117,7 @@ async fn main() -> Result<(), ()> {
                 // }
                 // server.send(msg).await.unwrap();
                 server
-                    .send(msg.opcode(), &msg.payload_data_unmask())
+                    .send(msg.opcode(), msg.payload_data_unmask())
                     .await
                     .unwrap();
             } else {
@@ -149,7 +149,7 @@ async fn main() -> Result<(), ()> {
                 // }
                 // server.send(msg).await.unwrap();
                 server
-                    .send(msg.opcode(), &msg.payload_data_unmask())
+                    .send(msg.opcode(), msg.payload_data_unmask())
                     .await
                     .unwrap();
             } else {
