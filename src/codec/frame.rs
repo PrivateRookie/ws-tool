@@ -308,11 +308,15 @@ mod blocking {
             Ok(count)
         }
 
-        fn poll_with_size<S: Read>(&mut self, stream: &mut S, size: usize) -> IOResult<usize> {
-            let start = self.read_data.len();
-            self.read_data.resize(size, 0);
-            stream.read_exact(&mut self.read_data[start..size])?;
-            Ok(size - start)
+        fn poll_one_frame<S: Read>(&mut self, stream: &mut S, size: usize) -> IOResult<usize> {
+            let buf_len = self.read_data.len();
+            if buf_len < size {
+                self.read_data.resize(size, 0);
+                stream.read_exact(&mut self.read_data[buf_len..size])?;
+                Ok(size - buf_len)
+            } else {
+                Ok(0)
+            }
         }
 
         fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<Frame, WsError> {
@@ -320,7 +324,7 @@ mod blocking {
                 self.poll(stream)?;
             }
             let len = self.parse_frame_header()?;
-            self.poll_with_size(stream, len)?;
+            self.poll_one_frame(stream, len)?;
             Ok(self.consume_frame(len))
         }
 
@@ -453,15 +457,21 @@ mod non_block {
             Ok(count)
         }
 
-        async fn async_poll_with_size<S: AsyncRead + Unpin>(
+        async fn async_poll_one_frame<S: AsyncRead + Unpin>(
             &mut self,
             stream: &mut S,
             size: usize,
         ) -> IOResult<usize> {
-            let start = self.read_data.len();
-            self.read_data.resize(size, 0);
-            stream.read_exact(&mut self.read_data[start..size]).await?;
-            Ok(size - start)
+            let buf_len = self.read_data.len();
+            if buf_len < size {
+                self.read_data.resize(size, 0);
+                stream
+                    .read_exact(&mut self.read_data[buf_len..size])
+                    .await?;
+                Ok(size - buf_len)
+            } else {
+                Ok(0)
+            }
         }
 
         async fn async_read_one_frame<S: AsyncRead + Unpin>(
@@ -475,7 +485,7 @@ mod non_block {
             // while !self.body_ok(len) {
             //     self.async_poll(stream).await?;
             // }
-            self.async_poll_with_size(stream, len).await?;
+            self.async_poll_one_frame(stream, len).await?;
             Ok(self.consume_frame(len))
         }
 
