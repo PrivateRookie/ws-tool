@@ -47,22 +47,24 @@ mod blocking {
 
         pub fn receive(&mut self) -> Result<Message<BytesMut>, WsError> {
             let frame = self.frame_codec.receive()?;
-            let mut data = BytesMut::new();
-            data.extend_from_slice(&frame.payload_data_unmask());
-            let op_code = frame.opcode();
+            let header = frame.header();
+            let header_len = header.payload_idx().0;
+            let op_code = header.opcode();
+            let mut data = frame.0;
+            data.advance(header_len);
             let close_code = if op_code == OpCode::Close {
                 Some(data.get_u16())
             } else {
                 None
             };
             Ok(Message {
-                code: frame.opcode(),
+                code: op_code,
                 data,
                 close_code,
             })
         }
 
-        pub fn send<'a, T: Into<Message<&'a [u8]>>>(&mut self, msg: T) -> Result<usize, WsError> {
+        pub fn send<'a, T: Into<Message<&'a [u8]>>>(&mut self, msg: T) -> Result<(), WsError> {
             let msg: Message<&'a [u8]> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {
@@ -138,16 +140,17 @@ mod non_blocking {
 
         pub async fn receive(&mut self) -> Result<Message<BytesMut>, WsError> {
             let frame = self.frame_codec.receive().await?;
-            let mut data = BytesMut::new();
-            data.extend_from_slice(&frame.payload_data_unmask());
-            let op_code = frame.opcode();
-            let close_code = if op_code == OpCode::Close {
+            let header = frame.header();
+            let header_len = header.payload_idx().0;
+            let code = header.opcode();
+            let mut data = frame.0;
+            let close_code = if code == OpCode::Close {
                 Some(data.get_u16())
             } else {
                 None
             };
             Ok(Message {
-                code: frame.opcode(),
+                code,
                 data,
                 close_code,
             })
@@ -156,7 +159,7 @@ mod non_blocking {
         pub async fn send<'a, T: Into<Message<&'a [u8]>>>(
             &mut self,
             msg: T,
-        ) -> Result<usize, WsError> {
+        ) -> Result<(), WsError> {
             let msg: Message<&'a [u8]> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {

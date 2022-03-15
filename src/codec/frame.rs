@@ -1,7 +1,7 @@
 use crate::errors::{ProtocolError, WsError};
-use crate::frame::{get_bit, parse_opcode, parse_payload_len, Frame, OpCode};
+use crate::frame::{get_bit, parse_opcode, parse_payload_len, OpCode, OwnedFrame};
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
@@ -65,7 +65,7 @@ struct FrameReadState {
     config: FrameConfig,
     read_idx: usize,
     read_data: BytesMut,
-    fragmented_data: BytesMut,
+    fragmented_data: OwnedFrame,
     fragmented_type: OpCode,
 }
 
@@ -76,7 +76,7 @@ impl FrameReadState {
             fragmented: false,
             read_idx: 0,
             read_data: BytesMut::new(),
-            fragmented_data: BytesMut::new(),
+            fragmented_data: OwnedFrame::empty(),
             fragmented_type: OpCode::default(),
         }
     }
@@ -138,18 +138,19 @@ impl FrameReadState {
         Ok(expected_len)
     }
 
-    fn consume_frame(&mut self, len: usize) -> Frame {
+    fn consume_frame(&mut self, len: usize) -> OwnedFrame {
         let data = self.read_data.split_to(len);
         self.read_idx = self.read_data.len();
-        let mut frame = Frame(data);
-        if let Some(key) = frame.masking_key() {
-            apply_mask_fast32(frame.payload_mut(), key)
+        let mut frame = OwnedFrame(data);
+        if let Some(key) = frame.header().masking_key() {
+            apply_mask_fast32(frame.payload_mut(), key);
         }
         frame
     }
 
-    fn check_frame(&mut self, frame: Frame) -> Result<Option<Frame>, WsError> {
-        let opcode = frame.opcode();
+    fn check_frame(&mut self, unmasked_frame: OwnedFrame) -> Result<Option<OwnedFrame>, WsError> {
+        let header = unmasked_frame.header();
+        let opcode = header.opcode();
         match opcode {
             OpCode::Continue => {
                 if !self.fragmented {
@@ -158,19 +159,20 @@ impl FrameReadState {
                         error: ProtocolError::MissInitialFragmentedFrame,
                     });
                 }
-                self.fragmented_data
-                    .extend_from_slice(&frame.payload_data_unmask());
-                if frame.fin() {
+                let (header_len, _) = header.payload_idx();
+                drop(header);
+                let mut buf = unmasked_frame.0;
+                buf.advance(header_len);
+                self.fragmented_data.0.unsplit(buf);
+                if header.fin() {
                     // if String::from_utf8(fragmented_data.to_vec()).is_err() {
                     //     return Err(WsError::ProtocolError {
                     //         close_code: 1007,
                     //         error: ProtocolError::InvalidUtf8,
                     //     });
                     // }
-                    let completed_frame = Frame::new_with_payload(
-                        self.fragmented_type.clone(),
-                        &self.fragmented_data,
-                    );
+                    let completed_frame = self.fragmented_data;
+                    self.fragmented_data = OwnedFrame::empty();
                     Ok(Some(completed_frame))
                 } else {
                     Ok(None)
@@ -183,11 +185,14 @@ impl FrameReadState {
                         error: ProtocolError::NotContinueFrameAfterFragmented,
                     });
                 }
-                if !frame.fin() {
+                if !header.fin() {
                     self.fragmented = true;
                     self.fragmented_type = opcode.clone();
-                    let payload = frame.payload_data_unmask();
-                    self.fragmented_data.extend_from_slice(&payload);
+                    self.fragmented_data.header_mut().set_opcode(opcode);
+                    let header_len = header.payload_idx().0;
+                    let buf = unmasked_frame.0;
+                    buf.advance(header_len);
+                    self.fragmented_data.0.unsplit(buf);
                     Ok(None)
                 } else {
                     // if opcode == OpCode::Text
@@ -198,17 +203,17 @@ impl FrameReadState {
                     //         error: ProtocolError::InvalidUtf8,
                     //     });
                     // }
-                    Ok(Some(frame))
+                    Ok(Some(unmasked_frame))
                 }
             }
             OpCode::Close | OpCode::Ping | OpCode::Pong => {
-                if !frame.fin() {
+                if !header.fin() {
                     return Err(WsError::ProtocolError {
                         close_code: 1002,
                         error: ProtocolError::FragmentedControlFrame,
                     });
                 }
-                let payload_len = frame.payload_len();
+                let payload_len = header.payload_len();
                 if payload_len > 125 {
                     let error = ProtocolError::ControlFrameTooBig(payload_len as usize);
                     return Err(WsError::ProtocolError {
@@ -225,7 +230,7 @@ impl FrameReadState {
                         });
                     }
                     if payload_len >= 2 {
-                        let payload = frame.payload_data_unmask();
+                        let payload = unmasked_frame.payload();
 
                         // check close code
                         let mut code_byte = [0u8; 2];
@@ -254,10 +259,10 @@ impl FrameReadState {
                     }
                 }
                 if opcode == OpCode::Close || !self.fragmented {
-                    Ok(Some(frame))
+                    Ok(Some(unmasked_frame))
                 } else {
                     tracing::debug!("{:?} frame between self.fragmented data", opcode);
-                    Ok(Some(frame))
+                    Ok(Some(unmasked_frame))
                 }
             }
             OpCode::ReservedNonControl | OpCode::ReservedControl => {
@@ -288,7 +293,7 @@ mod blocking {
     use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
     use crate::{
         errors::WsError,
-        frame::{Frame, OpCode, Payload},
+        frame::{OpCode, OwnedFrame, Payload},
         protocol::standard_handshake_resp_check,
     };
     use std::io::{Read, Write};
@@ -319,7 +324,7 @@ mod blocking {
             }
         }
 
-        fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<Frame, WsError> {
+        fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
             while !self.leading_bits_ok() {
                 self.poll(stream)?;
             }
@@ -328,7 +333,7 @@ mod blocking {
             Ok(self.consume_frame(len))
         }
 
-        pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<Frame, WsError> {
+        pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
             loop {
                 let frame = self.read_one_frame(stream)?;
                 if let Some(frame) = self.check_frame(frame)? {
@@ -341,14 +346,18 @@ mod blocking {
     impl FrameWriteState {
         fn send_one<'a, S: Write>(
             &mut self,
-            payload: Payload<'a>,
+            masked_payload: Payload<'a>,
             fin: bool,
             mask: bool,
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<()> {
-            let frame = Frame::new(fin, code, mask, payload);
-            stream.write_all(&frame.0)
+            let frame = OwnedFrame::new(fin, false, false, false, code, mask, vec![]);
+            stream.write_all(&frame.0)?;
+            for part in masked_payload.0 {
+                stream.write_all(part)?;
+            }
+            Ok(())
         }
 
         pub fn send<'a, S: Write>(
@@ -356,7 +365,7 @@ mod blocking {
             payload: Payload,
             code: OpCode,
             stream: &mut S,
-        ) -> IOResult<usize> {
+        ) -> IOResult<()> {
             let split_size = self.config.auto_fragment_size;
             let len = payload.len();
             if split_size > 0 {
@@ -369,7 +378,7 @@ mod blocking {
             } else {
                 self.send_one(payload, true, self.config.mask, code, stream)?;
             }
-            Ok(len)
+            Ok(())
         }
     }
 
@@ -411,7 +420,7 @@ mod blocking {
             Ok(Self::new_with(stream, FrameConfig::default()))
         }
 
-        pub fn receive(&mut self) -> Result<Frame, WsError> {
+        pub fn receive(&mut self) -> Result<OwnedFrame, WsError> {
             self.read_state.receive(&mut self.stream)
         }
 
@@ -419,7 +428,7 @@ mod blocking {
             &mut self,
             code: OpCode,
             payload: P,
-        ) -> Result<usize, WsError> {
+        ) -> Result<(), WsError> {
             self.write_state
                 .send(payload.into(), code, &mut self.stream)
                 .map_err(|e| WsError::IOError(Box::new(e)))
@@ -438,7 +447,7 @@ mod non_block {
     use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
     use crate::{
         errors::WsError,
-        frame::{Frame, OpCode, Payload},
+        frame::{OpCode, OwnedFrame, Payload},
         protocol::standard_handshake_resp_check,
     };
 
@@ -477,7 +486,7 @@ mod non_block {
         async fn async_read_one_frame<S: AsyncRead + Unpin>(
             &mut self,
             stream: &mut S,
-        ) -> Result<Frame, WsError> {
+        ) -> Result<OwnedFrame, WsError> {
             while !self.leading_bits_ok() {
                 self.async_poll(stream).await?;
             }
@@ -492,7 +501,7 @@ mod non_block {
         pub async fn async_receive<S: AsyncRead + Unpin>(
             &mut self,
             stream: &mut S,
-        ) -> Result<Frame, WsError> {
+        ) -> Result<OwnedFrame, WsError> {
             loop {
                 let frame = self.async_read_one_frame(stream).await?;
                 if let Some(frame) = self.check_frame(frame)? {
@@ -505,14 +514,18 @@ mod non_block {
     impl FrameWriteState {
         async fn async_send_one<'a, S: AsyncWrite + Unpin>(
             &mut self,
-            payload: Payload<'a>,
+            masked_payload: Payload<'a>,
             fin: bool,
             mask: bool,
             code: OpCode,
             stream: &mut S,
-        ) -> IOResult<usize> {
-            let frame = Frame::new(fin, code, mask, payload);
-            stream.write(&frame.0).await
+        ) -> IOResult<()> {
+            let frame = OwnedFrame::new(fin, false, false, false, code, mask, vec![]);
+            stream.write_all(&frame.0).await?;
+            for part in masked_payload.0 {
+                stream.write_all(part).await?;
+            }
+            Ok(())
         }
 
         pub async fn async_send<'a, S: AsyncWrite + Unpin>(
@@ -520,7 +533,7 @@ mod non_block {
             payload: Payload<'a>,
             code: OpCode,
             stream: &mut S,
-        ) -> IOResult<usize> {
+        ) -> IOResult<()> {
             let split_size = self.config.auto_fragment_size;
             if split_size > 0 {
                 let parts = payload.split_with(split_size);
@@ -530,7 +543,7 @@ mod non_block {
                     self.async_send_one(part, fin, self.config.mask, code.clone(), stream)
                         .await?;
                 }
-                Ok(payload.len())
+                Ok(())
             } else {
                 self.async_send_one(payload, true, self.config.mask, code, stream)
                     .await
@@ -586,7 +599,7 @@ mod non_block {
             &mut self.stream
         }
 
-        pub async fn receive(&mut self) -> Result<Frame, WsError> {
+        pub async fn receive(&mut self) -> Result<OwnedFrame, WsError> {
             self.read_state.async_receive(&mut self.stream).await
         }
 
@@ -594,7 +607,7 @@ mod non_block {
             &mut self,
             code: OpCode,
             payload: P,
-        ) -> Result<usize, WsError> {
+        ) -> Result<(), WsError> {
             self.write_state
                 .async_send(payload.into(), code, &mut self.stream)
                 .await

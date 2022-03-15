@@ -50,14 +50,18 @@ mod blocking {
         /// for close frame with body, first two bytes of string are close reason
         pub fn receive(&mut self) -> Result<Message<String>, WsError> {
             let frame = self.frame_codec.receive()?;
-            let mut data = frame.payload_data_unmask();
-            let close_code = if frame.opcode() == OpCode::Close {
+            let header = frame.header();
+            let header_len = header.payload_idx().0;
+            let op_code = header.opcode();
+            let mut data = frame.0;
+            data.advance(header_len);
+            let close_code = if op_code == OpCode::Close {
                 let close_code = data.get_u16();
                 Some(close_code)
             } else {
                 None
             };
-            let data = if self.validate_utf8 && frame.opcode() == OpCode::Text {
+            let data = if self.validate_utf8 && op_code == OpCode::Text {
                 String::from_utf8(data.to_vec()).map_err(|_| WsError::ProtocolError {
                     close_code: 1001,
                     error: ProtocolError::InvalidUtf8,
@@ -68,11 +72,11 @@ mod blocking {
             Ok(Message {
                 data,
                 close_code,
-                code: frame.opcode(),
+                code: op_code,
             })
         }
 
-        pub fn send<T: Into<Message<String>>>(&mut self, msg: T) -> Result<usize, WsError> {
+        pub fn send<T: Into<Message<String>>>(&mut self, msg: T) -> Result<(), WsError> {
             let msg: Message<String> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {
@@ -157,15 +161,19 @@ mod non_blocking {
 
         pub async fn receive(&mut self) -> Result<Message<String>, WsError> {
             let frame = self.frame_codec.receive().await?;
-            let mut data = frame.payload_data_unmask();
+            let header = frame.header();
+            let header_len = header.payload_idx().0;
+            let op_code = header.opcode();
+            let mut data = frame.0;
+            data.advance(header_len);
             // TODO check protocol error
-            let close_code = if frame.opcode() == OpCode::Close && data.len() >= 2 {
+            let close_code = if op_code == OpCode::Close && data.len() >= 2 {
                 let close_code = data.get_u16();
                 Some(close_code)
             } else {
                 None
             };
-            let data = if self.validate_utf8 && frame.opcode() == OpCode::Text {
+            let data = if self.validate_utf8 && op_code == OpCode::Text {
                 String::from_utf8(data.to_vec()).map_err(|_| WsError::ProtocolError {
                     close_code: 1001,
                     error: ProtocolError::InvalidUtf8,
@@ -176,11 +184,11 @@ mod non_blocking {
             Ok(Message {
                 data,
                 close_code,
-                code: frame.opcode(),
+                code: op_code,
             })
         }
 
-        pub async fn send<T: Into<Message<String>>>(&mut self, msg: T) -> Result<usize, WsError> {
+        pub async fn send<T: Into<Message<String>>>(&mut self, msg: T) -> Result<(), WsError> {
             let msg: Message<String> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {

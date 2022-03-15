@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use bytes::{Bytes, BytesMut};
-use frame::{Frame, OpCode};
+use frame::{BorrowedFrame, OpCode, OwnedFrame};
 
 /// websocket error definitions
 pub mod errors;
@@ -468,9 +468,15 @@ impl DefaultCode for Bytes {
     }
 }
 
-impl DefaultCode for Frame {
+impl DefaultCode for OwnedFrame {
     fn default_code(&self) -> OpCode {
-        self.opcode()
+        self.header().opcode()
+    }
+}
+
+impl<'a> DefaultCode for BorrowedFrame<'a> {
+    fn default_code(&self) -> OpCode {
+        self.header().opcode()
     }
 }
 
