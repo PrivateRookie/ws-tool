@@ -64,12 +64,12 @@ mod blocking {
             })
         }
 
-        pub fn send<'a, T: Into<Message<&'a [u8]>>>(&mut self, msg: T) -> Result<(), WsError> {
-            let msg: Message<&'a [u8]> = msg.into();
+        pub fn send<'a, T: Into<Message<&'a mut [u8]>>>(&mut self, msg: T) -> Result<(), WsError> {
+            let msg: Message<&'a mut [u8]> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {
                     self.frame_codec
-                        .send(msg.code, vec![&close_code.to_be_bytes()[..], msg.data])
+                        .send(msg.code, vec![&mut close_code.to_be_bytes()[..], msg.data])
                 } else {
                     self.frame_codec.send(msg.code, msg.data)
                 }
@@ -141,7 +141,6 @@ mod non_blocking {
         pub async fn receive(&mut self) -> Result<Message<BytesMut>, WsError> {
             let frame = self.frame_codec.receive().await?;
             let header = frame.header();
-            let header_len = header.payload_idx().0;
             let code = header.opcode();
             let mut data = frame.0;
             let close_code = if code == OpCode::Close {
@@ -156,15 +155,15 @@ mod non_blocking {
             })
         }
 
-        pub async fn send<'a, T: Into<Message<&'a [u8]>>>(
+        pub async fn send<'a, T: Into<Message<&'a mut [u8]>>>(
             &mut self,
             msg: T,
         ) -> Result<(), WsError> {
-            let msg: Message<&'a [u8]> = msg.into();
+            let msg: Message<&'a mut [u8]> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {
                     self.frame_codec
-                        .send(msg.code, vec![&close_code.to_be_bytes()[..], msg.data])
+                        .send(msg.code, vec![&mut close_code.to_be_bytes()[..], msg.data])
                         .await
                 } else {
                     self.frame_codec.send(msg.code, msg.data).await

@@ -47,11 +47,11 @@ async fn main() -> Result<(), ()> {
             .unwrap();
 
             loop {
-                if let Ok(msg) = server.receive().await {
+                if let Ok(mut msg) = server.receive().await {
                     if msg.code == OpCode::Close {
                         break;
                     }
-                    server.send(&msg.data[..]).await.unwrap();
+                    server.send(&mut msg.data[..]).await.unwrap();
                 } else {
                     break;
                 }

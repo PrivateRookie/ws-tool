@@ -118,8 +118,8 @@ impl FrameReadState {
             error: ProtocolError::InvalidOpcode(e),
             close_code: 1008,
         })?;
-        let (payload_len, len_occ_bytes) =
-            parse_payload_len(self.read_data.as_ref()).map_err(|e| WsError::ProtocolError {
+        let (len_occ_bytes, payload_len) =
+            parse_payload_len(&self.read_data).map_err(|e| WsError::ProtocolError {
                 close_code: 1008,
                 error: e,
             })?;
@@ -160,19 +160,18 @@ impl FrameReadState {
                     });
                 }
                 let (header_len, _) = header.payload_idx();
-                drop(header);
+                let fin = header.fin();
                 let mut buf = unmasked_frame.0;
                 buf.advance(header_len);
                 self.fragmented_data.0.unsplit(buf);
-                if header.fin() {
+                if fin {
                     // if String::from_utf8(fragmented_data.to_vec()).is_err() {
                     //     return Err(WsError::ProtocolError {
                     //         close_code: 1007,
                     //         error: ProtocolError::InvalidUtf8,
                     //     });
                     // }
-                    let completed_frame = self.fragmented_data;
-                    self.fragmented_data = OwnedFrame::empty();
+                    let completed_frame = self.fragmented_data.replace(OwnedFrame::empty());
                     Ok(Some(completed_frame))
                 } else {
                     Ok(None)
@@ -190,7 +189,7 @@ impl FrameReadState {
                     self.fragmented_type = opcode.clone();
                     self.fragmented_data.header_mut().set_opcode(opcode);
                     let header_len = header.payload_idx().0;
-                    let buf = unmasked_frame.0;
+                    let mut buf = unmasked_frame.0;
                     buf.advance(header_len);
                     self.fragmented_data.0.unsplit(buf);
                     Ok(None)
@@ -293,7 +292,7 @@ mod blocking {
     use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
     use crate::{
         errors::WsError,
-        frame::{OpCode, OwnedFrame, Payload},
+        frame::{OpCode, OwnedFrame, Payload, PayloadMut},
         protocol::standard_handshake_resp_check,
     };
     use std::io::{Read, Write};
@@ -360,6 +359,28 @@ mod blocking {
             Ok(())
         }
 
+        fn send_unmask_one<'a, S: Write>(
+            &mut self,
+            mut unmasked_payload: PayloadMut<'a>,
+            fin: bool,
+            mask: bool,
+            code: OpCode,
+            stream: &mut S,
+        ) -> IOResult<()> {
+            let mut frame = OwnedFrame::new(fin, false, false, false, code, mask, vec![]);
+            frame
+                .header_mut()
+                .set_payload_len(unmasked_payload.len() as u64);
+            stream.write_all(&frame.0)?;
+            if let Some(mask_key) = frame.header().masking_key() {
+                unmasked_payload.apply_mask(mask_key);
+            }
+            for part in unmasked_payload.0 {
+                stream.write_all(part)?;
+            }
+            Ok(())
+        }
+
         pub fn send<'a, S: Write>(
             &mut self,
             payload: Payload,
@@ -367,7 +388,6 @@ mod blocking {
             stream: &mut S,
         ) -> IOResult<()> {
             let split_size = self.config.auto_fragment_size;
-            let len = payload.len();
             if split_size > 0 {
                 let parts = payload.split_with(split_size);
                 let total = parts.len();
@@ -377,6 +397,26 @@ mod blocking {
                 }
             } else {
                 self.send_one(payload, true, self.config.mask, code, stream)?;
+            }
+            Ok(())
+        }
+
+        pub fn send_unmask<'a, S: Write>(
+            &mut self,
+            payload: PayloadMut,
+            code: OpCode,
+            stream: &mut S,
+        ) -> IOResult<()> {
+            let split_size = self.config.auto_fragment_size;
+            if split_size > 0 {
+                let parts = payload.split_with(split_size);
+                let total = parts.len();
+                for (idx, part) in parts.into_iter().enumerate() {
+                    let fin = idx + 1 == total;
+                    self.send_unmask_one(part, fin, self.config.mask, code.clone(), stream)?;
+                }
+            } else {
+                self.send_unmask_one(payload, true, self.config.mask, code, stream)?;
             }
             Ok(())
         }
@@ -424,7 +464,17 @@ mod blocking {
             self.read_state.receive(&mut self.stream)
         }
 
-        pub fn send<'a, P: Into<Payload<'a>>>(
+        pub fn send<'a, P: Into<PayloadMut<'a>>>(
+            &mut self,
+            code: OpCode,
+            payload: P,
+        ) -> Result<(), WsError> {
+            self.write_state
+                .send_unmask(payload.into(), code, &mut self.stream)
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+
+        pub fn send_masked<'a, P: Into<Payload<'a>>>(
             &mut self,
             code: OpCode,
             payload: P,
@@ -447,7 +497,7 @@ mod non_block {
     use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
     use crate::{
         errors::WsError,
-        frame::{OpCode, OwnedFrame, Payload},
+        frame::{OpCode, OwnedFrame, Payload, PayloadMut},
         protocol::standard_handshake_resp_check,
     };
 
@@ -491,9 +541,6 @@ mod non_block {
                 self.async_poll(stream).await?;
             }
             let len = self.parse_frame_header()?;
-            // while !self.body_ok(len) {
-            //     self.async_poll(stream).await?;
-            // }
             self.async_poll_one_frame(stream, len).await?;
             Ok(self.consume_frame(len))
         }
@@ -520,9 +567,34 @@ mod non_block {
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<()> {
-            let frame = OwnedFrame::new(fin, false, false, false, code, mask, vec![]);
+            let mut frame = OwnedFrame::new(fin, false, false, false, code, mask, vec![]);
+            frame
+                .header_mut()
+                .set_payload_len(masked_payload.len() as u64);
             stream.write_all(&frame.0).await?;
             for part in masked_payload.0 {
+                stream.write_all(part).await?;
+            }
+            Ok(())
+        }
+
+        async fn async_send_unmask_one<'a, S: AsyncWrite + Unpin>(
+            &mut self,
+            mut unmasked_payload: PayloadMut<'a>,
+            fin: bool,
+            mask: bool,
+            code: OpCode,
+            stream: &mut S,
+        ) -> IOResult<()> {
+            let mut frame = OwnedFrame::new(fin, false, false, false, code, mask, vec![]);
+            frame
+                .header_mut()
+                .set_payload_len(unmasked_payload.len() as u64);
+            stream.write_all(&frame.0).await?;
+            if let Some(mask_key) = frame.header().masking_key() {
+                unmasked_payload.apply_mask(mask_key);
+            }
+            for part in unmasked_payload.0 {
                 stream.write_all(part).await?;
             }
             Ok(())
@@ -546,6 +618,28 @@ mod non_block {
                 Ok(())
             } else {
                 self.async_send_one(payload, true, self.config.mask, code, stream)
+                    .await
+            }
+        }
+
+        pub async fn async_send_unmask<'a, S: AsyncWrite + Unpin>(
+            &mut self,
+            payload: PayloadMut<'a>,
+            code: OpCode,
+            stream: &mut S,
+        ) -> IOResult<()> {
+            let split_size = self.config.auto_fragment_size;
+            if split_size > 0 {
+                let parts = payload.split_with(split_size);
+                let total = parts.len();
+                for (idx, part) in parts.into_iter().enumerate() {
+                    let fin = idx + 1 == total;
+                    self.async_send_unmask_one(part, fin, self.config.mask, code.clone(), stream)
+                        .await?;
+                }
+                Ok(())
+            } else {
+                self.async_send_unmask_one(payload, true, self.config.mask, code, stream)
                     .await
             }
         }
@@ -603,7 +697,18 @@ mod non_block {
             self.read_state.async_receive(&mut self.stream).await
         }
 
-        pub async fn send<'a, P: Into<Payload<'a>>>(
+        pub async fn send<'a, P: Into<PayloadMut<'a>>>(
+            &mut self,
+            code: OpCode,
+            payload: P,
+        ) -> Result<(), WsError> {
+            self.write_state
+                .async_send_unmask(payload.into(), code, &mut self.stream)
+                .await
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+
+        pub async fn send_masked<'a, P: Into<Payload<'a>>>(
             &mut self,
             code: OpCode,
             payload: P,

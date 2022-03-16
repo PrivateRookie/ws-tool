@@ -455,6 +455,11 @@ impl DefaultCode for &[u8] {
         OpCode::Binary
     }
 }
+impl DefaultCode for &mut [u8] {
+    fn default_code(&self) -> OpCode {
+        OpCode::Binary
+    }
+}
 
 impl DefaultCode for BytesMut {
     fn default_code(&self) -> OpCode {

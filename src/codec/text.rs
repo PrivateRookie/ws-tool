@@ -82,13 +82,18 @@ mod blocking {
                 if msg.code == OpCode::Close {
                     self.frame_codec.send(
                         msg.code,
-                        vec![&close_code.to_be_bytes()[..], msg.data.as_bytes()],
+                        vec![
+                            &mut close_code.to_be_bytes()[..],
+                            &mut msg.data.as_bytes().to_vec(),
+                        ],
                     )
                 } else {
-                    self.frame_codec.send(msg.code, msg.data.as_bytes())
+                    self.frame_codec
+                        .send(msg.code, &mut msg.data.as_bytes().to_vec()[..])
                 }
             } else {
-                self.frame_codec.send(msg.code, msg.data.as_bytes())
+                self.frame_codec
+                    .send(msg.code, &mut msg.data.as_bytes().to_vec()[..])
             }
         }
     }
@@ -195,14 +200,21 @@ mod non_blocking {
                     self.frame_codec
                         .send(
                             msg.code,
-                            vec![&close_code.to_be_bytes()[..], msg.data.as_bytes()],
+                            vec![
+                                &mut close_code.to_be_bytes()[..],
+                                &mut msg.data.as_bytes().to_vec(),
+                            ],
                         )
                         .await
                 } else {
-                    self.frame_codec.send(msg.code, msg.data.as_bytes()).await
+                    self.frame_codec
+                        .send(msg.code, &mut msg.data.as_bytes().to_vec()[..])
+                        .await
                 }
             } else {
-                self.frame_codec.send(msg.code, msg.data.as_bytes()).await
+                self.frame_codec
+                    .send(msg.code, &mut msg.data.as_bytes().to_vec()[..])
+                    .await
             }
         }
     }

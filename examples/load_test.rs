@@ -1,9 +1,9 @@
-use std::{io::Write, path::PathBuf, time};
+use std::{path::PathBuf, time};
 
 use structopt::StructOpt;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::AsyncWsBytesCodec, codec::AsyncWsStringCodec, ClientBuilder};
+use ws_tool::{codec::AsyncWsBytesCodec, ClientBuilder};
 
 /// websocket client demo with raw frame
 #[derive(StructOpt)]
@@ -11,7 +11,7 @@ struct Args {
     uri: String,
 
     // client size
-    #[structopt(short, long, default_value = "1")]
+    #[structopt(long, default_value = "1")]
     conn: usize,
 
     /// payload size kb
@@ -56,9 +56,9 @@ async fn main() -> Result<(), ()> {
             .unwrap();
         let j = tokio::spawn(async move {
             let start = time::SystemTime::now();
-            let payload = vec![0].repeat(size * 1024);
+            let mut payload = vec![0].repeat(size * 1024);
             for _ in 0..total {
-                client.send(&payload[..]).await.unwrap();
+                client.send(&mut payload[..]).await.unwrap();
                 client.receive().await.unwrap();
             }
             let end = time::SystemTime::now();

@@ -40,11 +40,11 @@ fn main() -> Result<(), ()> {
                     .unwrap();
 
             loop {
-                if let Ok(msg) = server.receive() {
+                if let Ok(mut msg) = server.receive() {
                     if msg.code == OpCode::Close {
                         break;
                     }
-                    server.send(&msg.data[..]).unwrap();
+                    server.send(&mut msg.data[..]).unwrap();
                 } else {
                     break;
                 }

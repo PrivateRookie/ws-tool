@@ -30,9 +30,9 @@ async fn run_test(case: usize) -> Result<(), WsError> {
         .unwrap();
     loop {
         match client.receive().await {
-            Ok(frame) => {
-                let code = frame.opcode();
-                let data = frame.payload_data_unmask();
+            Ok(mut frame) => {
+                let code = frame.header().opcode();
+                let data = frame.payload_mut();
                 match &code {
                     OpCode::Text | OpCode::Binary => {
                         client.send(code, data).await?;
@@ -40,7 +40,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                     OpCode::Close => {
                         let mut data = BytesMut::new();
                         data.extend_from_slice(&1000u16.to_be_bytes());
-                        client.send(OpCode::Close, &data).await.unwrap();
+                        client.send(OpCode::Close, &mut data).await.unwrap();
                         break;
                     }
                     OpCode::Ping => {
@@ -57,12 +57,12 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&close_code.to_be_bytes());
                     data.extend_from_slice(&error.to_string().as_bytes());
-                    client.send(OpCode::Close, &data).await.unwrap();
+                    client.send(OpCode::Close, &mut data).await.unwrap();
                 }
                 _ => {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&1000u16.to_be_bytes());
-                    client.send(OpCode::Close, &data).await.unwrap();
+                    client.send(OpCode::Close, &mut data).await.unwrap();
                 }
             },
         }
