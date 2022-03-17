@@ -142,6 +142,7 @@ impl FrameReadState {
         let data = self.read_data.split_to(len);
         self.read_idx = self.read_data.len();
         let mut frame = OwnedFrame(data);
+        tracing::info!("raw payload {:?}", frame.payload());
         if let Some(key) = frame.header().masking_key() {
             apply_mask_fast32(frame.payload_mut(), key);
         }
@@ -367,10 +368,8 @@ mod blocking {
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<()> {
-            let mut frame = OwnedFrame::new(fin, false, false, false, code, mask, vec![]);
-            frame
-                .header_mut()
-                .set_payload_len(unmasked_payload.len() as u64);
+            let frame =
+                OwnedFrame::new_empty(fin, false, false, false, code, mask, unmasked_payload.len());
             stream.write_all(&frame.0)?;
             if let Some(mask_key) = frame.header().masking_key() {
                 unmasked_payload.apply_mask(mask_key);
@@ -504,8 +503,10 @@ mod non_block {
     impl FrameReadState {
         async fn async_poll<S: AsyncRead + Unpin>(&mut self, stream: &mut S) -> IOResult<usize> {
             self.read_data.resize(self.read_idx + 1024, 0);
+            tracing::debug!("before read {}", self.read_idx);
             let count = stream.read(&mut self.read_data[self.read_idx..]).await?;
             self.read_idx += count;
+            tracing::debug!("after read {} {:?}", self.read_idx, self.read_data);
             self.read_data.resize(self.read_idx, 0);
             if count == 0 {
                 return Err(std::io::Error::new(
@@ -522,6 +523,7 @@ mod non_block {
             size: usize,
         ) -> IOResult<usize> {
             let buf_len = self.read_data.len();
+            tracing::debug!("buf len {}, expect {}, {:?}", buf_len, size, self.read_data);
             if buf_len < size {
                 self.read_data.resize(size, 0);
                 stream
@@ -541,6 +543,7 @@ mod non_block {
                 self.async_poll(stream).await?;
             }
             let len = self.parse_frame_header()?;
+            tracing::info!("payload len {}", len);
             self.async_poll_one_frame(stream, len).await?;
             Ok(self.consume_frame(len))
         }
@@ -551,6 +554,7 @@ mod non_block {
         ) -> Result<OwnedFrame, WsError> {
             loop {
                 let frame = self.async_read_one_frame(stream).await?;
+                tracing::info!("recv {:?}", frame.payload());
                 if let Some(frame) = self.check_frame(frame)? {
                     break Ok(frame);
                 }
@@ -567,10 +571,8 @@ mod non_block {
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<()> {
-            let mut frame = OwnedFrame::new(fin, false, false, false, code, mask, vec![]);
-            frame
-                .header_mut()
-                .set_payload_len(masked_payload.len() as u64);
+            let frame =
+                OwnedFrame::new_empty(fin, false, false, false, code, mask, masked_payload.len());
             stream.write_all(&frame.0).await?;
             for part in masked_payload.0 {
                 stream.write_all(part).await?;
@@ -586,15 +588,15 @@ mod non_block {
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<()> {
-            let mut frame = OwnedFrame::new(fin, false, false, false, code, mask, vec![]);
-            frame
-                .header_mut()
-                .set_payload_len(unmasked_payload.len() as u64);
+            let frame =
+                OwnedFrame::new_empty(fin, false, false, false, code, mask, unmasked_payload.len());
+            tracing::debug!("frame header {:?}", frame.0);
             stream.write_all(&frame.0).await?;
             if let Some(mask_key) = frame.header().masking_key() {
                 unmasked_payload.apply_mask(mask_key);
             }
             for part in unmasked_payload.0 {
+                tracing::debug!("part {:?}", part);
                 stream.write_all(part).await?;
             }
             Ok(())
@@ -628,6 +630,10 @@ mod non_block {
             code: OpCode,
             stream: &mut S,
         ) -> IOResult<()> {
+            let mut x = vec![];
+            x.resize(payload.len(), 0);
+            payload.copy_to(&mut x);
+            tracing::info!("sending {:?} -> {:?}", payload, String::from_utf8(x));
             let split_size = self.config.auto_fragment_size;
             if split_size > 0 {
                 let parts = payload.split_with(split_size);

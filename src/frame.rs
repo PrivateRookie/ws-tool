@@ -422,6 +422,43 @@ impl OwnedFrame {
         frame
     }
 
+    pub(crate) fn new_empty<'a>(
+        fin: bool,
+        rsv1: bool,
+        rsv2: bool,
+        rsv3: bool,
+        opcode: OpCode,
+        mask: bool,
+        payload_len: usize,
+    ) -> Self {
+        let mut header_len = 1;
+        if mask {
+            header_len += 4;
+        }
+        if payload_len <= 125 {
+            header_len += 1;
+        } else if payload_len <= 65535 {
+            header_len += 3;
+        } else {
+            header_len += 9;
+        }
+        let mut buf = BytesMut::new();
+        buf.resize(header_len, 0);
+        let mut frame = OwnedFrame(buf);
+        let mut header = frame.header_mut();
+        header.set_fin(fin);
+        header.set_rsv1(rsv1);
+        header.set_rsv2(rsv2);
+        header.set_rsv3(rsv3);
+        header.set_opcode(opcode);
+        if mask {
+            header.set_mask(true);
+            header.set_masking_key();
+        }
+        header.set_payload_len(payload_len as u64);
+        frame
+    }
+
     pub fn empty() -> Self {
         Self::new(true, false, false, false, OpCode::Binary, false, vec![])
     }

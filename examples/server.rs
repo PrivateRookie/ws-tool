@@ -140,7 +140,6 @@ async fn main() -> Result<(), ()> {
         loop {
             match server.receive().await {
                 Ok(msg) => {
-                    println!("{}", msg.data);
                     server.send((msg.code, msg.data)).await.unwrap()
                 }
                 Err(e) => {
