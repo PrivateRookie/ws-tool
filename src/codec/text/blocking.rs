@@ -40,8 +40,10 @@ impl<S: Read + Write> WsStringCodec<S> {
     }
 
     pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
-        let mut config = FrameConfig::default();
-        config.mask_send_frame = false;
+        let config = FrameConfig {
+            mask_send_frame: false,
+            ..Default::default()
+        };
         Ok(Self::new_with(stream, config, true))
     }
 

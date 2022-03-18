@@ -439,7 +439,7 @@ pub fn standard_handshake_req_check(req: &http::Request<()>) -> Result<(), WsErr
     Ok(())
 }
 
-fn prepare_handshake(
+pub fn prepare_handshake(
     protocols: String,
     extensions: String,
     extra_headers: HashMap<String, String>,
@@ -457,7 +457,7 @@ fn prepare_handshake(
         "Upgrade: websocket".to_string(),
         "Connection: Upgrade".to_string(),
         format!("Sec-Websocket-Key: {}", key),
-        format!("Sec-WebSocket-Version: {}", version.to_string()),
+        format!("Sec-WebSocket-Version: {}", version),
     ];
     if !protocols.is_empty() {
         headers.push(format!("Sec-WebSocket-Protocol: {}", protocols))
@@ -482,7 +482,7 @@ fn prepare_handshake(
     (key, req_str)
 }
 
-fn perform_parse_req(
+pub fn perform_parse_req(
     read_bytes: BytesMut,
     key: String,
 ) -> Result<(String, http::Response<()>), WsError> {
@@ -493,7 +493,7 @@ fn perform_parse_req(
         .map_err(|_| WsError::HandShakeFailed("invalid response".to_string()))?;
     let mut resp_builder = http::Response::builder()
         .status(resp.code.unwrap_or_default())
-        .version(match resp.version.unwrap_or_else(|| 1) {
+        .version(match resp.version.unwrap_or(1) {
             0 => http::Version::HTTP_10,
             1 => http::Version::HTTP_11,
             v => {
@@ -508,7 +508,7 @@ fn perform_parse_req(
     Ok((key, resp_builder.body(()).unwrap()))
 }
 
-fn handle_parse_handshake(req_bytes: BytesMut) -> Result<http::Request<()>, WsError> {
+pub fn handle_parse_handshake(req_bytes: BytesMut) -> Result<http::Request<()>, WsError> {
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);
     let _parse_status = req
@@ -517,7 +517,7 @@ fn handle_parse_handshake(req_bytes: BytesMut) -> Result<http::Request<()>, WsEr
     let mut req_builder = http::Request::builder()
         .method(req.method.unwrap_or_default())
         .uri(req.path.unwrap_or_default())
-        .version(match req.version.unwrap_or_else(|| 1) {
+        .version(match req.version.unwrap_or(1) {
             0 => http::Version::HTTP_10,
             1 => http::Version::HTTP_11,
             v => {

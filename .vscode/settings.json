@@ -6,6 +6,7 @@
         "rustls",
         "rutls",
         "thiserror",
+        "tungstenite",
         "webpki"
     ],
     "python.pythonPath": ".venv/bin/python",
@@ -14,6 +15,6 @@
         "async",
         "tls_rustls",
         "async_tls_rustls",
-        "proxy"
+        "async_proxy"
     ]
 }

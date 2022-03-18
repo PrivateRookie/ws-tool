@@ -44,8 +44,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsStringCodec<S> {
     }
 
     pub fn factory(_req: http::Request<()>, remain: BytesMut, stream: S) -> Result<Self, WsError> {
-        let mut config = FrameConfig::default();
-        config.mask_send_frame = false;
+        let config = FrameConfig {
+            mask_send_frame: false,
+            ..Default::default()
+        };
         Ok(Self::new_with(stream, config, remain, true))
     }
 

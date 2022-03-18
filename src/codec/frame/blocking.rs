@@ -1,10 +1,12 @@
-use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
+use super::{FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     errors::WsError,
     frame::{Header, OpCode, Payload, PayloadMut, ReadFrame},
     protocol::standard_handshake_resp_check,
 };
 use std::io::{Read, Write};
+
+type IOResult<T> = std::io::Result<T>;
 
 impl FrameReadState {
     fn poll<S: Read>(&mut self, stream: &mut S) -> IOResult<usize> {
@@ -53,6 +55,7 @@ impl FrameReadState {
 }
 
 impl FrameWriteState {
+    #[allow(clippy::too_many_arguments)]
     fn send_one_mut<'a, S: Write, M: Into<Option<[u8; 4]>>>(
         &mut self,
         stream: &mut S,
@@ -79,21 +82,18 @@ impl FrameWriteState {
                 payload.apply_mask(key)
             }
         }
-        let mut count = header.0.len();
         stream.write_all(&header.0)?;
         for part in payload.0 {
-            count += part.len();
             stream.write_all(part)?;
         }
-        tracing::trace!("write {count} bytes");
         Ok(())
     }
 
-    fn send_mut<'a, S: Write>(
+    pub fn send_mut<'a, S: Write>(
         &mut self,
         stream: &mut S,
         opcode: OpCode,
-        payload: PayloadMut,
+        payload: PayloadMut<'a>,
         mask_payload: bool,
     ) -> IOResult<()> {
         let split_size = self.config.auto_fragment_size;
@@ -138,6 +138,7 @@ impl FrameWriteState {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn send_one<'a, S: Write, M: Into<Option<[u8; 4]>>>(
         &mut self,
         stream: &mut S,
@@ -165,7 +166,7 @@ impl FrameWriteState {
         Ok(())
     }
 
-    fn send<'a, S: Write>(
+    pub fn send<'a, S: Write>(
         &mut self,
         stream: &mut S,
         opcode: OpCode,
@@ -226,8 +227,8 @@ impl<S: Read + Write> WsFrameCodec<S> {
     pub fn new(stream: S) -> Self {
         Self {
             stream,
-            read_state: FrameReadState::new(),
-            write_state: FrameWriteState::new(),
+            read_state: FrameReadState::default(),
+            write_state: FrameWriteState::default(),
         }
     }
 
@@ -244,8 +245,10 @@ impl<S: Read + Write> WsFrameCodec<S> {
     }
 
     pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
-        let mut config = FrameConfig::default();
-        config.mask_send_frame = false;
+        let config = FrameConfig {
+            mask_send_frame: false,
+            ..Default::default()
+        };
         Ok(Self::new_with(stream, config))
     }
 

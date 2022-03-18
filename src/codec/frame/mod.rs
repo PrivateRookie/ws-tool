@@ -1,5 +1,5 @@
 use crate::errors::{ProtocolError, WsError};
-use crate::frame::{get_bit, parse_opcode, parse_payload_len, OpCode, ReadFrame};
+use crate::frame::{get_bit, parse_opcode, OpCode, ReadFrame};
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
 use bytes::{Buf, BytesMut};
 use std::fmt::Debug;
@@ -45,7 +45,6 @@ impl Default for FrameConfig {
         }
     }
 }
-type IOResult<T> = std::io::Result<T>;
 
 #[inline]
 pub fn apply_mask(buf: &mut [u8], mask: [u8; 4]) {
@@ -81,7 +80,8 @@ pub fn apply_mask_fast32(buf: &mut [u8], mask: [u8; 4]) {
     apply_mask_fallback(suffix, mask_u32.to_ne_bytes());
 }
 
-struct FrameReadState {
+#[derive(Debug, Clone)]
+pub struct FrameReadState {
     fragmented: bool,
     config: FrameConfig,
     read_idx: usize,
@@ -90,8 +90,8 @@ struct FrameReadState {
     fragmented_type: OpCode,
 }
 
-impl FrameReadState {
-    pub fn new() -> Self {
+impl Default for FrameReadState {
+    fn default() -> Self {
         Self {
             config: FrameConfig::default(),
             fragmented: false,
@@ -101,20 +101,22 @@ impl FrameReadState {
             fragmented_type: OpCode::default(),
         }
     }
+}
 
+impl FrameReadState {
     pub fn with_remain(config: FrameConfig, read_data: BytesMut) -> Self {
         Self {
             config,
             read_idx: read_data.len(),
             read_data,
-            ..Self::new()
+            ..Self::default()
         }
     }
 
     pub fn with_config(config: FrameConfig) -> Self {
         Self {
             config,
-            ..Self::new()
+            ..Self::default()
         }
     }
 
@@ -126,7 +128,33 @@ impl FrameReadState {
         self.read_data[0] >> 4
     }
 
-    fn parse_frame_header(&mut self) -> Result<usize, WsError> {
+    pub fn parse_frame_header(&mut self) -> Result<usize, WsError> {
+        fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
+            let mut len = source[1];
+            len = (len << 1) >> 1;
+            match len {
+                0..=125 => Ok((1, len as usize)),
+                126 => {
+                    if source.len() < 4 {
+                        return Err(ProtocolError::InsufficientLen(source.len()));
+                    }
+                    let mut arr = [0u8; 2];
+                    arr[0] = source[2];
+                    arr[1] = source[3];
+                    Ok((1 + 2, u16::from_be_bytes(arr) as usize))
+                }
+                127 => {
+                    if source.len() < 10 {
+                        return Err(ProtocolError::InsufficientLen(source.len()));
+                    }
+                    let mut arr = [0u8; 8];
+                    arr[..8].copy_from_slice(&source[2..(8 + 2)]);
+                    Ok((1 + 8, usize::from_be_bytes(arr)))
+                }
+                _ => Err(ProtocolError::InvalidLeadingLen(len)),
+            }
+        }
+
         // TODO check nonzero value according to extension negotiation
         let leading_bits = self.get_leading_bits();
         if self.config.check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
@@ -159,7 +187,7 @@ impl FrameReadState {
         Ok(expected_len)
     }
 
-    fn consume_frame(&mut self, len: usize) -> ReadFrame {
+    pub fn consume_frame(&mut self, len: usize) -> ReadFrame {
         let data = self.read_data.split_to(len);
         self.read_idx = self.read_data.len();
         let mut frame = ReadFrame(data);
@@ -171,7 +199,7 @@ impl FrameReadState {
         frame
     }
 
-    fn check_frame(&mut self, unmasked_frame: ReadFrame) -> Result<Option<ReadFrame>, WsError> {
+    pub fn check_frame(&mut self, unmasked_frame: ReadFrame) -> Result<Option<ReadFrame>, WsError> {
         let header = unmasked_frame.header();
         let opcode = header.opcode();
         match opcode {
@@ -282,31 +310,22 @@ impl FrameReadState {
                         }
                     }
                 }
-                if opcode == OpCode::Close || !self.fragmented {
-                    Ok(Some(unmasked_frame))
-                } else {
-                    tracing::debug!("{:?} frame between self.fragmented data", opcode);
-                    Ok(Some(unmasked_frame))
-                }
+                Ok(Some(unmasked_frame))
             }
             OpCode::ReservedNonControl | OpCode::ReservedControl => {
-                return Err(WsError::UnsupportedFrame(opcode));
+                Err(WsError::UnsupportedFrame(opcode))
             }
         }
     }
 }
 
-struct FrameWriteState {
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct FrameWriteState {
     config: FrameConfig,
 }
 
 impl FrameWriteState {
-    pub fn new() -> Self {
-        Self {
-            config: FrameConfig::default(),
-        }
-    }
-
     pub fn with_config(config: FrameConfig) -> Self {
         Self { config }
     }

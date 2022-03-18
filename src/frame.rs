@@ -1,4 +1,4 @@
-use crate::{codec::apply_mask_fast32, errors::ProtocolError};
+use crate::codec::apply_mask_fast32;
 use bytes::{Bytes, BytesMut};
 use std::fmt::Debug;
 
@@ -75,32 +75,6 @@ pub(crate) fn set_bit(source: &mut [u8], byte_idx: usize, bit_idx: usize, val: b
         source[byte_idx] = b | 1 << (7 - bit_idx)
     } else {
         source[byte_idx] = b & !(1 << (7 - bit_idx))
-    }
-}
-
-pub(crate) fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
-    let mut len = source[1];
-    len = (len << 1) >> 1;
-    match len {
-        0..=125 => Ok((1, len as usize)),
-        126 => {
-            if source.len() < 4 {
-                return Err(ProtocolError::InsufficientLen(source.len()));
-            }
-            let mut arr = [0u8; 2];
-            arr[0] = source[2];
-            arr[1] = source[3];
-            Ok((1 + 2, u16::from_be_bytes(arr) as usize))
-        }
-        127 => {
-            if source.len() < 10 {
-                return Err(ProtocolError::InsufficientLen(source.len()));
-            }
-            let mut arr = [0u8; 8];
-            arr[..8].copy_from_slice(&source[2..(8 + 2)]);
-            Ok((1 + 8, usize::from_be_bytes(arr)))
-        }
-        _ => Err(ProtocolError::InvalidLeadingLen(len)),
     }
 }
 
@@ -292,6 +266,7 @@ macro_rules! impl_config {
         ///
         /// **NOTE** this operation will override buf content, and try to extend
         /// if there is no enough len
+        #[allow(clippy::too_many_arguments)]
         pub fn config(
             fin: bool,
             rsv1: bool,
@@ -438,7 +413,7 @@ impl Header {
 pub struct ReadFrame(pub(crate) BytesMut);
 
 impl ReadFrame {
-    pub(crate) fn new<'a, P: Into<PayloadMut<'a>>>(
+    pub fn new<'a, P: Into<PayloadMut<'a>>>(
         fin: bool,
         rsv1: bool,
         rsv2: bool,
@@ -450,7 +425,7 @@ impl ReadFrame {
         let mut payload: PayloadMut = payload.into();
         let payload_len = payload.len();
         let mut buf =
-            HeaderViewMut::empty_payload(fin, rsv1, rsv2, rsv3, opcode.clone(), mask, payload_len);
+            HeaderViewMut::empty_payload(fin, rsv1, rsv2, rsv3, opcode, mask, payload_len);
         let start = buf.len();
         let end = start + payload_len;
         buf.resize(end, 0);
@@ -468,7 +443,7 @@ impl ReadFrame {
         Self::new(true, false, false, false, opcdoe, true, vec![])
     }
 
-    pub(crate) fn replace(&mut self, other: ReadFrame) -> ReadFrame {
+    pub fn replace(&mut self, other: ReadFrame) -> ReadFrame {
         let frame_len = self.header().payload_idx().1;
         let ret = ReadFrame(self.0.split_to(frame_len));
         self.0.extend_from_slice(&other.0);
@@ -479,7 +454,7 @@ impl ReadFrame {
         HeaderView(&self.0)
     }
 
-    pub(crate) fn header_mut(&mut self) -> HeaderViewMut {
+    pub fn header_mut(&mut self) -> HeaderViewMut {
         HeaderViewMut(&mut self.0)
     }
 
@@ -494,7 +469,7 @@ impl ReadFrame {
         (header, self.0)
     }
 
-    pub(crate) fn payload_mut(&mut self) -> &mut [u8] {
+    pub fn payload_mut(&mut self) -> &mut [u8] {
         let (start, end) = self.header().payload_idx();
         &mut self.0[start..end]
     }
@@ -529,6 +504,7 @@ pub struct OwnedFrame {
 }
 
 impl OwnedFrame {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<M: Into<Option<[u8; 4]>>>(
         fin: bool,
         rsv1: bool,
@@ -619,6 +595,10 @@ impl<'a> From<&'a Bytes> for Payload<'a> {
 }
 
 impl<'a> Payload<'a> {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn len(&self) -> usize {
         self.0.iter().map(|i| i.len()).sum()
     }
@@ -638,7 +618,7 @@ impl<'a> Payload<'a> {
             let pre_len: usize = acc.iter().map(|x| x.len()).sum();
             let arr_len = arr.len();
             if pre_len + arr_len <= size {
-                acc.push(&arr);
+                acc.push(arr);
                 acc
             } else {
                 let stop = arr_len + pre_len - size;
@@ -717,6 +697,10 @@ impl<'a> From<&'a mut BytesMut> for PayloadMut<'a> {
 }
 
 impl<'a> PayloadMut<'a> {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn len(&self) -> usize {
         self.0.iter().map(|i| i.len()).sum()
     }
@@ -764,8 +748,8 @@ impl<'a> PayloadMut<'a> {
     pub fn apply_mask(&mut self, mask: [u8; 4]) {
         let mut offset = 0;
         for part in self.0.iter_mut() {
-            let mut part_mask = mask.clone();
-            part_mask[0] = mask[(0 + offset) % 4];
+            let mut part_mask = mask;
+            part_mask[0] = mask[offset % 4];
             part_mask[1] = mask[(1 + offset) % 4];
             part_mask[2] = mask[(2 + offset) % 4];
             part_mask[3] = mask[(3 + offset) % 4];

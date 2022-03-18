@@ -1,12 +1,14 @@
 use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use super::{FrameConfig, FrameReadState, FrameWriteState, IOResult};
+use super::{FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     errors::WsError,
     frame::{Header, OpCode, Payload, PayloadMut, ReadFrame},
     protocol::standard_handshake_resp_check,
 };
+
+type IOResult<T> = std::io::Result<T>;
 
 impl FrameReadState {
     async fn async_poll<S: AsyncRead + Unpin>(&mut self, stream: &mut S) -> IOResult<usize> {
@@ -67,6 +69,7 @@ impl FrameReadState {
 }
 
 impl FrameWriteState {
+    #[allow(clippy::too_many_arguments)]
     async fn async_send_one_mut<'a, S: AsyncWrite + Unpin, M: Into<Option<[u8; 4]>>>(
         &mut self,
         stream: &mut S,
@@ -93,17 +96,14 @@ impl FrameWriteState {
                 payload.apply_mask(key)
             }
         }
-        let mut count = header.0.len();
         stream.write_all(&header.0).await?;
         for part in payload.0 {
-            count += part.len();
             stream.write_all(part).await?;
         }
-        tracing::trace!("write {count} bytes");
         Ok(())
     }
 
-    async fn async_send_mut<'a, S: AsyncWrite + Unpin>(
+    pub async fn async_send_mut<'a, S: AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
         opcode: OpCode,
@@ -156,6 +156,7 @@ impl FrameWriteState {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn async_send_one<'a, S: AsyncWrite + Unpin, M: Into<Option<[u8; 4]>>>(
         &mut self,
         stream: &mut S,
@@ -183,7 +184,7 @@ impl FrameWriteState {
         Ok(())
     }
 
-    async fn async_send<'a, S: AsyncWrite + Unpin>(
+    pub async fn async_send<'a, S: AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
         opcode: OpCode,
@@ -250,8 +251,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
     pub fn new(stream: S) -> Self {
         Self {
             stream,
-            read_state: FrameReadState::new(),
-            write_state: FrameWriteState::new(),
+            read_state: FrameReadState::default(),
+            write_state: FrameWriteState::default(),
         }
     }
 
@@ -268,9 +269,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
     }
 
     pub fn factory(_req: http::Request<()>, remain: BytesMut, stream: S) -> Result<Self, WsError> {
-        let mut config = FrameConfig::default();
-        // do not mask server side frame
-        config.mask_send_frame = false;
+        let config = FrameConfig {
+            mask_send_frame: false,
+            ..Default::default()
+        };
         Ok(Self::new_with(stream, config, remain))
     }
 
