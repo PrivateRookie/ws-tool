@@ -30,21 +30,21 @@ async fn run_test(case: usize) -> Result<(), WsError> {
         .unwrap();
     loop {
         match client.receive().await {
-            Ok(mut frame) => {
-                let code = frame.header().opcode();
-                let data = frame.payload_mut();
+            Ok(frame) => {
+                let (header, data) = frame.split();
+                let code = header.opcode();
                 match &code {
                     OpCode::Text | OpCode::Binary => {
-                        client.send(code, data).await?;
+                        client.send(code, &data).await?;
                     }
                     OpCode::Close => {
                         let mut data = BytesMut::new();
                         data.extend_from_slice(&1000u16.to_be_bytes());
-                        client.send(OpCode::Close, &mut data).await.unwrap();
+                        client.send(OpCode::Close, &data).await.unwrap();
                         break;
                     }
                     OpCode::Ping => {
-                        client.send(code, data).await?;
+                        client.send(code, &data).await?;
                     }
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
@@ -57,12 +57,15 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&close_code.to_be_bytes());
                     data.extend_from_slice(&error.to_string().as_bytes());
-                    client.send(OpCode::Close, &mut data).await.unwrap();
+                    client
+                        .send(OpCode::Close, vec![&close_code.to_be_bytes()[..], &data])
+                        .await
+                        .unwrap();
                 }
                 _ => {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&1000u16.to_be_bytes());
-                    client.send(OpCode::Close, &mut data).await.unwrap();
+                    client.send(OpCode::Close, &data).await.unwrap();
                 }
             },
         }

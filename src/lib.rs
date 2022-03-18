@@ -1,8 +1,12 @@
+//! rust websocket toolkit
+
+// #![deny(missing_docs)]
+
 use std::collections::HashMap;
 use std::fmt::Debug;
 
 use bytes::{Bytes, BytesMut};
-use frame::{BorrowedFrame, OpCode, OwnedFrame};
+use frame::{BorrowedFrame, OpCode, ReadFrame};
 
 /// websocket error definitions
 pub mod errors;
@@ -36,6 +40,7 @@ pub enum ConnectionState {
     Closed,
 }
 
+/// helper builder to construct websocket client
 pub struct ClientBuilder {
     uri: String,
     #[cfg(feature = "proxy")]
@@ -49,6 +54,7 @@ pub struct ClientBuilder {
 }
 
 impl ClientBuilder {
+    /// create builder with websocket url
     pub fn new<S: ToString>(uri: S) -> Self {
         Self {
             uri: uri.to_string(),
@@ -63,6 +69,7 @@ impl ClientBuilder {
         }
     }
 
+    /// set websocket proxy
     #[cfg(feature = "proxy")]
     pub fn proxy<S: ToString>(self, uri: S) -> Self {
         Self {
@@ -473,7 +480,7 @@ impl DefaultCode for Bytes {
     }
 }
 
-impl DefaultCode for OwnedFrame {
+impl DefaultCode for ReadFrame {
     fn default_code(&self) -> OpCode {
         self.header().opcode()
     }
