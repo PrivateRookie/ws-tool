@@ -17,7 +17,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::INFO)
         .finish()
         .try_init()
         .expect("failed to init log");

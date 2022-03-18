@@ -7,10 +7,8 @@ use structopt::StructOpt;
 use tokio_rustls::rustls::{self, Certificate, PrivateKey};
 use tokio_rustls::TlsAcceptor;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{
-    codec::{default_handshake_handler, AsyncWsFrameCodec},
-    ServerBuilder,
-};
+use ws_tool::codec::AsyncWsStringCodec;
+use ws_tool::{codec::default_handshake_handler, ServerBuilder};
 
 /// websocket client connect to binance futures websocket
 #[derive(StructOpt)]
@@ -105,7 +103,7 @@ async fn main() -> Result<(), ()> {
             stream,
             default_handshake_handler,
             // AsyncWsStringCodec::factory,
-            AsyncWsFrameCodec::factory,
+            AsyncWsStringCodec::factory,
         )
         .await
         .unwrap();
@@ -116,10 +114,7 @@ async fn main() -> Result<(), ()> {
                 //     break;
                 // }
                 // server.send(msg).await.unwrap();
-                server
-                    .send(msg.opcode(), msg.payload_data_unmask())
-                    .await
-                    .unwrap();
+                server.send((msg.code, msg.data)).await.unwrap();
             } else {
                 break;
             }
@@ -137,23 +132,20 @@ async fn main() -> Result<(), ()> {
             stream,
             default_handshake_handler,
             // AsyncWsStringCodec::factory,
-            AsyncWsFrameCodec::factory,
+            AsyncWsStringCodec::factory,
         )
         .await
         .unwrap();
 
         loop {
-            if let Ok(msg) = server.receive().await {
-                // if msg.code == OpCode::Close {
-                //     break;
-                // }
-                // server.send(msg).await.unwrap();
-                server
-                    .send(msg.opcode(), msg.payload_data_unmask())
-                    .await
-                    .unwrap();
-            } else {
-                break;
+            match server.receive().await {
+                Ok(msg) => {
+                    server.send((msg.code, msg.data)).await.unwrap()
+                }
+                Err(e) => {
+                    dbg!(e);
+                    break;
+                }
             }
         }
     }

@@ -36,7 +36,7 @@ impl FromStr for Proxy {
 
         let mut socket_iter = (host, port)
             .to_socket_addrs()
-            .map_err(|e| WsError::InvalidProxy(format!("{} {}", s, e.to_string())))?;
+            .map_err(|e| WsError::InvalidProxy(format!("{} {}", s, e)))?;
         let socket = socket_iter
             .next()
             .ok_or_else(|| WsError::InvalidProxy(format!("{} empty proxy socket", s)))?;
@@ -57,7 +57,7 @@ impl Proxy {
                 let mut stream = TcpStream::connect(self.socket).await.map_err(|e| {
                     WsError::ConnectionFailed(format!(
                         "failed to create tcp connection {}",
-                        e.to_string()
+                        e
                     ))
                 })?;
                 async_http_proxy::http_connect_tokio(&mut stream, target.0, target.1)

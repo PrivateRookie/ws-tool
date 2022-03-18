@@ -1,8 +1,12 @@
+//! rust websocket toolkit
+
+// #![deny(missing_docs)]
+
 use std::collections::HashMap;
 use std::fmt::Debug;
 
 use bytes::{Bytes, BytesMut};
-use frame::{Frame, OpCode};
+use frame::{BorrowedFrame, OpCode, ReadFrame};
 
 /// websocket error definitions
 pub mod errors;
@@ -11,7 +15,7 @@ pub mod frame;
 /// build connection & read/write frame utils
 pub mod protocol;
 
-#[cfg(feature = "proxy")]
+#[cfg(any(feature = "async_proxy"))]
 /// connection proxy support
 pub mod proxy;
 
@@ -36,34 +40,38 @@ pub enum ConnectionState {
     Closed,
 }
 
+/// helper builder to construct websocket client
+#[allow(dead_code)]
 pub struct ClientBuilder {
     uri: String,
-    #[cfg(feature = "proxy")]
+    #[cfg(any(feature = "async_proxy"))]
     proxy_uri: Option<String>,
     protocols: Vec<String>,
     extensions: Vec<String>,
-    #[cfg(feature = "async_tls_rustls")]
+    #[cfg(any(feature = "async_tls_rustls", feature = "tls_rustls"))]
     certs: std::collections::HashSet<std::path::PathBuf>,
     version: u8,
     headers: HashMap<String, String>,
 }
 
 impl ClientBuilder {
+    /// create builder with websocket url
     pub fn new<S: ToString>(uri: S) -> Self {
         Self {
             uri: uri.to_string(),
-            #[cfg(feature = "proxy")]
+            #[cfg(any(feature = "async_proxy"))]
             proxy_uri: None,
             protocols: vec![],
             extensions: vec![],
             headers: HashMap::new(),
-            #[cfg(feature = "async_tls_rustls")]
+            #[cfg(any(feature = "async_tls_rustls", feature = "tls_rustls"))]
             certs: std::collections::HashSet::new(),
             version: 13,
         }
     }
 
-    #[cfg(feature = "proxy")]
+    /// set websocket proxy
+    #[cfg(any(feature = "async_proxy"))]
     pub fn proxy<S: ToString>(self, uri: S) -> Self {
         Self {
             proxy_uri: Some(uri.to_string()),
@@ -97,13 +105,13 @@ impl ClientBuilder {
         Self { extensions, ..self }
     }
 
-    #[cfg(feature = "async_tls_rustls")]
+    #[cfg(any(feature = "async_tls_rustls", feature = "tls_rustls"))]
     pub fn cert(mut self, cert: std::path::PathBuf) -> Self {
         self.certs.insert(cert);
         self
     }
 
-    #[cfg(feature = "async_tls_rustls")]
+    #[cfg(any(feature = "async_tls_rustls", feature = "tls_rustls"))]
     // set ssl certs in wss connection
     ///
     /// **NOTE** it will clear certs set by `cert` method
@@ -144,18 +152,17 @@ mod blocking {
         fn _connect(&self) -> Result<(String, http::Response<()>, WsStream<TcpStream>), WsError> {
             let Self {
                 uri,
-                #[cfg(feature = "proxy")]
-                proxy_uri,
                 protocols,
                 extensions,
-                #[cfg(feature = "async_tls_rustls")]
+                #[cfg(feature = "tls_rustls")]
                 certs,
                 version,
                 headers,
+                ..
             } = self;
             let uri = uri
                 .parse::<http::Uri>()
-                .map_err(|e| WsError::InvalidUri(format!("{} {}", uri, e.to_string())))?;
+                .map_err(|e| WsError::InvalidUri(format!("{} {}", uri, e)))?;
             let mode = if let Some(schema) = uri.scheme_str() {
                 match schema.to_ascii_lowercase().as_str() {
                     "ws" => Ok(Mode::WS),
@@ -165,7 +172,7 @@ mod blocking {
             } else {
                 Err(WsError::InvalidUri("missing ws or wss schema".to_string()))
             }?;
-            #[cfg(feature = "async_tls_rustls")]
+            #[cfg(feature = "tls_rustls")]
             if mode == Mode::WS && !certs.is_empty() {
                 tracing::warn!("setting tls cert has no effect on insecure ws")
             }
@@ -178,10 +185,7 @@ mod blocking {
             };
 
             let stream = TcpStream::connect((host, port)).map_err(|e| {
-                WsError::ConnectionFailed(format!(
-                    "failed to create tcp connection {}",
-                    e.to_string()
-                ))
+                WsError::ConnectionFailed(format!("failed to create tcp connection {}", e))
             })?;
 
             tracing::debug!("tcp connection established");
@@ -206,16 +210,8 @@ mod blocking {
                 &mut stream,
                 &mode,
                 &uri,
-                protocols
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<String>>()
-                    .join(" ,"),
-                extensions
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<String>>()
-                    .join(" ,"),
+                protocols.to_vec().join(" ,"),
+                extensions.to_vec().join(" ,"),
                 *version,
                 headers.clone(),
             )?;
@@ -294,7 +290,7 @@ mod non_blocking {
         > {
             let Self {
                 uri,
-                #[cfg(feature = "proxy")]
+                #[cfg(feature = "async_proxy")]
                 proxy_uri,
                 protocols,
                 extensions,
@@ -305,7 +301,7 @@ mod non_blocking {
             } = self;
             let uri = uri
                 .parse::<http::Uri>()
-                .map_err(|e| WsError::InvalidUri(format!("{} {}", uri, e.to_string())))?;
+                .map_err(|e| WsError::InvalidUri(format!("{} {}", uri, e)))?;
             let mode = if let Some(schema) = uri.scheme_str() {
                 match schema.to_ascii_lowercase().as_str() {
                     "ws" => Ok(Mode::WS),
@@ -328,7 +324,7 @@ mod non_blocking {
             };
 
             let stream;
-            #[cfg(feature = "proxy")]
+            #[cfg(feature = "async_proxy")]
             {
                 let ws_proxy: Option<super::proxy::Proxy> = match proxy_uri {
                     Some(uri) => Some(uri.parse()?),
@@ -337,15 +333,12 @@ mod non_blocking {
                 stream = match &ws_proxy {
                     Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
                     None => TcpStream::connect((host, port)).await.map_err(|e| {
-                        WsError::ConnectionFailed(format!(
-                            "failed to create tcp connection {}",
-                            e.to_string()
-                        ))
+                        WsError::ConnectionFailed(format!("failed to create tcp connection {}", e))
                     })?,
                 };
             }
 
-            #[cfg(not(feature = "proxy"))]
+            #[cfg(not(feature = "async_proxy"))]
             {
                 stream = TcpStream::connect((host, port)).await.map_err(|e| {
                     WsError::ConnectionFailed(format!(
@@ -377,16 +370,8 @@ mod non_blocking {
                 &mut stream,
                 &mode,
                 &uri,
-                protocols
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<String>>()
-                    .join(" ,"),
-                extensions
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<String>>()
-                    .join(" ,"),
+                protocols.to_vec().join(" ,"),
+                extensions.to_vec().join(" ,"),
                 *version,
                 headers.clone(),
             )
@@ -455,6 +440,11 @@ impl DefaultCode for &[u8] {
         OpCode::Binary
     }
 }
+impl DefaultCode for &mut [u8] {
+    fn default_code(&self) -> OpCode {
+        OpCode::Binary
+    }
+}
 
 impl DefaultCode for BytesMut {
     fn default_code(&self) -> OpCode {
@@ -468,9 +458,15 @@ impl DefaultCode for Bytes {
     }
 }
 
-impl DefaultCode for Frame {
+impl DefaultCode for ReadFrame {
     fn default_code(&self) -> OpCode {
-        self.opcode()
+        self.header().opcode()
+    }
+}
+
+impl<'a> DefaultCode for BorrowedFrame<'a> {
+    fn default_code(&self) -> OpCode {
+        self.header().opcode()
     }
 }
 

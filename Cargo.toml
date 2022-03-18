@@ -1,6 +1,6 @@
 [package]
 name = "ws-tool"
-version = "0.4.0-beta"
+version = "0.4.0-gama"
 authors = ["PrivateRookie <996514515@qq.com>"]
 edition = "2018"
 description = "an easy to use websocket tool"
@@ -31,7 +31,7 @@ rustls-connector = { version = "0.16", optional = true, features = [
 
 # tls deps
 tokio-rustls = { version = "0.23", optional = true }
-rustls-pemfile = {version = "0.3", optional = true }
+rustls-pemfile = { version = "0.3", optional = true }
 webpki = { version = "0.22", optional = true }
 webpki-roots = { version = "0.21", optional = true }
 
@@ -49,8 +49,15 @@ default = ["async"]
 blocking = []
 tls_rustls = ["blocking", "rustls-connector"]
 async = ["tokio", "tokio-stream", "futures"]
-proxy = ["async", "tokio-socks", "async-http-proxy"]
-async_tls_rustls = ["async", "tokio-rustls", "webpki", "webpki-roots", "rustls-pemfile"]
+async_proxy = ["async", "tokio-socks", "async-http-proxy"]
+async_tls_rustls = [
+    "async",
+    "tokio-rustls",
+    "webpki",
+    "webpki-roots",
+    "rustls-pemfile",
+    "rustls-connector",
+]
 # deflate = ["flate2"]
 
 [dev-dependencies]
