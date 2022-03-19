@@ -2,10 +2,10 @@
 mod blocking;
 
 #[cfg(feature = "blocking")]
-pub use blocking::WsStringCodec;
+pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking;
 
 #[cfg(feature = "async")]
-pub use non_blocking::AsyncWsStringCodec;
+pub use non_blocking::*;

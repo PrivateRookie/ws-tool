@@ -3,6 +3,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::{FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
+    codec::Split,
     errors::WsError,
     frame::{Header, OpCode, Payload, PayloadMut, ReadFrame},
     protocol::standard_handshake_resp_check,
@@ -241,10 +242,81 @@ impl FrameWriteState {
     }
 }
 
-pub struct AsyncWsFrameCodec<S: AsyncRead + AsyncWrite> {
+macro_rules! impl_recv {
+    () => {
+        pub async fn receive(&mut self) -> Result<ReadFrame, WsError> {
+            self.read_state.async_receive(&mut self.stream).await
+        }
+    };
+}
+
+macro_rules! impl_send {
+    () => {
+        pub async fn send_mut<'a, P: Into<PayloadMut<'a>>>(
+            &mut self,
+            opcode: OpCode,
+            payload: P,
+            mask_payload: bool,
+        ) -> Result<(), WsError> {
+            self.write_state
+                .async_send_mut(&mut self.stream, opcode, payload.into(), mask_payload)
+                .await
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+
+        pub async fn send<'a, P: Into<Payload<'a>>>(
+            &mut self,
+            opcode: OpCode,
+            payload: P,
+        ) -> Result<(), WsError> {
+            self.write_state
+                .async_send(&mut self.stream, opcode, payload.into())
+                .await
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+
+        pub async fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
+            self.write_state
+                .async_send_read_frame(&mut self.stream, frame)
+                .await
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+    };
+}
+
+pub struct AsyncWsFrameRecv<S: AsyncRead> {
     stream: S,
     read_state: FrameReadState,
+}
+
+impl<S: AsyncRead + Unpin> AsyncWsFrameRecv<S> {
+    pub fn new(stream: S, read_state: FrameReadState) -> Self {
+        Self { stream, read_state }
+    }
+
+    impl_recv! {}
+}
+
+pub struct AsyncWsFrameSend<S: AsyncWrite> {
+    stream: S,
     write_state: FrameWriteState,
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWsFrameSend<S> {
+    pub fn new(stream: S, write_state: FrameWriteState) -> Self {
+        Self {
+            stream,
+            write_state,
+        }
+    }
+
+    impl_send! {}
+}
+
+pub struct AsyncWsFrameCodec<S: AsyncRead + AsyncWrite> {
+    pub stream: S,
+    pub read_state: FrameReadState,
+    pub write_state: FrameWriteState,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
@@ -286,37 +358,27 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
         Ok(Self::new_with(stream, FrameConfig::default(), remain))
     }
 
-    pub async fn receive(&mut self) -> Result<ReadFrame, WsError> {
-        self.read_state.async_receive(&mut self.stream).await
-    }
+    impl_recv! {}
 
-    pub async fn send_mut<'a, P: Into<PayloadMut<'a>>>(
-        &mut self,
-        opcode: OpCode,
-        payload: P,
-        mask_payload: bool,
-    ) -> Result<(), WsError> {
-        self.write_state
-            .async_send_mut(&mut self.stream, opcode, payload.into(), mask_payload)
-            .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
-    }
+    impl_send! {}
+}
 
-    pub async fn send<'a, P: Into<Payload<'a>>>(
-        &mut self,
-        opcode: OpCode,
-        payload: P,
-    ) -> Result<(), WsError> {
-        self.write_state
-            .async_send(&mut self.stream, opcode, payload.into())
-            .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
-    }
-
-    pub async fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
-        self.write_state
-            .async_send_read_frame(&mut self.stream, frame)
-            .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
+impl<
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+        S: AsyncRead + AsyncWrite + Unpin + Split<R = R, W = W>,
+    > AsyncWsFrameCodec<S>
+{
+    pub fn split(self) -> (AsyncWsFrameRecv<R>, AsyncWsFrameSend<W>) {
+        let AsyncWsFrameCodec {
+            stream,
+            read_state,
+            write_state,
+        } = self;
+        let (read, write) = stream.split();
+        (
+            AsyncWsFrameRecv::new(read, read_state),
+            AsyncWsFrameSend::new(write, write_state),
+        )
     }
 }

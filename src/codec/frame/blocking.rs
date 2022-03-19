@@ -1,5 +1,6 @@
 use super::{FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
+    codec::Split,
     errors::WsError,
     frame::{Header, OpCode, Payload, PayloadMut, ReadFrame},
     protocol::standard_handshake_resp_check,
@@ -217,10 +218,78 @@ impl FrameWriteState {
     }
 }
 
-pub struct WsFrameCodec<S: Read + Write> {
+macro_rules! impl_recv {
+    () => {
+        pub fn receive(&mut self) -> Result<ReadFrame, WsError> {
+            self.read_state.receive(&mut self.stream)
+        }
+    };
+}
+
+macro_rules! impl_send {
+    () => {
+        pub fn send_mut<'a, P: Into<PayloadMut<'a>>>(
+            &mut self,
+            code: OpCode,
+            payload: P,
+            mask_payload: bool,
+        ) -> Result<(), WsError> {
+            self.write_state
+                .send_mut(&mut self.stream, code, payload.into(), mask_payload)
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+
+        pub fn send<'a, P: Into<Payload<'a>>>(
+            &mut self,
+            code: OpCode,
+            payload: P,
+        ) -> Result<(), WsError> {
+            self.write_state
+                .send(&mut self.stream, code, payload.into())
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+
+        pub fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
+            self.write_state
+                .send_read_frame(&mut self.stream, frame)
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+    };
+}
+
+pub struct WsFrameRecv<S: Read> {
     stream: S,
     read_state: FrameReadState,
+}
+
+impl<S: Read> WsFrameRecv<S> {
+    pub fn new(stream: S, read_state: FrameReadState) -> Self {
+        Self { stream, read_state }
+    }
+
+    impl_recv! {}
+}
+
+pub struct WsFrameSend<S: Write> {
+    stream: S,
     write_state: FrameWriteState,
+}
+
+impl<S: Write> WsFrameSend<S> {
+    pub fn new(stream: S, write_state: FrameWriteState) -> Self {
+        Self {
+            stream,
+            write_state,
+        }
+    }
+
+    impl_send! {}
+}
+
+pub struct WsFrameCodec<S: Read + Write> {
+    pub stream: S,
+    pub read_state: FrameReadState,
+    pub write_state: FrameWriteState,
 }
 
 impl<S: Read + Write> WsFrameCodec<S> {
@@ -257,34 +326,22 @@ impl<S: Read + Write> WsFrameCodec<S> {
         Ok(Self::new_with(stream, FrameConfig::default()))
     }
 
-    pub fn receive(&mut self) -> Result<ReadFrame, WsError> {
-        self.read_state.receive(&mut self.stream)
-    }
+    impl_recv! {}
 
-    pub fn send_mut<'a, P: Into<PayloadMut<'a>>>(
-        &mut self,
-        code: OpCode,
-        payload: P,
-        mask_payload: bool,
-    ) -> Result<(), WsError> {
-        self.write_state
-            .send_mut(&mut self.stream, code, payload.into(), mask_payload)
-            .map_err(|e| WsError::IOError(Box::new(e)))
-    }
+    impl_send! {}
+}
 
-    pub fn send<'a, P: Into<Payload<'a>>>(
-        &mut self,
-        code: OpCode,
-        payload: P,
-    ) -> Result<(), WsError> {
-        self.write_state
-            .send(&mut self.stream, code, payload.into())
-            .map_err(|e| WsError::IOError(Box::new(e)))
-    }
-
-    pub fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
-        self.write_state
-            .send_read_frame(&mut self.stream, frame)
-            .map_err(|e| WsError::IOError(Box::new(e)))
+impl<R: Read, W: Write, S: Read + Write + Split<R = R, W = W>> WsFrameCodec<S> {
+    pub fn split(self) -> (WsFrameRecv<R>, WsFrameSend<W>) {
+        let WsFrameCodec {
+            stream,
+            read_state,
+            write_state,
+        } = self;
+        let (read, write) = stream.split();
+        (
+            WsFrameRecv::new(read, read_state),
+            WsFrameSend::new(write, write_state),
+        )
     }
 }

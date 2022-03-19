@@ -45,7 +45,6 @@ async fn main() -> Result<(), ()> {
             )
             .await
             .unwrap();
-
             loop {
                 if let Ok(mut msg) = server.receive().await {
                     if msg.code == OpCode::Close {

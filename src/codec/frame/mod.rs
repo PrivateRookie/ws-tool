@@ -8,13 +8,13 @@ use std::fmt::Debug;
 mod blocking;
 
 #[cfg(feature = "blocking")]
-pub use blocking::WsFrameCodec;
+pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking;
 
 #[cfg(feature = "async")]
-pub use non_blocking::AsyncWsFrameCodec;
+pub use non_blocking::*;
 
 /// frame send/recv config
 #[derive(Debug, Clone)]

@@ -6,6 +6,8 @@ mod blocking {
         use rustls_connector::TlsStream;
         use std::io::{Read, Write};
 
+        use crate::codec::Split;
+
         pub enum WsStream<S: Read + Write> {
             Plain(S),
             Tls(TlsStream<S>),
@@ -44,13 +46,71 @@ mod blocking {
                 }
             }
         }
+
+        pub enum WsReadStream<S: Read> {
+            Plain(S),
+            Tls(S),
+        }
+
+        impl<S: Read> Read for WsReadStream<S> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                match self {
+                    WsReadStream::Plain(s) => s.read(buf),
+                    WsReadStream::Tls(s) => s.read(buf),
+                }
+            }
+        }
+        pub enum WsWriteStream<S: Write> {
+            Plain(S),
+            Tls(S),
+        }
+
+        impl<S: Write> Write for WsWriteStream<S> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                match self {
+                    WsWriteStream::Plain(s) => s.write(buf),
+                    WsWriteStream::Tls(s) => s.write(buf),
+                }
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                match self {
+                    WsWriteStream::Plain(s) => s.flush(),
+                    WsWriteStream::Tls(s) => s.flush(),
+                }
+            }
+        }
+
+        impl<R, W, S> Split for WsStream<S>
+        where
+            R: Read,
+            W: Write,
+            S: Read + Write + Split<R = R, W = W>,
+        {
+            type R = WsReadStream<R>;
+
+            type W = WsWriteStream<W>;
+
+            fn split(self) -> (Self::R, Self::W) {
+                match self {
+                    WsStream::Plain(s) => {
+                        let (read, write) = s.split();
+                        (WsReadStream::Plain(read), WsWriteStream::Plain(write))
+                    }
+                    WsStream::Tls(s) => {
+                        let sock = s.sock;
+                        let (read, write) = sock.split();
+                        (WsReadStream::Tls(read), WsWriteStream::Tls(write))
+                    }
+                }
+            }
+        }
     }
 
     #[cfg(not(feature = "tls_rustls"))]
     mod stream {
-        use std::{
-            io::{Read, Write},
-        };
+        use crate::codec::Split;
+        use std::io::{Read, Write};
 
         pub enum WsStream<S> {
             Plain(S),
@@ -85,6 +145,55 @@ mod blocking {
                 }
             }
         }
+
+        pub enum WsReadStream<S: Read> {
+            Plain(S),
+        }
+
+        impl<S: Read> Read for WsReadStream<S> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                match self {
+                    WsReadStream::Plain(s) => s.read(buf),
+                }
+            }
+        }
+        pub enum WsWriteStream<S: Write> {
+            Plain(S),
+        }
+
+        impl<S: Write> Write for WsWriteStream<S> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                match self {
+                    WsWriteStream::Plain(s) => s.write(buf),
+                }
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                match self {
+                    WsWriteStream::Plain(s) => s.flush(),
+                }
+            }
+        }
+
+        impl<R, W, S> Split for WsStream<S>
+        where
+            R: Read,
+            W: Write,
+            S: Read + Write + Split<R = R, W = W>,
+        {
+            type R = WsReadStream<R>;
+
+            type W = WsWriteStream<W>;
+
+            fn split(self) -> (Self::R, Self::W) {
+                match self {
+                    WsStream::Plain(s) => {
+                        let (read, write) = s.split();
+                        (WsReadStream::Plain(read), WsWriteStream::Plain(write))
+                    }
+                }
+            }
+        }
     }
 
     pub use stream::WsStream;
@@ -97,8 +206,96 @@ pub use blocking::WsStream;
 mod non_blocking {
     #[cfg(feature = "async_tls_rustls")]
     mod ws_stream {
+        use std::pin::Pin;
+
         use tokio::io::{AsyncRead, AsyncWrite};
         use tokio_rustls::client::TlsStream;
+
+        use crate::codec::Split;
+
+        pub enum WsAsyncReadStream<S: AsyncRead> {
+            Plain(S),
+            Tls(S),
+        }
+
+        impl<S: AsyncRead + Unpin> AsyncRead for WsAsyncReadStream<S> {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                match self.get_mut() {
+                    WsAsyncReadStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
+                    WsAsyncReadStream::Tls(s) => Pin::new(s).poll_read(cx, buf),
+                }
+            }
+        }
+
+        pub enum WsAsyncWriteStream<S: AsyncWrite> {
+            Plain(S),
+            Tls(S),
+        }
+
+        impl<S: AsyncWrite + Unpin> AsyncWrite for WsAsyncWriteStream<S> {
+            fn poll_write(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &[u8],
+            ) -> std::task::Poll<Result<usize, std::io::Error>> {
+                match self.get_mut() {
+                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
+                    WsAsyncWriteStream::Tls(s) => Pin::new(s).poll_write(cx, buf),
+                }
+            }
+
+            fn poll_flush(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<(), std::io::Error>> {
+                match self.get_mut() {
+                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_flush(cx),
+                    WsAsyncWriteStream::Tls(s) => Pin::new(s).poll_flush(cx),
+                }
+            }
+
+            fn poll_shutdown(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<(), std::io::Error>> {
+                match self.get_mut() {
+                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
+                    WsAsyncWriteStream::Tls(s) => Pin::new(s).poll_shutdown(cx),
+                }
+            }
+        }
+
+        impl<R, W, S> Split for WsAsyncStream<S>
+        where
+            R: AsyncRead,
+            W: AsyncWrite,
+            S: AsyncRead + AsyncWrite + Split<R = R, W = W>,
+        {
+            type R = WsAsyncReadStream<R>;
+
+            type W = WsAsyncWriteStream<W>;
+
+            fn split(self) -> (Self::R, Self::W) {
+                match self {
+                    WsAsyncStream::Plain(s) => {
+                        let (read, write) = s.split();
+                        (
+                            WsAsyncReadStream::Plain(read),
+                            WsAsyncWriteStream::Plain(write),
+                        )
+                    }
+                    WsAsyncStream::Tls(s) => {
+                        let s = s.into_inner().0;
+                        let (read, write) = s.split();
+                        (WsAsyncReadStream::Tls(read), WsAsyncWriteStream::Tls(write))
+                    }
+                }
+            }
+        }
 
         #[derive(Debug)]
         pub enum WsAsyncStream<S: AsyncRead + AsyncWrite> {
@@ -164,7 +361,83 @@ mod non_blocking {
 
     #[cfg(not(feature = "async_tls_rustls"))]
     mod ws_stream {
+        use std::pin::Pin;
         use tokio::io::{AsyncRead, AsyncWrite};
+
+        use crate::codec::Split;
+
+        pub enum WsAsyncReadStream<S: AsyncRead> {
+            Plain(S),
+        }
+
+        impl<S: AsyncRead + Unpin> AsyncRead for WsAsyncReadStream<S> {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                match self.get_mut() {
+                    WsAsyncReadStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
+                }
+            }
+        }
+
+        pub enum WsAsyncWriteStream<S: AsyncWrite> {
+            Plain(S),
+        }
+
+        impl<S: AsyncWrite + Unpin> AsyncWrite for WsAsyncWriteStream<S> {
+            fn poll_write(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &[u8],
+            ) -> std::task::Poll<Result<usize, std::io::Error>> {
+                match self.get_mut() {
+                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
+                }
+            }
+
+            fn poll_flush(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<(), std::io::Error>> {
+                match self.get_mut() {
+                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_flush(cx),
+                }
+            }
+
+            fn poll_shutdown(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<(), std::io::Error>> {
+                match self.get_mut() {
+                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
+                }
+            }
+        }
+
+        impl<R, W, S> Split for WsAsyncStream<S>
+        where
+            R: AsyncRead,
+            W: AsyncWrite,
+            S: AsyncRead + AsyncWrite + Split<R = R, W = W>,
+        {
+            type R = WsAsyncReadStream<R>;
+
+            type W = WsAsyncWriteStream<W>;
+
+            fn split(self) -> (Self::R, Self::W) {
+                match self {
+                    WsAsyncStream::Plain(s) => {
+                        let (read, write) = s.split();
+                        (
+                            WsAsyncReadStream::Plain(read),
+                            WsAsyncWriteStream::Plain(write),
+                        )
+                    }
+                }
+            }
+        }
 
         #[derive(Debug)]
         pub enum WsAsyncStream<S> {
