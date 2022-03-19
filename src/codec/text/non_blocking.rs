@@ -14,6 +14,7 @@ use crate::{
 
 macro_rules! impl_recv {
     () => {
+        /// for close frame with body, first two bytes of string are close reason
         pub async fn receive(&mut self) -> Result<Message<String>, WsError> {
             let frame = self.frame_codec.receive().await?;
             let header = frame.header();
@@ -47,6 +48,7 @@ macro_rules! impl_recv {
 
 macro_rules! impl_send {
     () => {
+        /// send text message
         pub async fn send<T: Into<Message<String>>>(&mut self, msg: T) -> Result<(), WsError> {
             let msg: Message<String> = msg.into();
             if let Some(close_code) = msg.close_code {
@@ -75,12 +77,14 @@ macro_rules! impl_send {
     };
 }
 
+/// send part of text message
 pub struct AsyncWsStringRecv<S: AsyncRead> {
     frame_codec: AsyncWsFrameRecv<S>,
     validate_utf8: bool,
 }
 
 impl<S: AsyncRead + Unpin> AsyncWsStringRecv<S> {
+    /// construct method
     pub fn new(stream: S, state: FrameReadState, validate_utf8: bool) -> Self {
         Self {
             frame_codec: AsyncWsFrameRecv::new(stream, state),
@@ -91,11 +95,13 @@ impl<S: AsyncRead + Unpin> AsyncWsStringRecv<S> {
     impl_recv! {}
 }
 
+/// recv/send text message
 pub struct AsyncWsStringSend<S: AsyncWrite> {
     frame_codec: AsyncWsFrameSend<S>,
 }
 
 impl<S: AsyncWrite + Unpin> AsyncWsStringSend<S> {
+    /// construct method
     pub fn new(stream: S, state: FrameWriteState) -> Self {
         Self {
             frame_codec: AsyncWsFrameSend::new(stream, state),
@@ -105,12 +111,14 @@ impl<S: AsyncWrite + Unpin> AsyncWsStringSend<S> {
     impl_send! {}
 }
 
+/// recv/send text message
 pub struct AsyncWsStringCodec<S: AsyncRead + AsyncWrite> {
     frame_codec: AsyncWsFrameCodec<S>,
     validate_utf8: bool,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsStringCodec<S> {
+    /// construct method
     pub fn new(stream: S) -> Self {
         Self {
             frame_codec: AsyncWsFrameCodec::new(stream),
@@ -118,6 +126,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsStringCodec<S> {
         }
     }
 
+    /// construct with config
     pub fn new_with(stream: S, config: FrameConfig, remain: BytesMut, validate_utf8: bool) -> Self {
         Self {
             frame_codec: AsyncWsFrameCodec::new_with(stream, config, remain),
@@ -125,10 +134,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsStringCodec<S> {
         }
     }
 
+    /// get mutable underlying stream
     pub fn stream_mut(&mut self) -> &mut S {
         self.frame_codec.stream_mut()
     }
 
+    /// used for server side to construct a new server
+    pub fn factory(_req: http::Request<()>, remain: BytesMut, stream: S) -> Result<Self, WsError> {
+        let config = FrameConfig {
+            mask_send_frame: false,
+            ..Default::default()
+        };
+        Ok(Self::new_with(stream, config, remain, true))
+    }
+
+    /// used to client side to construct a new client
     pub fn check_fn(
         key: String,
         resp: http::Response<()>,
@@ -139,24 +159,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsStringCodec<S> {
         Ok(Self::new_with(stream, FrameConfig::default(), remain, true))
     }
 
-    pub fn factory(_req: http::Request<()>, remain: BytesMut, stream: S) -> Result<Self, WsError> {
-        let config = FrameConfig {
-            mask_send_frame: false,
-            ..Default::default()
-        };
-        Ok(Self::new_with(stream, config, remain, true))
-    }
-
     impl_recv! {}
     impl_send! {}
 }
 
-impl<
-        R: AsyncRead + Unpin,
-        W: AsyncWrite + Unpin,
-        S: AsyncRead + AsyncWrite + Unpin + Split<R = R, W = W>,
-    > AsyncWsStringCodec<S>
+impl<R, W, S> AsyncWsStringCodec<S>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin + Split<R = R, W = W>,
 {
+    /// split codec to recv and send parts
     pub fn split(self) -> (AsyncWsStringRecv<R>, AsyncWsStringSend<W>) {
         let AsyncWsFrameCodec {
             stream,

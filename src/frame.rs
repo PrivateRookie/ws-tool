@@ -15,13 +15,21 @@ use std::fmt::Debug;
 /// - xB-F are reserved for further control frames
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpCode {
+    /// - x0 denotes a continuation frame
     Continue,
+    /// - x1 denotes a text frame
     Text,
+    /// - x2 denotes a binary frame
     Binary,
+    /// - x3-7 are reserved for further non-control frames
     ReservedNonControl,
+    /// - x8 denotes a connection close
     Close,
+    /// - x9 denotes a ping
     Ping,
+    /// - xA denotes a pong
     Pong,
+    /// - xB-F are reserved for further control frames
     ReservedControl,
 }
 
@@ -32,6 +40,7 @@ impl Default for OpCode {
 }
 
 impl OpCode {
+    /// get corresponding u8 value
     pub fn as_u8(&self) -> u8 {
         match self {
             OpCode::Continue => 0,
@@ -85,21 +94,25 @@ macro_rules! impl_get {
             get_bit(&self.0, byte_idx, bit_idx)
         }
 
+        /// get fin bit value
         #[inline]
         pub fn fin(&self) -> bool {
             self.get_bit(0, 0)
         }
 
+        /// get rsv1 bit value
         #[inline]
         pub fn rsv1(&self) -> bool {
             self.get_bit(0, 1)
         }
 
+        /// get rsv2 bit value
         #[inline]
         pub fn rsv2(&self) -> bool {
             self.get_bit(0, 2)
         }
 
+        /// get rsv3 bit value
         #[inline]
         pub fn rsv3(&self) -> bool {
             self.get_bit(0, 3)
@@ -113,6 +126,7 @@ macro_rules! impl_get {
                 .unwrap()
         }
 
+        /// get mask bit value
         #[inline]
         pub fn mask(&self) -> bool {
             self.get_bit(1, 0)
@@ -140,11 +154,13 @@ macro_rules! impl_get {
             }
         }
 
+        /// return **payload** len
         #[inline]
         pub fn payload_len(&self) -> u64 {
             self.frame_sep().1
         }
 
+        /// get frame mask key
         #[inline]
         pub fn masking_key(&self) -> Option<[u8; 4]> {
             if self.mask() {
@@ -157,6 +173,7 @@ macro_rules! impl_get {
             }
         }
 
+        /// return (headerlen, the whole frame len)
         #[inline]
         pub fn payload_idx(&self) -> (usize, usize) {
             let mut start_idx = 1;
@@ -177,21 +194,25 @@ macro_rules! impl_set {
             set_bit(&mut self.0, byte_idx, bit_idx, val)
         }
 
+        /// set fin bit
         #[inline]
         pub fn set_fin(&mut self, val: bool) {
             self.set_bit(0, 0, val)
         }
 
+        /// set rsv1 bit
         #[inline]
         pub fn set_rsv1(&mut self, val: bool) {
             self.set_bit(0, 1, val)
         }
 
+        /// set rsv2 bit
         #[inline]
         pub fn set_rsv2(&mut self, val: bool) {
             self.set_bit(0, 2, val)
         }
 
+        /// set rsv3 bit
         #[inline]
         pub fn set_rsv3(&mut self, val: bool) {
             self.set_bit(0, 3, val)
@@ -212,6 +233,7 @@ macro_rules! impl_set {
             self.set_bit(1, 0, mask);
         }
 
+        /// set header payload lens
         #[inline]
         pub fn set_payload_len(&mut self, len: u64) -> usize {
             let header = &mut self.0;
@@ -240,12 +262,14 @@ macro_rules! impl_set {
             }
         }
 
+        /// key header mask key
         #[inline]
         pub fn set_masking_key(&mut self, key: [u8; 4]) {
             let (len_occupied, _) = self.frame_sep();
             self.0[(1 + len_occupied)..(5 + len_occupied)].copy_from_slice(&key);
         }
 
+        /// auto generate mask key and apply it
         #[inline]
         pub fn auto_mask(&mut self) -> Option<[u8; 4]> {
             if self.mask() {
@@ -371,6 +395,7 @@ impl Header {
     impl_set! {}
     impl_config! {}
 
+    /// construct new header
     pub fn new<M: Into<Option<[u8; 4]>>>(
         fin: bool,
         rsv1: bool,
@@ -399,10 +424,12 @@ impl Header {
         header
     }
 
+    /// return read only header view
     pub fn view(&self) -> HeaderView {
         HeaderView(&self.0)
     }
 
+    /// return mutable header view
     pub fn view_mut(&mut self) -> HeaderViewMut {
         HeaderViewMut(&mut self.0)
     }
@@ -413,6 +440,7 @@ impl Header {
 pub struct ReadFrame(pub(crate) BytesMut);
 
 impl ReadFrame {
+    /// construct read frame
     pub fn new<'a, P: Into<PayloadMut<'a>>>(
         fin: bool,
         rsv1: bool,
@@ -439,10 +467,12 @@ impl ReadFrame {
         frame
     }
 
+    /// construct empty payload frame
     pub fn empty(opcdoe: OpCode) -> Self {
         Self::new(true, false, false, false, opcdoe, true, vec![])
     }
 
+    /// replace old frame with other  buf and return it
     pub fn replace(&mut self, other: ReadFrame) -> ReadFrame {
         let frame_len = self.header().payload_idx().1;
         let ret = ReadFrame(self.0.split_to(frame_len));
@@ -450,25 +480,30 @@ impl ReadFrame {
         ret
     }
 
+    /// readonly header view of frame
     pub fn header(&self) -> HeaderView {
         HeaderView(&self.0)
     }
 
+    /// mutable header view of frame
     pub fn header_mut(&mut self) -> HeaderViewMut {
         HeaderViewMut(&mut self.0)
     }
 
+    /// immutable frame payload
     pub fn payload(&self) -> &[u8] {
         let (start, end) = self.header().payload_idx();
         &self.0[start..end]
     }
 
+    /// consume frame and return (header,  payload)
     pub fn split(mut self) -> (Header, BytesMut) {
         let stop = self.header().payload_idx().0;
         let header = Header(self.0.split_to(stop));
         (header, self.0)
     }
 
+    /// mutable reference of payload
     pub fn payload_mut(&mut self) -> &mut [u8] {
         let (start, end) = self.header().payload_idx();
         &mut self.0[start..end]
@@ -479,18 +514,22 @@ impl ReadFrame {
 #[derive(Debug, Clone)]
 pub struct BorrowedFrame<'a> {
     pub(crate) header: Header,
+    /// borrowed payload
     pub payload: Payload<'a>,
 }
 
 impl<'a> BorrowedFrame<'a> {
+    /// immutable header view
     pub fn header(&self) -> HeaderView {
         self.header.view()
     }
 
+    /// mutable header view
     pub fn header_mut(&mut self) -> HeaderViewMut {
         self.header.view_mut()
     }
 
+    /// payload
     pub fn payload(&self) -> Payload {
         self.payload.clone()
     }
@@ -504,6 +543,7 @@ pub struct OwnedFrame {
 }
 
 impl OwnedFrame {
+    /// construct new owned frame
     #[allow(clippy::too_many_arguments)]
     pub fn new<M: Into<Option<[u8; 4]>>>(
         fin: bool,
@@ -532,18 +572,22 @@ impl OwnedFrame {
         Self { header, payload }
     }
 
+    /// immutable header view
     pub fn header(&self) -> HeaderView {
         self.header.view()
     }
 
+    /// mutable header view
     pub fn header_mut(&mut self) -> HeaderViewMut {
         self.header.view_mut()
     }
 
+    /// immutable payload
     pub fn payload(&self) -> &[u8] {
         &self.payload
     }
 
+    /// mutable payload
     pub fn payload_mut(&mut self) -> &mut BytesMut {
         &mut self.payload
     }
@@ -562,6 +606,7 @@ impl OwnedFrame {
     }
 }
 
+/// a collection of immutable payload(vector of u8 slice)
 #[derive(Clone, Debug)]
 pub struct Payload<'a>(pub(crate) Vec<&'a [u8]>);
 
@@ -595,14 +640,17 @@ impl<'a> From<&'a Bytes> for Payload<'a> {
 }
 
 impl<'a> Payload<'a> {
+    /// check payload is empty
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// return total bytes count of payload
     pub fn len(&self) -> usize {
         self.0.iter().map(|i| i.len()).sum()
     }
 
+    /// return payload iterator
     pub fn iter(&self) -> PayloadIterator<'_> {
         PayloadIterator {
             payload: self,
@@ -612,6 +660,7 @@ impl<'a> Payload<'a> {
         }
     }
 
+    /// split payload into smaller size
     pub fn split_with(&self, size: usize) -> Vec<Payload> {
         let mut ret = vec![];
         let last = self.0.iter().fold(vec![], |mut acc: Vec<&'a [u8]>, &arr| {
@@ -631,6 +680,7 @@ impl<'a> Payload<'a> {
         ret
     }
 
+    /// copy all bytes in payload to dest
     pub fn copy_to(&self, dest: &mut [u8]) {
         let mut offset = 0;
         self.0.iter().for_each(|arr| {
@@ -639,6 +689,7 @@ impl<'a> Payload<'a> {
         })
     }
 
+    /// like copy_to, but apply mask at the same time
     pub fn copy_with_key(&self, dest: &mut [u8], key: [u8; 4]) {
         let mut offset = 0;
         self.0.iter().for_each(|arr| {
@@ -653,6 +704,7 @@ impl<'a> Payload<'a> {
     }
 }
 
+/// Iterator of payload
 pub struct PayloadIterator<'a> {
     payload: &'a Payload<'a>,
     array_idx: usize,
@@ -676,6 +728,7 @@ impl<'a> Iterator for PayloadIterator<'a> {
     }
 }
 
+/// a collection of mutable payload(vector of mutable u8 slice)
 #[derive(Debug)]
 pub struct PayloadMut<'a>(pub(crate) Vec<&'a mut [u8]>);
 
@@ -697,10 +750,12 @@ impl<'a> From<&'a mut BytesMut> for PayloadMut<'a> {
 }
 
 impl<'a> PayloadMut<'a> {
+    /// check payload is empty
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// return total bytes count of payloads
     pub fn len(&self) -> usize {
         self.0.iter().map(|i| i.len()).sum()
     }
@@ -714,6 +769,7 @@ impl<'a> PayloadMut<'a> {
     //     }
     // }
 
+    /// split payload into smaller size
     pub fn split_with(self, size: usize) -> Vec<PayloadMut<'a>> {
         let mut ret = vec![];
         let last = self
@@ -737,6 +793,7 @@ impl<'a> PayloadMut<'a> {
         ret
     }
 
+    /// copy all bytes in payload to dest
     pub fn copy_to(&self, dest: &mut [u8]) {
         let mut offset = 0;
         self.0.iter().for_each(|arr| {
@@ -745,6 +802,7 @@ impl<'a> PayloadMut<'a> {
         })
     }
 
+    /// apply mask by the given mask key
     pub fn apply_mask(&mut self, mask: [u8; 4]) {
         let mut offset = 0;
         for part in self.0.iter_mut() {

@@ -104,6 +104,11 @@ impl FrameWriteState {
         Ok(())
     }
 
+    /// send mutable payload
+    ///
+    /// if mask_payload is set, mask payload first
+    ///
+    /// will auto fragment if auto_fragment_size > 0
     pub async fn async_send_mut<'a, S: AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
@@ -185,6 +190,9 @@ impl FrameWriteState {
         Ok(())
     }
 
+    /// send immutable payload
+    ///
+    /// will auto fragment if auto_fragment_size > 0
     pub async fn async_send<'a, S: AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
@@ -244,6 +252,7 @@ impl FrameWriteState {
 
 macro_rules! impl_recv {
     () => {
+        /// receive a frame
         pub async fn receive(&mut self) -> Result<ReadFrame, WsError> {
             self.read_state.async_receive(&mut self.stream).await
         }
@@ -252,6 +261,11 @@ macro_rules! impl_recv {
 
 macro_rules! impl_send {
     () => {
+        /// send mutable payload
+        ///
+        /// if mask_payload is set, mask payload first
+        ///
+        /// will auto fragment if auto_fragment_size > 0
         pub async fn send_mut<'a, P: Into<PayloadMut<'a>>>(
             &mut self,
             opcode: OpCode,
@@ -264,6 +278,9 @@ macro_rules! impl_send {
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }
 
+        /// send immutable payload
+        ///
+        /// will auto fragment if auto_fragment_size > 0
         pub async fn send<'a, P: Into<Payload<'a>>>(
             &mut self,
             opcode: OpCode,
@@ -275,6 +292,7 @@ macro_rules! impl_send {
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }
 
+        /// send a read frame, **this method will not check validation of frame and do not fragment**
         pub async fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
             self.write_state
                 .async_send_read_frame(&mut self.stream, frame)
@@ -284,12 +302,14 @@ macro_rules! impl_send {
     };
 }
 
+/// recv part of websocket stream
 pub struct AsyncWsFrameRecv<S: AsyncRead> {
     stream: S,
     read_state: FrameReadState,
 }
 
 impl<S: AsyncRead + Unpin> AsyncWsFrameRecv<S> {
+    /// construct method
     pub fn new(stream: S, read_state: FrameReadState) -> Self {
         Self { stream, read_state }
     }
@@ -297,12 +317,14 @@ impl<S: AsyncRead + Unpin> AsyncWsFrameRecv<S> {
     impl_recv! {}
 }
 
+/// send part of websocket frame
 pub struct AsyncWsFrameSend<S: AsyncWrite> {
     stream: S,
     write_state: FrameWriteState,
 }
 
 impl<S: AsyncWrite + Unpin> AsyncWsFrameSend<S> {
+    /// construct method
     pub fn new(stream: S, write_state: FrameWriteState) -> Self {
         Self {
             stream,
@@ -313,13 +335,18 @@ impl<S: AsyncWrite + Unpin> AsyncWsFrameSend<S> {
     impl_send! {}
 }
 
+/// recv/send websocket frame
 pub struct AsyncWsFrameCodec<S: AsyncRead + AsyncWrite> {
+    /// underlying transport stream
     pub stream: S,
+    /// read state
     pub read_state: FrameReadState,
+    /// write state
     pub write_state: FrameWriteState,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
+    /// construct method
     pub fn new(stream: S) -> Self {
         Self {
             stream,
@@ -328,6 +355,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
         }
     }
 
+    /// construct with stream and config
     pub fn new_with(stream: S, config: FrameConfig, read_bytes: BytesMut) -> Self {
         Self {
             stream,
@@ -336,10 +364,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
         }
     }
 
+    /// get mutable underlying stream
     pub fn stream_mut(&mut self) -> &mut S {
         &mut self.stream
     }
 
+    /// used for server side to construct a new server
     pub fn factory(_req: http::Request<()>, remain: BytesMut, stream: S) -> Result<Self, WsError> {
         let config = FrameConfig {
             mask_send_frame: false,
@@ -348,6 +378,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
         Ok(Self::new_with(stream, config, remain))
     }
 
+    /// used to client side to construct a new client
     pub fn check_fn(
         key: String,
         resp: http::Response<()>,
@@ -363,12 +394,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
     impl_send! {}
 }
 
-impl<
-        R: AsyncRead + Unpin,
-        W: AsyncWrite + Unpin,
-        S: AsyncRead + AsyncWrite + Unpin + Split<R = R, W = W>,
-    > AsyncWsFrameCodec<S>
+impl<R, W, S> AsyncWsFrameCodec<S>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin + Split<R = R, W = W>,
 {
+    /// split codec to recv and send parts
     pub fn split(self) -> (AsyncWsFrameRecv<R>, AsyncWsFrameSend<W>) {
         let AsyncWsFrameCodec {
             stream,

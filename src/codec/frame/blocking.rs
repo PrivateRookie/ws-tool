@@ -90,6 +90,11 @@ impl FrameWriteState {
         Ok(())
     }
 
+    /// send mutable payload
+    ///
+    /// if mask_payload is set, mask payload first
+    ///
+    /// will auto fragment if auto_fragment_size > 0
     pub fn send_mut<'a, S: Write>(
         &mut self,
         stream: &mut S,
@@ -167,6 +172,9 @@ impl FrameWriteState {
         Ok(())
     }
 
+    /// send immutable payload
+    ///
+    /// will auto fragment if auto_fragment_size > 0
     pub fn send<'a, S: Write>(
         &mut self,
         stream: &mut S,
@@ -220,6 +228,7 @@ impl FrameWriteState {
 
 macro_rules! impl_recv {
     () => {
+        /// receive a frame
         pub fn receive(&mut self) -> Result<ReadFrame, WsError> {
             self.read_state.receive(&mut self.stream)
         }
@@ -228,6 +237,11 @@ macro_rules! impl_recv {
 
 macro_rules! impl_send {
     () => {
+        /// send mutable payload
+        ///
+        /// if mask_payload is set, mask payload first
+        ///
+        /// will auto fragment if auto_fragment_size > 0
         pub fn send_mut<'a, P: Into<PayloadMut<'a>>>(
             &mut self,
             code: OpCode,
@@ -239,6 +253,9 @@ macro_rules! impl_send {
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }
 
+        /// send immutable payload
+        ///
+        /// will auto fragment if auto_fragment_size > 0
         pub fn send<'a, P: Into<Payload<'a>>>(
             &mut self,
             code: OpCode,
@@ -249,6 +266,7 @@ macro_rules! impl_send {
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }
 
+        /// send a read frame, **this method will not check validation of frame and do not fragment**
         pub fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
             self.write_state
                 .send_read_frame(&mut self.stream, frame)
@@ -257,12 +275,14 @@ macro_rules! impl_send {
     };
 }
 
+/// recv part of websocket stream
 pub struct WsFrameRecv<S: Read> {
     stream: S,
     read_state: FrameReadState,
 }
 
 impl<S: Read> WsFrameRecv<S> {
+    /// construct method
     pub fn new(stream: S, read_state: FrameReadState) -> Self {
         Self { stream, read_state }
     }
@@ -270,12 +290,14 @@ impl<S: Read> WsFrameRecv<S> {
     impl_recv! {}
 }
 
+/// send part of websocket frame
 pub struct WsFrameSend<S: Write> {
     stream: S,
     write_state: FrameWriteState,
 }
 
 impl<S: Write> WsFrameSend<S> {
+    /// construct method
     pub fn new(stream: S, write_state: FrameWriteState) -> Self {
         Self {
             stream,
@@ -286,13 +308,18 @@ impl<S: Write> WsFrameSend<S> {
     impl_send! {}
 }
 
+/// recv/send websocket frame
 pub struct WsFrameCodec<S: Read + Write> {
+    /// underlying transport stream
     pub stream: S,
+    /// read state
     pub read_state: FrameReadState,
+    /// write state
     pub write_state: FrameWriteState,
 }
 
 impl<S: Read + Write> WsFrameCodec<S> {
+    /// construct method
     pub fn new(stream: S) -> Self {
         Self {
             stream,
@@ -301,6 +328,7 @@ impl<S: Read + Write> WsFrameCodec<S> {
         }
     }
 
+    /// construct with stream and config
     pub fn new_with(stream: S, config: FrameConfig) -> Self {
         Self {
             stream,
@@ -309,10 +337,12 @@ impl<S: Read + Write> WsFrameCodec<S> {
         }
     }
 
+    /// get mutable underlying stream
     pub fn stream_mut(&mut self) -> &mut S {
         &mut self.stream
     }
 
+    /// used for server side to construct a new server
     pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
         let config = FrameConfig {
             mask_send_frame: false,
@@ -321,6 +351,7 @@ impl<S: Read + Write> WsFrameCodec<S> {
         Ok(Self::new_with(stream, config))
     }
 
+    /// used to client side to construct a new client
     pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
         standard_handshake_resp_check(key.as_bytes(), &resp)?;
         Ok(Self::new_with(stream, FrameConfig::default()))
@@ -331,7 +362,13 @@ impl<S: Read + Write> WsFrameCodec<S> {
     impl_send! {}
 }
 
-impl<R: Read, W: Write, S: Read + Write + Split<R = R, W = W>> WsFrameCodec<S> {
+impl<R, W, S> WsFrameCodec<S>
+where
+    R: Read,
+    W: Write,
+    S: Read + Write + Split<R = R, W = W>,
+{
+    /// split codec to recv and send parts
     pub fn split(self) -> (WsFrameRecv<R>, WsFrameSend<W>) {
         let WsFrameCodec {
             stream,

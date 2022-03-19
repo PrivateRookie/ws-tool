@@ -46,6 +46,7 @@ impl Default for FrameConfig {
     }
 }
 
+/// apply websocket mask to buf by given key
 #[inline]
 pub fn apply_mask(buf: &mut [u8], mask: [u8; 4]) {
     apply_mask_fast32(buf, mask)
@@ -58,6 +59,7 @@ fn apply_mask_fallback(buf: &mut [u8], mask: [u8; 4]) {
     }
 }
 
+/// copy from tungstite
 #[inline]
 pub fn apply_mask_fast32(buf: &mut [u8], mask: [u8; 4]) {
     let mask_u32 = u32::from_ne_bytes(mask);
@@ -80,6 +82,7 @@ pub fn apply_mask_fast32(buf: &mut [u8], mask: [u8; 4]) {
     apply_mask_fallback(suffix, mask_u32.to_ne_bytes());
 }
 
+/// websocket read state
 #[derive(Debug, Clone)]
 pub struct FrameReadState {
     fragmented: bool,
@@ -104,6 +107,7 @@ impl Default for FrameReadState {
 }
 
 impl FrameReadState {
+    /// construct with config and bytes remaining in handshake
     pub fn with_remain(config: FrameConfig, read_data: BytesMut) -> Self {
         Self {
             config,
@@ -113,6 +117,7 @@ impl FrameReadState {
         }
     }
 
+    /// construct with config
     pub fn with_config(config: FrameConfig) -> Self {
         Self {
             config,
@@ -120,14 +125,17 @@ impl FrameReadState {
         }
     }
 
+    /// check if data in buffer is enough to parse frame header
     pub fn leading_bits_ok(&self) -> bool {
         self.read_data.len() >= 2
     }
 
+    /// return current frame header bits of buffer
     pub fn get_leading_bits(&self) -> u8 {
         self.read_data[0] >> 4
     }
 
+    /// try to parse frame header in buffer, return expected payload
     pub fn parse_frame_header(&mut self) -> Result<usize, WsError> {
         fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
             let mut len = source[1];
@@ -187,6 +195,7 @@ impl FrameReadState {
         Ok(expected_len)
     }
 
+    /// get a frame and reset state
     pub fn consume_frame(&mut self, len: usize) -> ReadFrame {
         let data = self.read_data.split_to(len);
         self.read_idx = self.read_data.len();
@@ -199,6 +208,7 @@ impl FrameReadState {
         frame
     }
 
+    /// perform protocol checking after receiving a frame
     pub fn check_frame(&mut self, unmasked_frame: ReadFrame) -> Result<Option<ReadFrame>, WsError> {
         let header = unmasked_frame.header();
         let opcode = header.opcode();
@@ -319,18 +329,22 @@ impl FrameReadState {
     }
 }
 
+/// websocket writing state
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct FrameWriteState {
+    /// config
     config: FrameConfig,
 }
 
 impl FrameWriteState {
+    /// construct with config
     pub fn with_config(config: FrameConfig) -> Self {
         Self { config }
     }
 }
 
+/// do standard handshake check and return response
 pub fn default_handshake_handler(
     req: http::Request<()>,
 ) -> Result<(http::Request<()>, http::Response<String>), WsError> {

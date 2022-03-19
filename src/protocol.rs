@@ -111,13 +111,17 @@ impl StatusCode {
     }
 }
 
+/// websocket connection mode
 #[derive(Debug, PartialEq, Eq)]
 pub enum Mode {
+    /// plain mode `ws://great.nice`
     WS,
+    /// tls mode `wss://secret.wow`
     WSS,
 }
 
 impl Mode {
+    /// return corresponding port of websocket mode
     pub fn default_port(&self) -> u16 {
         match self {
             Mode::WS => 80,
@@ -147,6 +151,7 @@ mod blocking {
 
         use crate::errors::WsError;
 
+        /// start tls session
         pub fn wrap_tls(
             stream: TcpStream,
             host: &str,
@@ -210,6 +215,7 @@ mod blocking {
         perform_parse_req(read_bytes, key)
     }
 
+    /// handle protocol handshake
     pub fn handle_handshake<S: Read + Write>(
         stream: &mut WsStream<S>,
     ) -> Result<http::Request<()>, WsError> {
@@ -253,6 +259,7 @@ mod non_blocking {
         use tokio_rustls::rustls::RootCertStore;
         use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
 
+        /// async version of startting tls session
         pub async fn async_wrap_tls(
             stream: TcpStream,
             host: &str,
@@ -342,6 +349,7 @@ mod non_blocking {
         perform_parse_req(headers, key).map(|(key, resp)| (key, resp, remain))
     }
 
+    /// async version of handling protocol handshake
     pub async fn async_handle_handshake<S: AsyncRead + AsyncWrite + Unpin>(
         stream: &mut WsAsyncStream<S>,
     ) -> Result<(http::Request<()>, BytesMut), WsError> {
@@ -382,15 +390,12 @@ pub fn cal_accept_key(source: &[u8]) -> String {
     base64::encode(&sha1.finalize())
 }
 
-#[derive(Debug)]
-pub struct HandshakeResponse {
-    pub code: u8,
-    pub reason: String,
-    pub headers: HashMap<String, String>,
-}
-
+/// perform standard protocol handshake response check
+///
+/// 1. check status code
+/// 2. check `sec-websocket-accept` header & value
 pub fn standard_handshake_resp_check(key: &[u8], resp: &http::Response<()>) -> Result<(), WsError> {
-    tracing::debug!("{:?}", resp);
+    tracing::debug!("handshake response {:?}", resp);
     if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
         return Err(WsError::HandShakeFailed(format!(
             "expect 101 response, got {}",
@@ -439,6 +444,9 @@ pub fn standard_handshake_req_check(req: &http::Request<()>) -> Result<(), WsErr
     Ok(())
 }
 
+/// build protocol http reqeust
+///
+/// return (key, request_str)
 pub fn prepare_handshake(
     protocols: String,
     extensions: String,
@@ -482,6 +490,7 @@ pub fn prepare_handshake(
     (key, req_str)
 }
 
+/// parse protocol response
 pub fn perform_parse_req(
     read_bytes: BytesMut,
     key: String,
@@ -508,6 +517,7 @@ pub fn perform_parse_req(
     Ok((key, resp_builder.body(()).unwrap()))
 }
 
+/// parse http request, used by server building
 pub fn handle_parse_handshake(req_bytes: BytesMut) -> Result<http::Request<()>, WsError> {
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);

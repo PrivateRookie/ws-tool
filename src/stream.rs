@@ -8,12 +8,16 @@ mod blocking {
 
         use crate::codec::Split;
 
+        /// websocket stream
         pub enum WsStream<S: Read + Write> {
+            /// plain tcp stream
             Plain(S),
+            /// tls tcp stream
             Tls(TlsStream<S>),
         }
 
         impl<S: Read + Write> WsStream<S> {
+            /// return mutable reference underlying stream
             pub fn stream_mut(&mut self) -> &mut S {
                 match self {
                     WsStream::Plain(s) => s,
@@ -112,11 +116,14 @@ mod blocking {
         use crate::codec::Split;
         use std::io::{Read, Write};
 
+        /// websocket stream
         pub enum WsStream<S> {
+            /// plain tcp stream
             Plain(S),
         }
 
         impl<S> WsStream<S> {
+            /// return mutable reference underlying stream
             pub fn stream_mut(&mut self) -> &mut S {
                 match self {
                     WsStream::Plain(s) => s,
@@ -297,13 +304,17 @@ mod non_blocking {
             }
         }
 
+        /// async version of websocket stream
         #[derive(Debug)]
         pub enum WsAsyncStream<S: AsyncRead + AsyncWrite> {
+            /// plain tcp stream
             Plain(S),
+            /// tls stream
             Tls(TlsStream<S>),
         }
 
         impl<S: AsyncWrite + AsyncRead> WsAsyncStream<S> {
+            /// return mutable reference of underlying stream
             pub fn stream_mut(&mut self) -> &mut S {
                 match self {
                     WsAsyncStream::Plain(s) => s,
@@ -439,12 +450,15 @@ mod non_blocking {
             }
         }
 
+        /// websocket stream
         #[derive(Debug)]
         pub enum WsAsyncStream<S> {
+            /// plain tcp stream
             Plain(S),
         }
 
         impl<S> WsAsyncStream<S> {
+            /// return mutable reference underlying stream
             pub fn stream_mut(&mut self) -> &mut S {
                 match self {
                     Self::Plain(s) => s,

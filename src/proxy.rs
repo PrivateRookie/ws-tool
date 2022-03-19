@@ -6,15 +6,21 @@ use tokio::net::TcpStream;
 
 use crate::errors::WsError;
 
+/// websocket proxy stream schema
 #[derive(Debug, Clone)]
 pub enum ProxySchema {
+    /// socks5 proxy
     Socks5,
+    /// http proxy
     Http,
 }
 
+/// proxy endpoint
 #[derive(Debug, Clone)]
 pub struct Proxy {
+    /// proxy socket addr
     pub socket: SocketAddr,
+    /// proxy schema
     pub schema: ProxySchema,
 }
 
@@ -55,10 +61,7 @@ impl Proxy {
             }
             ProxySchema::Http => {
                 let mut stream = TcpStream::connect(self.socket).await.map_err(|e| {
-                    WsError::ConnectionFailed(format!(
-                        "failed to create tcp connection {}",
-                        e
-                    ))
+                    WsError::ConnectionFailed(format!("failed to create tcp connection {}", e))
                 })?;
                 async_http_proxy::http_connect_tokio(&mut stream, target.0, target.1)
                     .await

@@ -1,6 +1,6 @@
 //! rust websocket toolkit
 
-// #![deny(missing_docs)]
+#![warn(missing_docs)]
 
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -106,6 +106,7 @@ impl ClientBuilder {
     }
 
     #[cfg(any(feature = "async_tls_rustls", feature = "tls_rustls"))]
+    /// set ssl cert in wss connection
     pub fn cert(mut self, cert: std::path::PathBuf) -> Self {
         self.certs.insert(cert);
         self
@@ -124,11 +125,15 @@ impl ClientBuilder {
         Self { version, ..self }
     }
 
+    /// add initial request header
     pub fn header<K: ToString, V: ToString>(mut self, name: K, value: V) -> Self {
         self.headers.insert(name.to_string(), value.to_string());
         self
     }
 
+    /// set initial request headers
+    ///
+    /// **NOTE** it will clear header set by previous `header` method
     pub fn headers(self, headers: HashMap<String, String>) -> Self {
         Self { headers, ..self }
     }
@@ -218,6 +223,7 @@ mod blocking {
             Ok((key, resp, stream))
         }
 
+        /// perform protocol handshake & check server response
         pub fn connect<C, F>(&self, check_fn: F) -> Result<C, WsError>
         where
             F: Fn(String, http::Response<()>, WsStream<TcpStream>) -> Result<C, WsError>,
@@ -228,6 +234,8 @@ mod blocking {
     }
 
     impl ServerBuilder {
+        /// wait for protocol handshake from client
+        /// checking handshake & construct server
         pub fn accept<F1, F2, T, C, S>(
             stream: S,
             handshake_handler: F1,
@@ -379,6 +387,9 @@ mod non_blocking {
             Ok((key, resp, remain, stream))
         }
 
+        /// async version of connect
+        ///
+        /// perform protocol handshake & check server response
         pub async fn async_connect<C, F>(&self, check_fn: F) -> Result<C, WsError>
         where
             F: Fn(
@@ -394,6 +405,10 @@ mod non_blocking {
     }
 
     impl ServerBuilder {
+        /// async version
+        ///
+        /// wait for protocol handshake from client
+        /// checking handshake & construct server
         pub async fn async_accept<F1, F2, T, C, S>(
             stream: S,
             handshake_handler: F1,
@@ -423,55 +438,63 @@ mod non_blocking {
     }
 }
 
+/// helper struct to config & construct websocket server
 pub struct ServerBuilder {}
 
+/// a trait that tells ws-tool corresponding opcode of custom type
 pub trait DefaultCode {
-    fn default_code(&self) -> OpCode;
+    /// get payload opcode
+    fn code(&self) -> OpCode;
 }
 
 impl DefaultCode for String {
-    fn default_code(&self) -> OpCode {
+    fn code(&self) -> OpCode {
         OpCode::Text
     }
 }
 
 impl DefaultCode for &[u8] {
-    fn default_code(&self) -> OpCode {
+    fn code(&self) -> OpCode {
         OpCode::Binary
     }
 }
 impl DefaultCode for &mut [u8] {
-    fn default_code(&self) -> OpCode {
+    fn code(&self) -> OpCode {
         OpCode::Binary
     }
 }
 
 impl DefaultCode for BytesMut {
-    fn default_code(&self) -> OpCode {
+    fn code(&self) -> OpCode {
         OpCode::Binary
     }
 }
 
 impl DefaultCode for Bytes {
-    fn default_code(&self) -> OpCode {
+    fn code(&self) -> OpCode {
         OpCode::Binary
     }
 }
 
 impl DefaultCode for ReadFrame {
-    fn default_code(&self) -> OpCode {
+    fn code(&self) -> OpCode {
         self.header().opcode()
     }
 }
 
 impl<'a> DefaultCode for BorrowedFrame<'a> {
-    fn default_code(&self) -> OpCode {
+    fn code(&self) -> OpCode {
         self.header().opcode()
     }
 }
 
+/// generic message receive/send from websocket stream
 pub struct Message<T: AsRef<[u8]> + DefaultCode> {
+    /// opcode of message
+    ///
+    /// see all codes in [overview](https://datatracker.ietf.org/doc/html/rfc6455#section-5.2) of opcode
     pub code: OpCode,
+    /// payload of message
     pub data: T,
 
     /// available in close frame only
@@ -481,6 +504,7 @@ pub struct Message<T: AsRef<[u8]> + DefaultCode> {
 }
 
 impl<T: AsRef<[u8]> + DefaultCode> Message<T> {
+    /// consume message and return payload
     pub fn into(self) -> T {
         self.data
     }
@@ -514,7 +538,7 @@ impl<T: AsRef<[u8]> + DefaultCode> From<(u16, T)> for Message<T> {
 impl<T: AsRef<[u8]> + DefaultCode> From<T> for Message<T> {
     fn from(data: T) -> Self {
         Self {
-            code: data.default_code(),
+            code: data.code(),
             data,
             close_code: None,
         }
