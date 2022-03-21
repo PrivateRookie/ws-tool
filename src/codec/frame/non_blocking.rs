@@ -47,7 +47,7 @@ impl FrameReadState {
         &mut self,
         stream: &mut S,
     ) -> Result<ReadFrame, WsError> {
-        while !self.leading_bits_ok() {
+        while !self.is_header_ok() {
             self.async_poll(stream).await?;
         }
         let len = self.parse_frame_header()?;

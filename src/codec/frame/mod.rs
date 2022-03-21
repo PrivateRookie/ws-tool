@@ -126,8 +126,26 @@ impl FrameReadState {
     }
 
     /// check if data in buffer is enough to parse frame header
-    pub fn leading_bits_ok(&self) -> bool {
-        self.read_data.len() >= 2
+    pub fn is_header_ok(&self) -> bool {
+        let buf_len = self.read_data.len();
+        if buf_len < 2 {
+            false
+        } else {
+            let mut len = self.read_data[0];
+            len = (len << 1) >> 1;
+            let mask = get_bit(&self.read_data, 1, 0);
+
+            let mut min_len = match len {
+                0..=125 => 2,
+                126 => 3,
+                127 => 9,
+                _ => unreachable!(),
+            };
+            if mask {
+                min_len += 4;
+            }
+            buf_len >= min_len
+        }
     }
 
     /// return current frame header bits of buffer
