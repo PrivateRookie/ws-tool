@@ -130,7 +130,7 @@ impl Mode {
     }
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 mod blocking {
     use std::{
         collections::HashMap,
@@ -143,7 +143,7 @@ mod blocking {
 
     use super::{handle_parse_handshake, perform_parse_req, prepare_handshake, Mode};
 
-    #[cfg(feature = "tls_rustls")]
+    #[cfg(feature = "sync_tls_rustls")]
     mod tls {
         use std::{collections::HashSet, io::Read, net::TcpStream, path::PathBuf};
 
@@ -184,7 +184,7 @@ mod blocking {
         }
     }
 
-    #[cfg(feature = "tls_rustls")]
+    #[cfg(feature = "sync_tls_rustls")]
     pub use tls::wrap_tls;
 
     /// perform http upgrade
@@ -232,7 +232,7 @@ mod blocking {
     }
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 pub use blocking::*;
 
 #[cfg(feature = "async")]

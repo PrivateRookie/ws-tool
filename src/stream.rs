@@ -1,7 +1,7 @@
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 mod blocking {
 
-    #[cfg(feature = "tls_rustls")]
+    #[cfg(feature = "sync_tls_rustls")]
     mod stream {
         use rustls_connector::TlsStream;
         use std::io::{Read, Write};
@@ -111,7 +111,7 @@ mod blocking {
         }
     }
 
-    #[cfg(not(feature = "tls_rustls"))]
+    #[cfg(not(feature = "sync_tls_rustls"))]
     mod stream {
         use crate::codec::Split;
         use std::io::{Read, Write};
@@ -206,7 +206,7 @@ mod blocking {
     pub use stream::WsStream;
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 pub use blocking::WsStream;
 
 #[cfg(feature = "async")]

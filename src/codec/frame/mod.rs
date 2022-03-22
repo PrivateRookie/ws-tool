@@ -4,10 +4,10 @@ use crate::protocol::{cal_accept_key, standard_handshake_req_check};
 use bytes::{Buf, BytesMut};
 use std::fmt::Debug;
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 mod blocking;
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 pub use blocking::*;
 
 #[cfg(feature = "async")]

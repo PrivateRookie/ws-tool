@@ -1,5 +1,6 @@
 {
     "cSpell.words": [
+        "hproxy",
         "httparse",
         "Nagle",
         "NODELAY",
@@ -10,11 +11,5 @@
         "webpki"
     ],
     "python.pythonPath": ".venv/bin/python",
-    "rust-analyzer.cargo.features": [
-        "blocking",
-        "async",
-        "tls_rustls",
-        "async_tls_rustls",
-        "async_proxy"
-    ]
+    "rust-analyzer.cargo.allFeatures": true
 }

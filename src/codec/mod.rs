@@ -40,7 +40,7 @@ pub trait Split {
     fn split(self) -> (Self::R, Self::W);
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 mod blocking {
     use super::Split;
     use std::{

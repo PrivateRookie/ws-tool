@@ -12,10 +12,6 @@ struct Args {
     /// cert file path
     #[structopt(short, long)]
     cert: Option<PathBuf>,
-
-    /// proxy setting
-    #[structopt(long)]
-    proxy: Option<String>,
 }
 
 #[tokio::main]
@@ -30,9 +26,9 @@ async fn main() -> Result<(), ()> {
     if let Some(cert) = args.cert {
         builder = builder.cert(cert);
     }
-    if let Some(proxy) = args.proxy {
-        builder = builder.proxy(&proxy)
-    }
+    // if let Some(proxy) = args.proxy {
+    //     builder = builder.proxy(&proxy)
+    // }
     let mut client = builder
         .async_connect(AsyncWsStringCodec::check_fn)
         .await
@@ -58,7 +54,7 @@ async fn main() -> Result<(), ()> {
             Err(e) => {
                 dbg!(e);
                 break;
-            },
+            }
         }
     }
     Ok(())

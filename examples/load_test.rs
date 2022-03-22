@@ -25,10 +25,6 @@ struct Args {
     /// cert file path
     #[structopt(short, long)]
     cert: Option<PathBuf>,
-
-    /// proxy setting
-    #[structopt(long)]
-    proxy: Option<String>,
 }
 
 #[tokio::main]
@@ -43,9 +39,9 @@ async fn main() -> Result<(), ()> {
     if let Some(cert) = args.cert {
         builder = builder.cert(cert);
     }
-    if let Some(proxy) = args.proxy {
-        builder = builder.proxy(&proxy)
-    }
+    // if let Some(proxy) = args.proxy {
+    //     builder = builder.proxy(&proxy)
+    // }
     let total = args.num;
     let size = args.payload;
     let mut f = vec![];
