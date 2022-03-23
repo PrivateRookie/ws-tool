@@ -7,16 +7,16 @@ echo "cargo build --no-default-features"
 cargo build --no-default-features
 
 echo "building..."
-echo "cargo build --no-default-features --features blocking"
-cargo build --no-default-features --features blocking
+echo "cargo build --no-default-features --features sync"
+cargo build --no-default-features --features sync
 
 echo "building..."
-echo "cargo build --no-default-features --features blocking,tls_rustls"
-cargo build --no-default-features --features blocking,tls_rustls
+echo "cargo build --no-default-features --features sync,sync_tls_rustls"
+cargo build --no-default-features --features sync,sync_tls_rustls
 
 echo "building..."
-echo "cargo build --no-default-features --features blocking,tls_rustls"
-cargo build --no-default-features --features blocking,tls_rustls
+echo "cargo build --no-default-features --features sync,sync_tls_rustls"
+cargo build --no-default-features --features sync,sync_tls_rustls
 
 echo "building..."
 echo "cargo build --no-default-features --features async"

@@ -1,6 +1,6 @@
 [package]
 name = "ws-tool"
-version = "0.4.1"
+version = "0.5.1"
 authors = ["PrivateRookie <996514515@qq.com>"]
 edition = "2018"
 description = "an easy to use websocket tool"
@@ -23,7 +23,6 @@ tracing = "0.1"
 bytes = "1"
 httparse = "1.4"
 sha-1 = "0.9"
-tokio-stream = { version = "0.1", optional = true }
 futures = { version = "0.3", optional = true }
 rustls-connector = { version = "0.16", optional = true, features = [
     "webpki-roots-certs",
@@ -37,19 +36,19 @@ webpki-roots = { version = "0.21", optional = true }
 
 # proxy deps
 tokio-socks = { version = "0.5", optional = true }
-async-http-proxy = { version = "1", features = [
-    "runtime-tokio",
-], optional = true }
 
 # deflate deps
 flate2 = { version = "1", optional = true }
+hproxy = { version = "0.1", optional = true }
+sproxy = { version = "0.1", optional = true }
 
 [features]
 default = ["async"]
-blocking = []
-tls_rustls = ["blocking", "rustls-connector"]
-async = ["tokio", "tokio-stream", "futures"]
-async_proxy = ["async", "tokio-socks", "async-http-proxy"]
+sync = []
+sync_proxy = ["sync", "hproxy/sync", "sproxy/sync"]
+sync_tls_rustls = ["sync", "rustls-connector"]
+async = ["tokio", "futures"]
+async_proxy = ["async", "hproxy/async", "sproxy/async"]
 async_tls_rustls = [
     "async",
     "tokio-rustls",
@@ -63,10 +62,8 @@ async_tls_rustls = [
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
-structopt = "0.3"
+clap = { version = "3.1", features = ["derive"] }
 rcgen = "0.8"
-crossbeam-channel = "0.5.2"
-simba = "0.7.1"
 
 # benchmark deps
 tungstenite = "0.17.2"

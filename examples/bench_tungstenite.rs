@@ -1,23 +1,23 @@
-use structopt::StructOpt;
+use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 
 /// websocket client connect to binance futures websocket
-#[derive(StructOpt)]
+#[derive(Parser)]
 struct Args {
     /// server host
-    #[structopt(long, default_value = "127.0.0.1")]
+    #[clap(long, default_value = "127.0.0.1")]
     host: String,
     /// server port
-    #[structopt(short, long, default_value = "9000")]
+    #[clap(short, long, default_value = "9000")]
     port: u16,
 
     /// level
-    #[structopt(short, long, default_value = "info")]
+    #[clap(short, long, default_value = "info")]
     level: tracing::Level,
 }
 
 fn main() -> Result<(), ()> {
-    let args = Args::from_args();
+    let args = Args::parse();
     tracing_subscriber::fmt::fmt()
         .with_max_level(args.level)
         .finish()

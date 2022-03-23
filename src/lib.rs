@@ -44,11 +44,13 @@ pub enum ConnectionState {
 #[allow(dead_code)]
 pub struct ClientBuilder {
     uri: String,
-    #[cfg(any(feature = "async_proxy"))]
-    proxy_uri: Option<String>,
+    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
+    http_proxy: Option<hproxy::ProxyConfig>,
+    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
+    socks5_proxy: Option<sproxy::ProxyConfig>,
     protocols: Vec<String>,
     extensions: Vec<String>,
-    #[cfg(any(feature = "async_tls_rustls", feature = "tls_rustls"))]
+    #[cfg(any(feature = "async_tls_rustls", feature = "sync_tls_rustls"))]
     certs: std::collections::HashSet<std::path::PathBuf>,
     version: u8,
     headers: HashMap<String, String>,
@@ -59,22 +61,33 @@ impl ClientBuilder {
     pub fn new<S: ToString>(uri: S) -> Self {
         Self {
             uri: uri.to_string(),
-            #[cfg(any(feature = "async_proxy"))]
-            proxy_uri: None,
+            #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
+            http_proxy: None,
+            #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
+            socks5_proxy: None,
             protocols: vec![],
             extensions: vec![],
             headers: HashMap::new(),
-            #[cfg(any(feature = "async_tls_rustls", feature = "tls_rustls"))]
+            #[cfg(any(feature = "async_tls_rustls", feature = "sync_tls_rustls"))]
             certs: std::collections::HashSet::new(),
             version: 13,
         }
     }
 
-    /// set websocket proxy
-    #[cfg(any(feature = "async_proxy"))]
-    pub fn proxy<S: ToString>(self, uri: S) -> Self {
+    /// set websocket http proxy
+    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
+    pub fn http_proxy<C: Into<Option<hproxy::ProxyConfig>>>(self, conf: C) -> Self {
         Self {
-            proxy_uri: Some(uri.to_string()),
+            http_proxy: conf.into(),
+            ..self
+        }
+    }
+
+    /// set websocket socks5 proxy
+    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
+    pub fn socks5_proxy<C: Into<Option<sproxy::ProxyConfig>>>(self, conf: C) -> Self {
+        Self {
+            socks5_proxy: conf.into(),
             ..self
         }
     }
@@ -105,14 +118,14 @@ impl ClientBuilder {
         Self { extensions, ..self }
     }
 
-    #[cfg(any(feature = "async_tls_rustls", feature = "tls_rustls"))]
+    #[cfg(any(feature = "async_tls_rustls", feature = "sync_tls_rustls"))]
     /// set ssl cert in wss connection
     pub fn cert(mut self, cert: std::path::PathBuf) -> Self {
         self.certs.insert(cert);
         self
     }
 
-    #[cfg(any(feature = "async_tls_rustls", feature = "tls_rustls"))]
+    #[cfg(any(feature = "async_tls_rustls", feature = "sync_tls_rustls"))]
     // set ssl certs in wss connection
     ///
     /// **NOTE** it will clear certs set by `cert` method
@@ -139,7 +152,7 @@ impl ClientBuilder {
     }
 }
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 mod blocking {
     use std::{
         io::{Read, Write},
@@ -157,13 +170,16 @@ mod blocking {
         fn _connect(&self) -> Result<(String, http::Response<()>, WsStream<TcpStream>), WsError> {
             let Self {
                 uri,
+                #[cfg(feature = "sync_proxy")]
+                http_proxy,
+                #[cfg(feature = "sync_proxy")]
+                socks5_proxy,
                 protocols,
                 extensions,
-                #[cfg(feature = "tls_rustls")]
+                #[cfg(feature = "sync_tls_rustls")]
                 certs,
                 version,
                 headers,
-                ..
             } = self;
             let uri = uri
                 .parse::<http::Uri>()
@@ -177,7 +193,7 @@ mod blocking {
             } else {
                 Err(WsError::InvalidUri("missing ws or wss schema".to_string()))
             }?;
-            #[cfg(feature = "tls_rustls")]
+            #[cfg(feature = "sync_tls_rustls")]
             if mode == Mode::WS && !certs.is_empty() {
                 tracing::warn!("setting tls cert has no effect on insecure ws")
             }
@@ -189,23 +205,56 @@ mod blocking {
                 None => mode.default_port(),
             };
 
-            let stream = TcpStream::connect((host, port)).map_err(|e| {
-                WsError::ConnectionFailed(format!("failed to create tcp connection {}", e))
-            })?;
+            let stream;
+            #[cfg(feature = "async_proxy")]
+            {
+                match (http_proxy, socks5_proxy) {
+                    (None, None) => {
+                        stream = TcpStream::connect((host, port)).map_err(|e| {
+                            WsError::ConnectionFailed(format!(
+                                "failed to create tcp connection {}",
+                                e.to_string()
+                            ))
+                        })?
+                    }
+                    (Some(config), None) => {
+                        stream = hproxy::create_conn(config, &format!("{}:{}", host, port))?
+                    }
+                    (None, Some(config)) => {
+                        stream = sproxy::create_conn(config, host.into(), port)?.0;
+                    }
+                    (Some(_), Some(config)) => {
+                        tracing::warn!(
+                            "both http proxy and socks5 proxy is set, use preferred socks5"
+                        );
+                        stream = sproxy::create_conn(config, host.into(), port)?.0;
+                    }
+                }
+            }
+
+            #[cfg(not(feature = "async_proxy"))]
+            {
+                stream = TcpStream::connect((host, port)).await.map_err(|e| {
+                    WsError::ConnectionFailed(format!(
+                        "failed to create tcp connection {}",
+                        e.to_string()
+                    ))
+                })?;
+            }
 
             tracing::debug!("tcp connection established");
 
             let mut stream = match mode {
                 Mode::WS => WsStream::Plain(stream),
                 Mode::WSS => {
-                    #[cfg(feature = "tls_rustls")]
+                    #[cfg(feature = "sync_tls_rustls")]
                     {
                         use crate::protocol::wrap_tls;
                         let tls_stream = wrap_tls(stream, host, &self.certs)?;
                         WsStream::Tls(tls_stream)
                     }
 
-                    #[cfg(not(feature = "tls_rustls"))]
+                    #[cfg(not(feature = "sync_tls_rustls"))]
                     {
                         panic!("require `rustls`")
                     }
@@ -299,7 +348,9 @@ mod non_blocking {
             let Self {
                 uri,
                 #[cfg(feature = "async_proxy")]
-                proxy_uri,
+                http_proxy,
+                #[cfg(feature = "async_proxy")]
+                socks5_proxy,
                 protocols,
                 extensions,
                 #[cfg(feature = "async_tls_rustls")]
@@ -334,16 +385,33 @@ mod non_blocking {
             let stream;
             #[cfg(feature = "async_proxy")]
             {
-                let ws_proxy: Option<super::proxy::Proxy> = match proxy_uri {
-                    Some(uri) => Some(uri.parse()?),
-                    None => None,
-                };
-                stream = match &ws_proxy {
-                    Some(proxy_conf) => proxy_conf.connect((host, port)).await?,
-                    None => TcpStream::connect((host, port)).await.map_err(|e| {
-                        WsError::ConnectionFailed(format!("failed to create tcp connection {}", e))
-                    })?,
-                };
+                match (http_proxy, socks5_proxy) {
+                    (None, None) => {
+                        stream = TcpStream::connect((host, port)).await.map_err(|e| {
+                            WsError::ConnectionFailed(format!(
+                                "failed to create tcp connection {}",
+                                e.to_string()
+                            ))
+                        })?
+                    }
+                    (Some(config), None) => {
+                        stream =
+                            hproxy::async_create_conn(config, &format!("{}:{}", host, port)).await?
+                    }
+                    (None, Some(config)) => {
+                        stream = sproxy::async_create_conn(config, host.into(), port)
+                            .await?
+                            .0;
+                    }
+                    (Some(_), Some(config)) => {
+                        tracing::warn!(
+                            "both http proxy and socks5 proxy is set, use preferred socks5"
+                        );
+                        stream = sproxy::async_create_conn(config, host.into(), port)
+                            .await?
+                            .0;
+                    }
+                }
             }
 
             #[cfg(not(feature = "async_proxy"))]

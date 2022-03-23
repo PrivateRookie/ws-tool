@@ -1,7 +1,7 @@
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 mod blocking;
 
-#[cfg(feature = "blocking")]
+#[cfg(feature = "sync")]
 pub use blocking::*;
 
 #[cfg(feature = "async")]
