@@ -6,6 +6,7 @@
         "NODELAY",
         "rustls",
         "rutls",
+        "sproxy",
         "thiserror",
         "tungstenite",
         "webpki"

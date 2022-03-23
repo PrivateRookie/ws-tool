@@ -1,29 +1,29 @@
 use std::{path::PathBuf, time};
 
-use structopt::StructOpt;
+use clap::Parser;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{codec::AsyncWsBytesCodec, ClientBuilder};
 
 /// websocket client demo with raw frame
-#[derive(StructOpt)]
+#[derive(Parser)]
 struct Args {
     uri: String,
 
     // client size
-    #[structopt(long, default_value = "1")]
+    #[clap(long, default_value = "1")]
     conn: usize,
 
     /// payload size kb
-    #[structopt(short, long, default_value = "1")]
+    #[clap(short, long, default_value = "1")]
     payload: usize,
 
     /// count
-    #[structopt(short, long, default_value = "5000")]
+    #[clap(short, long, default_value = "5000")]
     num: usize,
 
     /// cert file path
-    #[structopt(short, long)]
+    #[clap(short, long)]
     cert: Option<PathBuf>,
 }
 
@@ -34,7 +34,7 @@ async fn main() -> Result<(), ()> {
         .finish()
         .try_init()
         .expect("failed to init log");
-    let args = Args::from_args();
+    let args = Args::parse();
     let mut builder = ClientBuilder::new(&args.uri);
     if let Some(cert) = args.cert {
         builder = builder.cert(cert);

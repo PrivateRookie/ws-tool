@@ -46,6 +46,8 @@ pub struct ClientBuilder {
     uri: String,
     #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
     http_proxy: Option<hproxy::ProxyConfig>,
+    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
+    socks5_proxy: Option<sproxy::ProxyConfig>,
     protocols: Vec<String>,
     extensions: Vec<String>,
     #[cfg(any(feature = "async_tls_rustls", feature = "sync_tls_rustls"))]
@@ -61,6 +63,8 @@ impl ClientBuilder {
             uri: uri.to_string(),
             #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
             http_proxy: None,
+            #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
+            socks5_proxy: None,
             protocols: vec![],
             extensions: vec![],
             headers: HashMap::new(),
@@ -70,11 +74,20 @@ impl ClientBuilder {
         }
     }
 
-    /// set websocket proxy
-    #[cfg(any(feature = "async_proxy"))]
+    /// set websocket http proxy
+    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
     pub fn http_proxy<C: Into<Option<hproxy::ProxyConfig>>>(self, conf: C) -> Self {
         Self {
             http_proxy: conf.into(),
+            ..self
+        }
+    }
+
+    /// set websocket socks5 proxy
+    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
+    pub fn socks5_proxy<C: Into<Option<sproxy::ProxyConfig>>>(self, conf: C) -> Self {
+        Self {
+            socks5_proxy: conf.into(),
             ..self
         }
     }
@@ -159,6 +172,8 @@ mod blocking {
                 uri,
                 #[cfg(feature = "sync_proxy")]
                 http_proxy,
+                #[cfg(feature = "sync_proxy")]
+                socks5_proxy,
                 protocols,
                 extensions,
                 #[cfg(feature = "sync_tls_rustls")]
@@ -193,15 +208,27 @@ mod blocking {
             let stream;
             #[cfg(feature = "async_proxy")]
             {
-                if let Some(config) = http_proxy {
-                    stream = hproxy::create_conn(config, (host, port))?
-                } else {
-                    stream = TcpStream::connect((host, port)).map_err(|e| {
-                        WsError::ConnectionFailed(format!(
-                            "failed to create tcp connection {}",
-                            e.to_string()
-                        ))
-                    })?
+                match (http_proxy, socks5_proxy) {
+                    (None, None) => {
+                        stream = TcpStream::connect((host, port)).map_err(|e| {
+                            WsError::ConnectionFailed(format!(
+                                "failed to create tcp connection {}",
+                                e.to_string()
+                            ))
+                        })?
+                    }
+                    (Some(config), None) => {
+                        stream = hproxy::create_conn(config, &format!("{}:{}", host, port))?
+                    }
+                    (None, Some(config)) => {
+                        stream = sproxy::create_conn(config, host.into(), port)?.0;
+                    }
+                    (Some(_), Some(config)) => {
+                        tracing::warn!(
+                            "both http proxy and socks5 proxy is set, use preferred socks5"
+                        );
+                        stream = sproxy::create_conn(config, host.into(), port)?.0;
+                    }
                 }
             }
 
@@ -322,6 +349,8 @@ mod non_blocking {
                 uri,
                 #[cfg(feature = "async_proxy")]
                 http_proxy,
+                #[cfg(feature = "async_proxy")]
+                socks5_proxy,
                 protocols,
                 extensions,
                 #[cfg(feature = "async_tls_rustls")]
@@ -356,15 +385,32 @@ mod non_blocking {
             let stream;
             #[cfg(feature = "async_proxy")]
             {
-                if let Some(config) = http_proxy {
-                    stream = hproxy::async_create_conn(config, (host, port)).await?
-                } else {
-                    stream = TcpStream::connect((host, port)).await.map_err(|e| {
-                        WsError::ConnectionFailed(format!(
-                            "failed to create tcp connection {}",
-                            e.to_string()
-                        ))
-                    })?
+                match (http_proxy, socks5_proxy) {
+                    (None, None) => {
+                        stream = TcpStream::connect((host, port)).await.map_err(|e| {
+                            WsError::ConnectionFailed(format!(
+                                "failed to create tcp connection {}",
+                                e.to_string()
+                            ))
+                        })?
+                    }
+                    (Some(config), None) => {
+                        stream =
+                            hproxy::async_create_conn(config, &format!("{}:{}", host, port)).await?
+                    }
+                    (None, Some(config)) => {
+                        stream = sproxy::async_create_conn(config, host.into(), port)
+                            .await?
+                            .0;
+                    }
+                    (Some(_), Some(config)) => {
+                        tracing::warn!(
+                            "both http proxy and socks5 proxy is set, use preferred socks5"
+                        );
+                        stream = sproxy::async_create_conn(config, host.into(), port)
+                            .await?
+                            .0;
+                    }
                 }
             }
 

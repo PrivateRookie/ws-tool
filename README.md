@@ -6,7 +6,7 @@ An easy to use websocket client/server toolkit, supporting blocking/async IO.
 
 | IO type  | split | proxy | tls | deflate | use as client | use as server |
 | -------- | ----- | ----- | --- | ------- | ------------- | ------------- |
-| blocking | ✅     | 🚧wip  | ✅   | 🚧wip    | ✅             | ✅             |
+| blocking | ✅     | ✅     | ✅   | 🚧wip    | ✅             | ✅             |
 | async    | ✅     | ✅     | ✅   | 🚧wip    | ✅             | ✅             |
 
 
