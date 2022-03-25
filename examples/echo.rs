@@ -22,13 +22,11 @@ async fn main() -> Result<(), ()> {
         .try_init()
         .expect("failed to init log");
     let args = Args::parse();
+
     let mut builder = ClientBuilder::new(&args.uri);
     if let Some(cert) = args.cert {
         builder = builder.cert(cert);
     }
-    // if let Some(proxy) = args.proxy {
-    //     builder = builder.proxy(&proxy)
-    // }
     let mut client = builder
         .async_connect(AsyncWsStringCodec::check_fn)
         .await

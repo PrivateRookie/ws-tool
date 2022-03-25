@@ -1,6 +1,7 @@
 //! rust websocket toolkit
 
 #![warn(missing_docs)]
+#![cfg_attr(docrs, feature(doc_auto_cfg))]
 
 use std::collections::HashMap;
 use std::fmt::Debug;

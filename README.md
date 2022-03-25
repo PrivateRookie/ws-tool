@@ -4,10 +4,10 @@ An easy to use websocket client/server toolkit, supporting blocking/async IO.
 
 **feature matrix**
 
-| IO type  | split | proxy | tls | deflate | use as client | use as server |
-| -------- | ----- | ----- | --- | ------- | ------------- | ------------- |
-| blocking | ✅     | ✅     | ✅   | 🚧wip    | ✅             | ✅             |
-| async    | ✅     | ✅     | ✅   | 🚧wip    | ✅             | ✅             |
+| IO type  | split | proxy(auth) | tls | deflate | use as client | use as server |
+| -------- | ----- | ----------- | --- | ------- | ------------- | ------------- |
+| blocking | ✅     | ✅           | ✅   | 🚧wip    | ✅             | ✅             |
+| async    | ✅     | ✅           | ✅   | 🚧wip    | ✅             | ✅             |
 
 
 It's tested by autobaha test suit. see [examples/autobahn-client](examples/autobahn-client.rs)
@@ -69,7 +69,7 @@ report files should be under `test_reports` dir.
 
 ## TODO
 
-- [ ] add proxy auth config
+- [x] add proxy auth config
 - [ ] support custom https proxy cert
 - [x] split client into writer & reader
 
