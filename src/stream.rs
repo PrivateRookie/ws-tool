@@ -51,8 +51,11 @@ mod blocking {
             }
         }
 
+        /// websocket readonly stream
         pub enum WsReadStream<S: Read> {
+            /// plaint read stream
             Plain(S),
+            /// tls wrapped read stream
             Tls(S),
         }
 
@@ -64,8 +67,12 @@ mod blocking {
                 }
             }
         }
+
+        /// websocket writeable stream
         pub enum WsWriteStream<S: Write> {
+            /// plain stream
             Plain(S),
+            /// tls wrapped write stream
             Tls(S),
         }
 
@@ -153,7 +160,9 @@ mod blocking {
             }
         }
 
+        /// websocket readonly stream
         pub enum WsReadStream<S: Read> {
+            /// plain stream
             Plain(S),
         }
 
@@ -164,7 +173,10 @@ mod blocking {
                 }
             }
         }
+
+        /// websocket writeable stream
         pub enum WsWriteStream<S: Write> {
+            /// plain stream
             Plain(S),
         }
 
@@ -203,11 +215,11 @@ mod blocking {
         }
     }
 
-    pub use stream::WsStream;
+    pub use stream::*;
 }
 
 #[cfg(feature = "sync")]
-pub use blocking::WsStream;
+pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking {
@@ -220,8 +232,11 @@ mod non_blocking {
 
         use crate::codec::Split;
 
+        /// websocket readonly async stream
         pub enum WsAsyncReadStream<S: AsyncRead> {
+            /// plain stream
             Plain(S),
+            /// tls wrapped stream
             Tls(S),
         }
 
@@ -238,8 +253,11 @@ mod non_blocking {
             }
         }
 
+        /// websocket readonly async stream
         pub enum WsAsyncWriteStream<S: AsyncWrite> {
+            /// plain stream
             Plain(S),
+            /// tls wrapped stream
             Tls(S),
         }
 
@@ -377,7 +395,9 @@ mod non_blocking {
 
         use crate::codec::Split;
 
+        /// websocket readonly async stream
         pub enum WsAsyncReadStream<S: AsyncRead> {
+            /// plain stream
             Plain(S),
         }
 
@@ -393,7 +413,9 @@ mod non_blocking {
             }
         }
 
+        /// websocket writable async stream
         pub enum WsAsyncWriteStream<S: AsyncWrite> {
+            /// plain steam
             Plain(S),
         }
 
@@ -509,8 +531,8 @@ mod non_blocking {
         }
     }
 
-    pub use ws_stream::WsAsyncStream;
+    pub use ws_stream::*;
 }
 
 #[cfg(feature = "async")]
-pub use non_blocking::WsAsyncStream;
+pub use non_blocking::*;

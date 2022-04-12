@@ -1,6 +1,6 @@
 [package]
 name = "ws-tool"
-version = "0.5.1"
+version = "0.5.2"
 authors = ["PrivateRookie <996514515@qq.com>"]
 edition = "2018"
 description = "an easy to use websocket tool"
@@ -22,7 +22,7 @@ base64 = "0.13"
 tracing = "0.1"
 bytes = "1"
 httparse = "1.4"
-sha-1 = "0.9"
+sha-1 = "0.10"
 futures = { version = "0.3", optional = true }
 rustls-connector = { version = "0.16", optional = true, features = [
     "webpki-roots-certs",
