@@ -235,7 +235,7 @@ mod blocking {
 
             #[cfg(not(feature = "async_proxy"))]
             {
-                stream = TcpStream::connect((host, port)).await.map_err(|e| {
+                stream = TcpStream::connect((host, port)).map_err(|e| {
                     WsError::ConnectionFailed(format!(
                         "failed to create tcp connection {}",
                         e.to_string()
