@@ -131,14 +131,14 @@ impl FrameReadState {
         if buf_len < 2 {
             false
         } else {
-            let mut len = self.read_data[0];
+            let mut len = self.read_data[1];
             len = (len << 1) >> 1;
             let mask = get_bit(&self.read_data, 1, 0);
 
             let mut min_len = match len {
                 0..=125 => 2,
-                126 => 3,
-                127 => 9,
+                126 => 4,
+                127 => 10,
                 _ => unreachable!(),
             };
             if mask {
