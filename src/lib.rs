@@ -172,9 +172,9 @@ mod blocking {
             let Self {
                 uri,
                 #[cfg(feature = "sync_proxy")]
-                http_proxy,
+                    http_proxy: _,
                 #[cfg(feature = "sync_proxy")]
-                socks5_proxy,
+                    socks5_proxy: _,
                 protocols,
                 extensions,
                 #[cfg(feature = "sync_tls_rustls")]
@@ -184,12 +184,12 @@ mod blocking {
             } = self;
             let uri = uri
                 .parse::<http::Uri>()
-                .map_err(|e| WsError::InvalidUri(format!("{} {}", uri, e)))?;
+                .map_err(|e| WsError::InvalidUri(format!("{uri} {e}")))?;
             let mode = if let Some(schema) = uri.scheme_str() {
                 match schema.to_ascii_lowercase().as_str() {
                     "ws" => Ok(Mode::WS),
                     "wss" => Ok(Mode::WSS),
-                    _ => Err(WsError::InvalidUri(format!("invalid schema {}", schema))),
+                    _ => Err(WsError::InvalidUri(format!("invalid schema {schema}"))),
                 }
             } else {
                 Err(WsError::InvalidUri("missing ws or wss schema".to_string()))
@@ -236,10 +236,7 @@ mod blocking {
             #[cfg(not(feature = "async_proxy"))]
             {
                 stream = TcpStream::connect((host, port)).map_err(|e| {
-                    WsError::ConnectionFailed(format!(
-                        "failed to create tcp connection {}",
-                        e.to_string()
-                    ))
+                    WsError::ConnectionFailed(format!("failed to create tcp connection {e}"))
                 })?;
             }
 
@@ -361,12 +358,12 @@ mod non_blocking {
             } = self;
             let uri = uri
                 .parse::<http::Uri>()
-                .map_err(|e| WsError::InvalidUri(format!("{} {}", uri, e)))?;
+                .map_err(|e| WsError::InvalidUri(format!("{uri} {e}")))?;
             let mode = if let Some(schema) = uri.scheme_str() {
                 match schema.to_ascii_lowercase().as_str() {
                     "ws" => Ok(Mode::WS),
                     "wss" => Ok(Mode::WSS),
-                    _ => Err(WsError::InvalidUri(format!("invalid schema {}", schema))),
+                    _ => Err(WsError::InvalidUri(format!("invalid schema {schema}"))),
                 }
             } else {
                 Err(WsError::InvalidUri("missing ws or wss schema".to_string()))
@@ -390,14 +387,13 @@ mod non_blocking {
                     (None, None) => {
                         stream = TcpStream::connect((host, port)).await.map_err(|e| {
                             WsError::ConnectionFailed(format!(
-                                "failed to create tcp connection {}",
-                                e.to_string()
+                                "failed to create tcp connection {e}"
                             ))
                         })?
                     }
                     (Some(config), None) => {
                         stream =
-                            hproxy::async_create_conn(config, &format!("{}:{}", host, port)).await?
+                            hproxy::async_create_conn(config, &format!("{host}:{port}")).await?
                     }
                     (None, Some(config)) => {
                         stream = sproxy::async_create_conn(config, host.into(), port)
@@ -418,10 +414,7 @@ mod non_blocking {
             #[cfg(not(feature = "async_proxy"))]
             {
                 stream = TcpStream::connect((host, port)).await.map_err(|e| {
-                    WsError::ConnectionFailed(format!(
-                        "failed to create tcp connection {}",
-                        e.to_string()
-                    ))
+                    WsError::ConnectionFailed(format!("failed to create tcp connection {e}"))
                 })?;
             }
 

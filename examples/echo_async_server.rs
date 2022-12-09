@@ -139,9 +139,7 @@ async fn main() -> Result<(), ()> {
 
         loop {
             match server.receive().await {
-                Ok(msg) => {
-                    server.send((msg.code, msg.data)).await.unwrap()
-                }
+                Ok(msg) => server.send((msg.code, msg.data)).await.unwrap(),
                 Err(e) => {
                     dbg!(e);
                     break;
