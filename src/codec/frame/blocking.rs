@@ -179,7 +179,7 @@ impl FrameWriteState {
         &mut self,
         stream: &mut S,
         opcode: OpCode,
-        payload: Payload<'_>,
+        payload: Payload,
     ) -> IOResult<()> {
         let split_size = self.config.auto_fragment_size;
         let mask_send = self.config.mask_send_frame;

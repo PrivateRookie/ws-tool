@@ -172,9 +172,9 @@ mod blocking {
             let Self {
                 uri,
                 #[cfg(feature = "sync_proxy")]
-                    http_proxy: _,
+                http_proxy,
                 #[cfg(feature = "sync_proxy")]
-                    socks5_proxy: _,
+                socks5_proxy,
                 protocols,
                 extensions,
                 #[cfg(feature = "sync_tls_rustls")]
