@@ -21,7 +21,7 @@ rand = "0.8"
 base64 = "0.13"
 tracing = "0.1"
 bytes = "1"
-httparse = "1.4"
+httparse = "1.8"
 sha-1 = "0.10"
 futures = { version = "0.3", optional = true }
 rustls-connector = { version = "0.16", optional = true, features = [
@@ -62,11 +62,11 @@ async_tls_rustls = [
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
-clap = { version = "3.1", features = ["derive"] }
+clap = { version = "3.2", features = ["derive"] }
 rcgen = "0.8"
 
 # benchmark deps
-tungstenite = "0.17.2"
+tungstenite = "0.17.3"
 
 [[example]]
 name = "echo"
