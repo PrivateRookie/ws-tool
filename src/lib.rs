@@ -213,8 +213,7 @@ mod blocking {
                     (None, None) => {
                         stream = TcpStream::connect((host, port)).map_err(|e| {
                             WsError::ConnectionFailed(format!(
-                                "failed to create tcp connection {}",
-                                e.to_string()
+                                "failed to create tcp connection {e}",
                             ))
                         })?
                     }

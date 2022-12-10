@@ -10,7 +10,7 @@ use ws_tool::{codec::AsyncWsStringCodec, ClientBuilder};
 struct Args {
     uri: String,
     /// cert file path
-    #[clap(short, long)]
+    #[arg(short, long)]
     cert: Option<PathBuf>,
 }
 

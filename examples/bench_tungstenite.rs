@@ -5,14 +5,14 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[derive(Parser)]
 struct Args {
     /// server host
-    #[clap(long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = "127.0.0.1")]
     host: String,
     /// server port
-    #[clap(short, long, default_value = "9000")]
+    #[arg(short, long, default_value = "9000")]
     port: u16,
 
     /// level
-    #[clap(short, long, default_value = "info")]
+    #[arg(short, long, default_value = "info")]
     level: tracing::Level,
 }
 

@@ -10,26 +10,26 @@ struct Args {
     channels: Vec<String>,
 
     /// http proxy port
-    #[clap(long, default_value = "1088")]
+    #[arg(long, default_value = "1088")]
     hp_port: u16,
 
     /// http proxy host
-    #[clap(long)]
+    #[arg(long)]
     hp_host: Option<String>,
 
     ///http proxy auth fmt -> username:password
-    #[clap(long)]
+    #[arg(long)]
     hp_auth: Option<String>,
     /// socks5 proxy port
-    #[clap(long, default_value = "1087")]
+    #[arg(long, default_value = "1087")]
     sp_port: u16,
 
     /// socks5 proxy host
-    #[clap(long)]
+    #[arg(long)]
     sp_host: Option<String>,
 
     /// socks5 proxy auth fmt -> username:password
-    #[clap(long)]
+    #[arg(long)]
     sp_auth: Option<String>,
 }
 
@@ -50,7 +50,7 @@ async fn main() -> Result<(), ()> {
         let auth = args
             .hp_auth
             .map(|auth| {
-                let (user, passwd) = auth.split_once(":").expect("invalid auth format");
+                let (user, passwd) = auth.split_once(':').expect("invalid auth format");
                 hproxy::AuthCredential::Basic {
                     user: user.trim().into(),
                     passwd: passwd.trim().into(),
@@ -69,7 +69,7 @@ async fn main() -> Result<(), ()> {
         let auth = args
             .sp_auth
             .map(|auth| {
-                let (user, passwd) = auth.split_once(":").expect("invalid auth format");
+                let (user, passwd) = auth.split_once(':').expect("invalid auth format");
                 sproxy::AuthCredential::Basic {
                     user: user.trim().into(),
                     passwd: passwd.trim().into(),

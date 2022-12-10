@@ -13,14 +13,14 @@ use ws_tool::{
 #[derive(Parser)]
 struct Args {
     /// server host
-    #[clap(long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = "127.0.0.1")]
     host: String,
     /// server port
-    #[clap(short, long, default_value = "9000")]
+    #[arg(short, long, default_value = "9000")]
     port: u16,
 
     /// level
-    #[clap(short, long, default_value = "info")]
+    #[arg(short, long, default_value = "info")]
     level: tracing::Level,
 }
 
@@ -44,12 +44,11 @@ fn main() -> Result<(), ()> {
             let (mut read, mut write) = server.split();
             let (tx, rx) = mpsc::channel::<Message<BytesMut>>();
             std::thread::spawn(move || loop {
-                if let Ok(msg) = read.receive() {
-                    if msg.code == OpCode::Close {
-                        break;
-                    }
-                    tx.send(msg).unwrap();
+                let msg = read.receive().unwrap();
+                if msg.code == OpCode::Close {
+                    break;
                 }
+                tx.send(msg).unwrap();
             });
 
             loop {

@@ -56,7 +56,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                 WsError::ProtocolError { close_code, error } => {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&close_code.to_be_bytes());
-                    data.extend_from_slice(&error.to_string().as_bytes());
+                    data.extend_from_slice(error.to_string().as_bytes());
                     client
                         .send(OpCode::Close, vec![&close_code.to_be_bytes()[..], &data])
                         .await

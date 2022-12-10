@@ -15,19 +15,19 @@ struct Args {
     uri: String,
 
     // client size
-    #[clap(long, default_value = "1")]
+    #[arg(long, default_value = "1")]
     conn: usize,
 
     /// payload size (unit: kb)
-    #[clap(short, long, default_value = "1")]
+    #[arg(short, long, default_value = "1")]
     payload: usize,
 
     /// count
-    #[clap(short, long, default_value = "5000")]
+    #[arg(short, long, default_value = "5000")]
     num: usize,
 
     /// cert file path
-    #[clap(short, long)]
+    #[arg(short, long)]
     cert: Option<PathBuf>,
 }
 
@@ -61,6 +61,7 @@ fn main() -> Result<(), ()> {
                     client.send(&mut payload[..]).unwrap();
                     client.receive().unwrap();
                 }
+                client.send((1000, &mut vec![][..])).unwrap();
                 let end = time::SystemTime::now();
                 let elapse = end.duration_since(start);
                 elapse.unwrap()

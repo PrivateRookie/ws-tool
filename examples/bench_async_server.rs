@@ -10,14 +10,14 @@ use ws_tool::{
 #[derive(Parser)]
 struct Args {
     /// server host
-    #[clap(long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = "127.0.0.1")]
     host: String,
     /// server port
-    #[clap(short, long, default_value = "9000")]
+    #[arg(short, long, default_value = "9000")]
     port: u16,
 
     /// level
-    #[clap(short, long, default_value = "info")]
+    #[arg(short, long, default_value = "info")]
     level: tracing::Level,
 }
 
@@ -46,14 +46,11 @@ async fn main() -> Result<(), ()> {
             .await
             .unwrap();
             loop {
-                if let Ok(mut msg) = server.receive().await {
-                    if msg.code == OpCode::Close {
-                        break;
-                    }
-                    server.send(&mut msg.data[..]).await.unwrap();
-                } else {
+                let mut msg = server.receive().await.unwrap();
+                if msg.code == OpCode::Close {
                     break;
                 }
+                server.send(&mut msg.data[..]).await.unwrap();
             }
             tracing::info!("one conn down");
         });
