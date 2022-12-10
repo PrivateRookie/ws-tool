@@ -55,7 +55,11 @@ async fn main() -> Result<(), ()> {
             let mut payload = vec![0].repeat(size * 1024);
             for _ in 0..total {
                 client.send(&mut payload[..]).await.unwrap();
+                tokio::task::yield_now().await;
+            }
+            for _ in 0..total {
                 client.receive().await.unwrap();
+                tokio::task::yield_now().await;
             }
             let end = time::SystemTime::now();
             let elapse = end.duration_since(start);
