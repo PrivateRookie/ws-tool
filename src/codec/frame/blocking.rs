@@ -57,7 +57,7 @@ impl FrameReadState {
 
 impl FrameWriteState {
     #[allow(clippy::too_many_arguments)]
-    fn send_one_mut<'a, S: Write, M: Into<Option<[u8; 4]>>>(
+    fn send_one_mut<S: Write, M: Into<Option<[u8; 4]>>>(
         &mut self,
         stream: &mut S,
         fin: bool,
@@ -66,7 +66,7 @@ impl FrameWriteState {
         rsv3: bool,
         mask_key: M,
         opcode: OpCode,
-        mut payload: PayloadMut<'a>,
+        mut payload: PayloadMut,
         mask_payload: bool,
     ) -> IOResult<()> {
         let header = Header::new(
@@ -95,11 +95,11 @@ impl FrameWriteState {
     /// if mask_payload is set, mask payload first
     ///
     /// will auto fragment if auto_fragment_size > 0
-    pub fn send_mut<'a, S: Write>(
+    pub fn send_mut<S: Write>(
         &mut self,
         stream: &mut S,
         opcode: OpCode,
-        payload: PayloadMut<'a>,
+        payload: PayloadMut,
         mask_payload: bool,
     ) -> IOResult<()> {
         let split_size = self.config.auto_fragment_size;
@@ -145,7 +145,7 @@ impl FrameWriteState {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn send_one<'a, S: Write, M: Into<Option<[u8; 4]>>>(
+    fn send_one<S: Write, M: Into<Option<[u8; 4]>>>(
         &mut self,
         stream: &mut S,
         fin: bool,
@@ -154,7 +154,7 @@ impl FrameWriteState {
         rsv3: bool,
         mask_key: M,
         opcode: OpCode,
-        payload: Payload<'a>,
+        payload: Payload,
     ) -> IOResult<()> {
         let header = Header::new(
             fin,
@@ -175,11 +175,11 @@ impl FrameWriteState {
     /// send immutable payload
     ///
     /// will auto fragment if auto_fragment_size > 0
-    pub fn send<'a, S: Write>(
+    pub fn send<S: Write>(
         &mut self,
         stream: &mut S,
         opcode: OpCode,
-        payload: Payload<'a>,
+        payload: Payload,
     ) -> IOResult<()> {
         let split_size = self.config.auto_fragment_size;
         let mask_send = self.config.mask_send_frame;

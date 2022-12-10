@@ -379,7 +379,7 @@ pub use non_blocking::*;
 /// generate random key
 pub fn gen_key() -> String {
     let r: [u8; 16] = rand::random();
-    base64::encode(&r)
+    base64::encode(r)
 }
 
 /// cal accept key
@@ -387,7 +387,7 @@ pub fn cal_accept_key(source: &[u8]) -> String {
     let mut sha1 = sha1::Sha1::default();
     sha1.update(source);
     sha1.update(GUID);
-    base64::encode(&sha1.finalize())
+    base64::encode(sha1.finalize())
 }
 
 /// perform standard protocol handshake response check
@@ -420,8 +420,7 @@ pub fn standard_handshake_req_check(req: &http::Request<()>) -> Result<(), WsErr
     if let Some(val) = req.headers().get("upgrade") {
         if val != "websocket" {
             return Err(WsError::HandShakeFailed(format!(
-                "expect `websocket`, got {:?}",
-                val
+                "expect `websocket`, got {val:?}"
             )));
         }
     } else {
@@ -464,17 +463,17 @@ pub fn prepare_handshake(
         ),
         "Upgrade: websocket".to_string(),
         "Connection: Upgrade".to_string(),
-        format!("Sec-Websocket-Key: {}", key),
-        format!("Sec-WebSocket-Version: {}", version),
+        format!("Sec-Websocket-Key: {key}"),
+        format!("Sec-WebSocket-Version: {version}"),
     ];
     if !protocols.is_empty() {
-        headers.push(format!("Sec-WebSocket-Protocol: {}", protocols))
+        headers.push(format!("Sec-WebSocket-Protocol: {protocols}"))
     }
     if !extensions.is_empty() {
-        headers.push(format!("Sec-WebSocket-Extensions: {}", extensions))
+        headers.push(format!("Sec-WebSocket-Extensions: {extensions}"))
     }
     for (k, v) in extra_headers.iter() {
-        headers.push(format!("{}: {}", k, v));
+        headers.push(format!("{k}: {v}"));
     }
     let req_str = format!(
         "{method} {path} {version:?}\r\n{headers}\r\n\r\n",
