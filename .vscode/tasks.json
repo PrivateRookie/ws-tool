@@ -1,0 +1,108 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cargo",
+			"command": "run",
+			"args": [
+				"--release",
+				"--features",
+				"sync",
+				"--example",
+				"bench_server",
+				"--",
+				"--port",
+				"9001"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "bench: server"
+		},
+		{
+			"type": "cargo",
+			"command": "flamegraph",
+			"args": [
+				"--output",
+				"bench_server.svg",
+				"--features",
+				"sync",
+				"--example",
+				"bench_server",
+				"--",
+				"--port",
+				"9002"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "perf: server"
+		},
+		{
+			"type": "cargo",
+			"command": "run",
+			"args": [
+				"--release",
+				"--example",
+				"bench_async_server",
+				"--",
+				"--port",
+				"9003"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "bench: async server"
+		},
+		{
+			"type": "cargo",
+			"command": "flamegraph",
+			"args": [
+				"--output",
+				"bench_async_server.svg",
+				"--example",
+				"bench_async_server",
+				"--",
+				"--port",
+				"9004"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "perf: async server"
+		},
+		{
+			"type": "cargo",
+			"command": "run",
+			"args": [
+				"--release",
+				"--example",
+				"bench_tungstenite",
+				"--",
+				"--port",
+				"9005"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "bench: tungstenite"
+		},
+		{
+			"type": "cargo",
+			"command": "flamegraph",
+			"args": [
+				"--output",
+				"bench_tungstenite.svg",
+				"--example",
+				"bench_tungstenite",
+				"--",
+				"--port",
+				"9006"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"label": "perf: tungstenite"
+		}
+	]
+}

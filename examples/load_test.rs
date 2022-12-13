@@ -1,10 +1,7 @@
-use std::{
-    path::PathBuf,
-    thread::JoinHandle,
-    time::{self, Duration},
-};
+use std::{process::exit, sync::Arc, thread::JoinHandle};
 
 use clap::Parser;
+use dashmap::DashMap;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{codec::WsBytesCodec, ClientBuilder};
@@ -15,20 +12,20 @@ struct Args {
     uri: String,
 
     // client size
-    #[arg(long, default_value = "1")]
+    #[arg(short, long, default_value = "1")]
     conn: usize,
 
     /// payload size (unit: kb)
     #[arg(short, long, default_value = "1")]
     payload: usize,
 
-    /// count
-    #[arg(short, long, default_value = "5000")]
-    num: usize,
+    /// sample rate (unit: second)
+    #[arg(short, long, default_value = "10")]
+    interval: u64,
 
-    /// cert file path
-    #[arg(short, long)]
-    cert: Option<PathBuf>,
+    /// total sample times
+    #[arg(short, long, default_value = "6")]
+    total: usize,
 }
 
 fn main() -> Result<(), ()> {
@@ -39,53 +36,77 @@ fn main() -> Result<(), ()> {
         .expect("failed to init log");
     let args = Args::parse();
 
-    // if let Some(proxy) = args.proxy {
-    //     builder = builder.proxy(&proxy)
-    // }
-    let total = args.num;
     let size = args.payload;
-    let handlers: Vec<JoinHandle<Duration>> = (0..args.conn)
-        .map(|_| {
+    let counter: Arc<DashMap<usize, (usize, usize)>> = Default::default();
+    let interval = args.interval;
+    let counter_c = counter.clone();
+    std::thread::spawn(move || {
+        for idx in 0..args.total {
+            std::thread::sleep(std::time::Duration::from_secs(interval));
+            let mut stat: Vec<Statistic> = counter_c
+                .iter()
+                .map(|item| {
+                    let conn_idx = *item.key();
+                    let (send, recv) = *item.value();
+                    let send = send as f64 / (interval as f64 * (idx + 1) as f64);
+                    let recv = recv as f64 / (interval as f64 * (idx + 1) as f64);
+                    Statistic {
+                        sample_idx: idx,
+                        conn_idx,
+                        send,
+                        recv,
+                    }
+                })
+                .collect();
+            // {
+            //     counter_c.clear();
+            // }
+            stat.sort_by(|a, b| a.conn_idx.cmp(&b.conn_idx));
+            for item in stat {
+                println!("{}", serde_json::to_string(&item).unwrap());
+            }
+        }
+        exit(0);
+    });
+    let handlers: Vec<JoinHandle<()>> = (0..args.conn)
+        .map(|idx| {
+            let counter = counter.clone();
             let uri = args.uri.clone();
-            let cert = args.cert.clone();
             std::thread::spawn(move || {
-                let mut builder = ClientBuilder::new(uri);
-                if let Some(cert) = cert {
-                    builder = builder.cert(cert);
-                }
+                let builder = ClientBuilder::new(uri);
                 let mut client = builder.connect(WsBytesCodec::check_fn).unwrap();
                 client.stream_mut().stream_mut().set_nodelay(true).unwrap();
-                let start = time::SystemTime::now();
-                let mut payload = vec![0].repeat(size * 1024);
-                for _ in 0..total {
-                    client.send(&mut payload[..]).unwrap();
-                    client.receive().unwrap();
-                }
-                client.send((1000, &mut vec![][..])).unwrap();
-                let end = time::SystemTime::now();
-                let elapse = end.duration_since(start);
-                elapse.unwrap()
+                let (mut r, mut w) = client.split();
+
+                let counter_c = counter.clone();
+                let w = std::thread::spawn(move || {
+                    let mut payload = vec![0].repeat(size * 1024);
+                    loop {
+                        w.send(&mut payload[..]).unwrap();
+                        let mut ent = counter_c.entry(idx).or_default();
+                        ent.0 += 1;
+                    }
+                });
+                let r = std::thread::spawn(move || loop {
+                    r.receive().unwrap();
+                    let mut ent = counter.entry(idx).or_default();
+                    ent.1 += 1;
+                });
+                r.join().and_then(|_| w.join()).ok();
             })
         })
         .collect();
-    let mut success = vec![];
-    let mut failed = vec![];
-    for (idx, h) in handlers.into_iter().enumerate() {
-        match h.join() {
-            Ok(elapse) => {
-                success.push((idx, elapse));
-            }
-            Err(e) => {
-                failed.push((idx, e));
-            }
-        }
-    }
-    for (idx, s) in success {
-        println!("[{idx:0>3} - OK] {:.3}", total as f64 / s.as_secs_f64());
-    }
-    for (idx, e) in failed {
-        println!("[{idx:0>3} - ERR] {e:?}")
+    for h in handlers {
+        h.join().ok();
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct Statistic {
+    sample_idx: usize,
+    conn_idx: usize,
+    send: f64,
+    recv: f64,
 }

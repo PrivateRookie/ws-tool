@@ -9,6 +9,9 @@ use std::fmt::Debug;
 use bytes::{Bytes, BytesMut};
 use frame::{BorrowedFrame, OpCode, ReadFrame};
 
+pub use http;
+
+
 /// websocket error definitions
 pub mod errors;
 /// websocket transport unit

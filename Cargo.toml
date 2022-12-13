@@ -10,6 +10,9 @@ homepage = "https://github.com/PrivateRookie/ws-tool"
 repository = "https://github.com/PrivateRookie/ws-tool"
 keywords = ["websocket", "proxy", "network"]
 
+[profile.release]
+debug = true
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -26,7 +29,7 @@ sha-1 = "0.10"
 futures = { version = "0.3", optional = true }
 rustls-connector = { version = "0.16", optional = true, features = [
     "webpki-roots-certs",
-]}
+] }
 
 # tls deps
 tokio-rustls = { version = "0.23", optional = true }
@@ -64,6 +67,9 @@ tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
 clap = { version = "4.0", features = ["derive"] }
 rcgen = "0.10.0"
+dashmap = { version = "5.4.0", features = ["serde"] }
+serde_json = { version = "1" }
+serde = { version = "1", features = ["derive"] }
 
 # benchmark deps
 tungstenite = "0.18.0"
