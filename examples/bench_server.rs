@@ -3,6 +3,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{default_handshake_handler, WsBytesCodec},
     frame::OpCode,
+    stream::BufStream,
     ServerBuilder,
 };
 
@@ -36,8 +37,10 @@ fn main() -> Result<(), ()> {
         std::thread::spawn(move || {
             tracing::info!("got connect from {:?}", addr);
             let mut server =
-                ServerBuilder::accept(stream, default_handshake_handler, WsBytesCodec::factory)
-                    .unwrap();
+                ServerBuilder::accept(stream, default_handshake_handler, |req, stream| {
+                    WsBytesCodec::factory(req, BufStream::new(stream))
+                })
+                .unwrap();
 
             loop {
                 let mut msg = server.receive().unwrap();

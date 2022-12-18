@@ -60,6 +60,11 @@ macro_rules! impl_send {
                 self.frame_codec.send_mut(msg.code, msg.data, true).await
             }
         }
+
+        /// flush underlaying stream
+        pub async fn flush(&mut self) -> Result<(), WsError> {
+            self.frame_codec.flush().await
+        }
     };
 }
 

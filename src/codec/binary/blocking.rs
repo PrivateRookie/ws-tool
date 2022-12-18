@@ -55,6 +55,11 @@ macro_rules! impl_send {
                 self.frame_codec.send_mut(msg.code, msg.data, true)
             }
         }
+
+        /// flush underlaying stream
+        pub fn flush(&mut self) -> Result<(), WsError> {
+            self.frame_codec.flush()
+        }
     };
 }
 

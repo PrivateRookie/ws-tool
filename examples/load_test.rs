@@ -4,7 +4,7 @@ use clap::Parser;
 use dashmap::DashMap;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::WsBytesCodec, ClientBuilder};
+use ws_tool::{codec::WsBytesCodec, stream::BufStream, ClientBuilder};
 
 /// websocket client demo with raw frame
 #[derive(Parser)]
@@ -26,6 +26,10 @@ struct Args {
     /// total sample times
     #[arg(short, long, default_value = "6")]
     total: usize,
+
+    /// buffer size of stream
+    #[arg(long)]
+    buffer: Option<usize>,
 }
 
 fn main() -> Result<(), ()> {
@@ -74,13 +78,27 @@ fn main() -> Result<(), ()> {
             let uri = args.uri.clone();
             std::thread::spawn(move || {
                 let builder = ClientBuilder::new(uri);
-                let mut client = builder.connect(WsBytesCodec::check_fn).unwrap();
-                client.stream_mut().stream_mut().set_nodelay(true).unwrap();
+                let mut client = builder
+                    .connect(|key, resp, stream| {
+                        let stream = if let Some(buffer) = args.buffer {
+                            BufStream::with_capacity(buffer, buffer, stream)
+                        } else {
+                            BufStream::new(stream)
+                        };
+                        WsBytesCodec::check_fn(key, resp, stream)
+                    })
+                    .unwrap();
+                client
+                    .stream_mut()
+                    .get_mut()
+                    .stream_mut()
+                    .set_nodelay(true)
+                    .unwrap();
                 let (mut r, mut w) = client.split();
 
                 let counter_c = counter.clone();
                 let w = std::thread::spawn(move || {
-                    let mut payload = vec![0].repeat(size * 1024);
+                    let mut payload = vec![0].repeat(size);
                     loop {
                         w.send(&mut payload[..]).unwrap();
                         let mut ent = counter_c.entry(idx).or_default();

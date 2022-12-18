@@ -202,6 +202,7 @@ mod blocking {
         let (key, req_str) =
             prepare_handshake(protocols, extensions, extra_headers, uri, mode, version);
         stream.write_all(req_str.as_bytes())?;
+        stream.flush()?;
         let mut read_bytes = BytesMut::with_capacity(1024);
         let mut buf: [u8; 1] = [0; 1];
         loop {

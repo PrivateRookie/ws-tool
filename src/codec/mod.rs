@@ -64,13 +64,7 @@ mod blocking {
     //     }
     // }
 
-    pub struct TcpReadHalf(TcpStream);
-
-    impl TcpReadHalf {
-        pub fn new(stream: TcpStream) -> Self {
-            Self(stream)
-        }
-    }
+    pub struct TcpReadHalf(pub TcpStream);
 
     impl Read for TcpReadHalf {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -78,12 +72,7 @@ mod blocking {
         }
     }
 
-    pub struct TcpWriteHalf(TcpStream);
-    impl TcpWriteHalf {
-        pub fn new(stream: TcpStream) -> Self {
-            Self(stream)
-        }
-    }
+    pub struct TcpWriteHalf(pub TcpStream);
 
     impl Write for TcpWriteHalf {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -96,11 +85,11 @@ mod blocking {
     }
 
     impl Split for TcpStream {
-        type R = TcpReadHalf;
-        type W = TcpWriteHalf;
+        type R = TcpStream;
+        type W = TcpStream;
         fn split(self) -> (Self::R, Self::W) {
             let cloned = self.try_clone().expect("failed to split tcp stream");
-            (TcpReadHalf::new(self), TcpWriteHalf(cloned))
+            (self, cloned)
         }
     }
 }

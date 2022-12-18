@@ -1,4 +1,4 @@
-use super::{FrameConfig, FrameReadState, FrameWriteState, THRESHOLD};
+use super::{FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     codec::Split,
     errors::WsError,
@@ -83,19 +83,23 @@ impl FrameWriteState {
                 payload.apply_mask(key)
             }
         }
-        let payload_size: usize = payload.0.iter().map(|part| part.len()).sum();
-        if payload_size <= THRESHOLD {
-            let mut data = header.0;
-            data.reserve(payload_size);
-            for part in payload.0 {
-                data.extend_from_slice(part);
-            }
-            stream.write_all(&data)?;
-        } else {
-            stream.write_all(&header.0)?;
-            for part in payload.0 {
-                stream.write_all(part)?;
-            }
+        // let payload_size: usize = payload.0.iter().map(|part| part.len()).sum();
+        // if payload_size <= THRESHOLD {
+        //     let mut data = header.0;
+        //     data.reserve(payload_size);
+        //     for part in payload.0 {
+        //         data.extend_from_slice(part);
+        //     }
+        //     stream.write_all(&data)?;
+        // } else {
+        //     stream.write_all(&header.0)?;
+        //     for part in payload.0 {
+        //         stream.write_all(part)?;
+        //     }
+        // }
+        stream.write_all(&header.0)?;
+        for part in payload.0 {
+            stream.write_all(part)?;
         }
 
         Ok(())
@@ -281,6 +285,13 @@ macro_rules! impl_send {
         pub fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
             self.write_state
                 .send_read_frame(&mut self.stream, frame)
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
+
+        /// flush stream to ensure all data are send
+        pub fn flush(&mut self) -> Result<(), WsError> {
+            self.stream
+                .flush()
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }
     };

@@ -309,6 +309,14 @@ macro_rules! impl_send {
                 .await
                 .map_err(|e| WsError::IOError(Box::new(e)))
         }
+
+        /// flush to ensure all data are send
+        pub async fn flush(&mut self) -> Result<(), WsError> {
+            self.stream
+                .flush()
+                .await
+                .map_err(|e| WsError::IOError(Box::new(e)))
+        }
     };
 }
 

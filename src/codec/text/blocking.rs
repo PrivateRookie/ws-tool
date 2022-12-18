@@ -69,6 +69,11 @@ macro_rules! impl_send {
                     .send_mut(msg.code, &mut msg.data.as_bytes().to_vec()[..], true)
             }
         }
+
+        /// flush underlaying stream
+        pub fn flush(&mut self) -> Result<(), WsError> {
+            self.frame_codec.flush()
+        }
     };
 }
 
