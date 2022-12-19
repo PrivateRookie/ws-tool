@@ -1,4 +1,5 @@
 use clap::Parser;
+use tokio::io::BufStream;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{default_handshake_handler, AsyncWsBytesCodec},
@@ -19,6 +20,10 @@ struct Args {
     /// level
     #[arg(short, long, default_value = "info")]
     level: tracing::Level,
+
+    /// buffer size
+    #[arg(short, long)]
+    buffer: Option<usize>,
 }
 
 #[tokio::main]
@@ -41,7 +46,14 @@ async fn main() -> Result<(), ()> {
             let mut server = ServerBuilder::async_accept(
                 stream,
                 default_handshake_handler,
-                AsyncWsBytesCodec::factory,
+                |req, remain, stream| {
+                    let stream = if let Some(buf) = args.buffer {
+                        BufStream::with_capacity(buf, buf, stream)
+                    } else {
+                        BufStream::new(stream)
+                    };
+                    AsyncWsBytesCodec::factory(req, remain, stream)
+                },
             )
             .await
             .unwrap();

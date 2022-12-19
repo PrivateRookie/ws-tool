@@ -20,6 +20,10 @@ struct Args {
     /// level
     #[arg(short, long, default_value = "info")]
     level: tracing::Level,
+
+    /// buffer size
+    #[arg(short, long)]
+    buffer: Option<usize>,
 }
 
 fn main() -> Result<(), ()> {
@@ -38,6 +42,11 @@ fn main() -> Result<(), ()> {
             tracing::info!("got connect from {:?}", addr);
             let mut server =
                 ServerBuilder::accept(stream, default_handshake_handler, |req, stream| {
+                    let stream = if let Some(buf) = args.buffer {
+                        BufStream::with_capacity(buf, buf, stream)
+                    } else {
+                        BufStream::new(stream)
+                    };
                     WsBytesCodec::factory(req, BufStream::new(stream))
                 })
                 .unwrap();

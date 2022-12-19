@@ -15,7 +15,7 @@ struct Args {
     #[arg(short, long, default_value = "1")]
     conn: usize,
 
-    /// payload size (unit: kb)
+    /// payload size (unit: bytes)
     #[arg(short, long, default_value = "1")]
     payload: usize,
 

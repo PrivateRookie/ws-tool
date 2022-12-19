@@ -4,9 +4,6 @@ use crate::protocol::{cal_accept_key, standard_handshake_req_check};
 use bytes::{Buf, BytesMut};
 use std::fmt::Debug;
 
-/// I guess it's good enough
-pub(crate) const THRESHOLD: usize = 8 * 1024;
-
 #[cfg(feature = "sync")]
 mod blocking;
 

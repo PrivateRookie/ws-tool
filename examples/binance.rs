@@ -42,7 +42,7 @@ async fn main() -> Result<(), ()> {
         .expect("failed to init log");
     let args = Args::parse();
     let channels = args.channels.join("/");
-    let mut builder = ClientBuilder::new(&format!(
+    let mut builder = ClientBuilder::new(format!(
         "wss://fstream.binance.com/stream?streams={}",
         channels
     ));
