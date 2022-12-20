@@ -11,7 +11,6 @@ use frame::{BorrowedFrame, OpCode, ReadFrame};
 
 pub use http;
 
-
 /// websocket error definitions
 pub mod errors;
 /// websocket transport unit
@@ -273,9 +272,9 @@ mod blocking {
         }
 
         /// perform protocol handshake & check server response
-        pub fn connect<C, F>(&self, check_fn: F) -> Result<C, WsError>
+        pub fn connect<C, F>(&self, mut check_fn: F) -> Result<C, WsError>
         where
-            F: Fn(String, http::Response<()>, WsStream<TcpStream>) -> Result<C, WsError>,
+            F: FnMut(String, http::Response<()>, WsStream<TcpStream>) -> Result<C, WsError>,
         {
             let (key, resp, stream) = self._connect()?;
             check_fn(key, resp, stream)
@@ -287,13 +286,13 @@ mod blocking {
         /// checking handshake & construct server
         pub fn accept<F1, F2, T, C, S>(
             stream: S,
-            handshake_handler: F1,
-            codec_factory: F2,
+            mut handshake_handler: F1,
+            mut codec_factory: F2,
         ) -> Result<C, WsError>
         where
             S: Read + Write,
-            F1: Fn(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: Fn(http::Request<()>, WsStream<S>) -> Result<C, WsError>,
+            F1: FnMut(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
+            F2: FnMut(http::Request<()>, WsStream<S>) -> Result<C, WsError>,
             T: ToString + std::fmt::Debug,
         {
             let mut stream = WsStream::Plain(stream);
@@ -454,9 +453,9 @@ mod non_blocking {
         /// async version of connect
         ///
         /// perform protocol handshake & check server response
-        pub async fn async_connect<C, F>(&self, check_fn: F) -> Result<C, WsError>
+        pub async fn async_connect<C, F>(&self, mut check_fn: F) -> Result<C, WsError>
         where
-            F: Fn(
+            F: FnMut(
                 String,
                 http::Response<()>,
                 BytesMut,
@@ -475,13 +474,13 @@ mod non_blocking {
         /// checking handshake & construct server
         pub async fn async_accept<F1, F2, T, C, S>(
             stream: S,
-            handshake_handler: F1,
-            codec_factory: F2,
+            mut handshake_handler: F1,
+            mut codec_factory: F2,
         ) -> Result<C, WsError>
         where
             S: AsyncRead + AsyncWrite + Unpin,
-            F1: Fn(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: Fn(http::Request<()>, BytesMut, WsAsyncStream<S>) -> Result<C, WsError>,
+            F1: FnMut(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
+            F2: FnMut(http::Request<()>, BytesMut, WsAsyncStream<S>) -> Result<C, WsError>,
             T: ToString + Debug,
         {
             let mut stream = WsAsyncStream::Plain(stream);
