@@ -18,35 +18,35 @@ keywords = ["websocket", "proxy", "network"]
 
 [dependencies]
 http = "0.2"
-tokio = { version = "1", features = ["rt", "net", "io-util"], optional = true }
 thiserror = "1"
 rand = "0.8"
-base64 = "0.13"
+base64 = "0.20"
 tracing = "0.1"
 bytes = "1"
 httparse = "1.8"
 sha-1 = "0.10"
 futures = { version = "0.3", optional = true }
-rustls-connector = { version = "0.16", optional = true, features = [
-    "webpki-roots-certs",
-] }
+tokio = { version = "1", features = ["rt", "net", "io-util"], optional = true }
+
 
 # tls deps
 tokio-rustls = { version = "0.23", optional = true }
 rustls-pemfile = { version = "1.0.1", optional = true }
 webpki = { version = "0.22", optional = true }
 webpki-roots = { version = "0.22.5", optional = true }
-
-# proxy deps
-tokio-socks = { version = "0.5", optional = true }
+rustls-connector = { version = "0.16", optional = true, features = [
+    "webpki-roots-certs",
+] }
 
 # deflate deps
 flate2 = { version = "1", optional = true }
+
+# proxy deps
 hproxy = { version = "0.1", optional = true }
 sproxy = { version = "0.1", optional = true }
 
 [features]
-default = ["async"]
+default = ["sync"]
 sync = []
 sync_proxy = ["sync", "hproxy/sync", "sproxy/sync"]
 sync_tls_rustls = ["sync", "rustls-connector"]
@@ -66,18 +66,10 @@ async_tls_rustls = [
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
 clap = { version = "4.0", features = ["derive"] }
-rcgen = "0.8.0"
+rcgen = "0.10.0"
 dashmap = { version = "5.4.0", features = ["serde"] }
 serde_json = { version = "1" }
 serde = { version = "1", features = ["derive"] }
 
 # benchmark deps
 tungstenite = "0.18.0"
-
-[[example]]
-name = "echo"
-# required-features = ["rustls", "proxy"]
-
-[[example]]
-name = "binance"
-# required-features = ["rustls", "proxy"]
