@@ -4,9 +4,9 @@
 #![cfg_attr(docrs, feature(doc_auto_cfg))]
 
 use std::collections::HashMap;
-use std::fmt::Debug;
 
 use bytes::{Bytes, BytesMut};
+use errors::WsError;
 use frame::{BorrowedFrame, OpCode, ReadFrame};
 
 pub use http;
@@ -18,33 +18,25 @@ pub mod frame;
 /// build connection & read/write frame utils
 pub mod protocol;
 
-#[cfg(any(feature = "async_proxy"))]
-/// connection proxy support
-pub mod proxy;
-
 /// stream definition
 pub mod stream;
 
 /// frame codec impl
 pub mod codec;
 
-/// websocket connection state
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConnectionState {
-    /// init state
-    Created,
-    /// tcp & tls connection creating state
-    HandShaking,
-    /// websocket connection has been successfully established
-    Running,
-    /// client or peer has send "close frame"
-    Closing,
-    /// client or peer have send "close" response frame
-    Closed,
+fn check_uri(uri: &http::Uri) -> Result<(), WsError> {
+    if let Some(scheme) = uri.scheme_str() {
+        match scheme.to_lowercase().as_str() {
+            "ws" | "wss" => Ok(()),
+            s => Err(WsError::InvalidUri(format!("unknown scheme {s}"))),
+        }
+    } else {
+        Err(WsError::InvalidUri("missing scheme".into()))
+    }
 }
 
 /// helper builder to construct websocket client
-#[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct ClientBuilder {
     protocols: Vec<String>,
     extensions: Vec<String>,
@@ -52,15 +44,21 @@ pub struct ClientBuilder {
     headers: HashMap<String, String>,
 }
 
-impl ClientBuilder {
-    /// create builder with websocket url
-    pub fn new<S: ToString>() -> Self {
+impl Default for ClientBuilder {
+    fn default() -> Self {
         Self {
             protocols: vec![],
             extensions: vec![],
             headers: HashMap::new(),
             version: 13,
         }
+    }
+}
+
+impl ClientBuilder {
+    /// create builder with websocket url
+    pub fn new() -> Self {
+        Default::default()
     }
 
     /// add protocols
@@ -113,8 +111,9 @@ mod blocking {
     use std::io::{Read, Write};
 
     use crate::{
+        check_uri,
         errors::WsError,
-        protocol::{handle_handshake, req_handshake, Mode},
+        protocol::{handle_handshake, req_handshake},
         stream::WsStream,
         ClientBuilder, ServerBuilder,
     };
@@ -123,7 +122,6 @@ mod blocking {
         /// perform protocol handshake & check server response
         pub fn connect<C, F, S>(
             &self,
-            mode: Mode,
             uri: http::Uri,
             mut stream: S,
             mut check_fn: F,
@@ -132,9 +130,9 @@ mod blocking {
             S: Read + Write,
             F: FnMut(String, http::Response<()>, WsStream<S>) -> Result<C, WsError>,
         {
+            check_uri(&uri)?;
             let (key, resp) = req_handshake(
                 &mut stream,
-                &mode,
                 &uri,
                 self.protocols.to_vec().join(" ,"),
                 self.extensions.to_vec().join(" ,"),
@@ -185,8 +183,9 @@ mod non_blocking {
     use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
     use crate::{
+        check_uri,
         errors::WsError,
-        protocol::{async_handle_handshake, async_req_handshake, Mode},
+        protocol::{async_handle_handshake, async_req_handshake},
         stream::WsAsyncStream,
         ServerBuilder,
     };
@@ -199,7 +198,6 @@ mod non_blocking {
         /// perform protocol handshake & check server response
         pub async fn async_connect<C, F, S>(
             &self,
-            mode: Mode,
             uri: http::Uri,
             mut stream: S,
             mut check_fn: F,
@@ -208,9 +206,9 @@ mod non_blocking {
             S: AsyncRead + AsyncWrite + Unpin,
             F: FnMut(String, http::Response<()>, BytesMut, WsAsyncStream<S>) -> Result<C, WsError>,
         {
+            check_uri(&uri)?;
             let (key, resp, remain) = async_req_handshake(
                 &mut stream,
-                &mode,
                 &uri,
                 self.protocols.to_vec().join(" ,"),
                 self.extensions.to_vec().join(" ,"),

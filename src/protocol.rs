@@ -141,7 +141,7 @@ mod blocking {
 
     use crate::{errors::WsError, stream::WsStream};
 
-    use super::{handle_parse_handshake, perform_parse_req, prepare_handshake, Mode};
+    use super::{handle_parse_handshake, perform_parse_req, prepare_handshake};
 
     #[cfg(feature = "sync_tls_rustls")]
     mod tls {
@@ -192,15 +192,13 @@ mod blocking {
     /// **NOTE**: low level api
     pub fn req_handshake<S: Read + Write>(
         stream: &mut S,
-        mode: &Mode,
         uri: &http::Uri,
         protocols: String,
         extensions: String,
         version: u8,
         extra_headers: HashMap<String, String>,
     ) -> Result<(String, http::Response<()>), WsError> {
-        let (key, req_str) =
-            prepare_handshake(protocols, extensions, extra_headers, uri, mode, version);
+        let (key, req_str) = prepare_handshake(protocols, extensions, extra_headers, uri, version);
         stream.write_all(req_str.as_bytes())?;
         stream.flush()?;
         let mut read_bytes = BytesMut::with_capacity(1024);
@@ -245,7 +243,7 @@ mod non_blocking {
 
     use crate::{errors::WsError, protocol::prepare_handshake, stream::WsAsyncStream};
 
-    use super::{handle_parse_handshake, perform_parse_req, Mode};
+    use super::{handle_parse_handshake, perform_parse_req};
 
     #[cfg(feature = "async_tls_rustls")]
     mod tls {
@@ -320,15 +318,13 @@ mod non_blocking {
     /// **NOTE**: low level api
     pub async fn async_req_handshake<S: AsyncRead + AsyncWrite + Unpin>(
         stream: &mut S,
-        mode: &Mode,
         uri: &http::Uri,
         protocols: String,
         extensions: String,
         version: u8,
         extra_headers: HashMap<String, String>,
     ) -> Result<(String, http::Response<()>, BytesMut), WsError> {
-        let (key, req_str) =
-            prepare_handshake(protocols, extensions, extra_headers, uri, mode, version);
+        let (key, req_str) = prepare_handshake(protocols, extensions, extra_headers, uri, version);
         stream.write_all(req_str.as_bytes()).await?;
         let mut read_bytes = BytesMut::with_capacity(1024);
         let mut buf: [u8; 1024] = [0; 1024];
@@ -452,10 +448,14 @@ pub fn prepare_handshake(
     extensions: String,
     extra_headers: HashMap<String, String>,
     uri: &http::Uri,
-    mode: &Mode,
     version: u8,
 ) -> (String, String) {
     let key = gen_key();
+    let mode: Mode = match uri.scheme_str().unwrap().to_ascii_lowercase().as_str() {
+        "ws" => Mode::WS,
+        "wss" => Mode::WSS,
+        _ => unreachable!(),
+    };
     let mut headers = vec![
         format!(
             "Host: {}:{}",

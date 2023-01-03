@@ -42,10 +42,10 @@ async fn main() -> Result<(), ()> {
         .expect("failed to init log");
     let args = Args::parse();
     let channels = args.channels.join("/");
-    let mut builder = ClientBuilder::new(format!(
-        "wss://fstream.binance.com/stream?streams={}",
-        channels
-    ));
+    let uri: http::Uri = format!("wss://fstream.binance.com/stream?streams={}", channels)
+        .parse()
+        .unwrap();
+    let mut builder = ClientBuilder::new();
     if let Some(host) = args.hp_host {
         let auth = args
             .hp_auth
@@ -57,13 +57,13 @@ async fn main() -> Result<(), ()> {
                 }
             })
             .unwrap_or(hproxy::AuthCredential::None);
-
-        builder = builder.http_proxy(hproxy::ProxyConfig {
+        let config = hproxy::ProxyConfig {
             host,
             port: args.hp_port,
             auth,
             keep_alive: true,
-        })
+        };
+        let stream = hproxy::create_conn(&config, &format!("fstream.binance.com:443")).unwrap();
     }
     if let Some(host) = args.sp_host {
         let auth = args
@@ -76,12 +76,14 @@ async fn main() -> Result<(), ()> {
                 }
             })
             .unwrap_or(sproxy::AuthCredential::None);
-
-        builder = builder.socks5_proxy(sproxy::ProxyConfig {
+        let config = sproxy::ProxyConfig {
             host,
             port: args.sp_port,
             auth,
-        })
+        };
+
+        let stream = sproxy::create_conn(&config, target_addr, target_port)
+        builder = builder.socks5_proxy()
     }
 
     let mut client = builder

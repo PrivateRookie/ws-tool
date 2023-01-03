@@ -1,4 +1,5 @@
 use bytes::BytesMut;
+use tokio::net::TcpStream;
 use tracing::*;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
@@ -11,8 +12,13 @@ use ws_tool::{
 const AGENT: &str = "ws-tool-client";
 
 async fn get_case_count() -> Result<usize, WsError> {
-    let mut client = ClientBuilder::new("ws://localhost:9002/getCaseCount")
-        .async_connect(AsyncWsStringCodec::check_fn)
+    let stream = TcpStream::connect("localhost:9002").await.unwrap();
+    let mut client = ClientBuilder::new()
+        .async_connect(
+            "ws://localhost:9002/getCaseCount".parse().unwrap(),
+            stream,
+            AsyncWsStringCodec::check_fn,
+        )
         .await
         .unwrap();
     let msg = client.receive().await.unwrap();
@@ -23,9 +29,12 @@ async fn get_case_count() -> Result<usize, WsError> {
 
 async fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
-    let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
-    let mut client = ClientBuilder::new(&url)
-        .async_connect(AsyncWsFrameCodec::check_fn)
+    let url: http::Uri = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT)
+        .parse()
+        .unwrap();
+    let stream = TcpStream::connect("localhost:9002").await.unwrap();
+    let mut client = ClientBuilder::new()
+        .async_connect(url, stream, AsyncWsFrameCodec::check_fn)
         .await
         .unwrap();
     loop {
@@ -75,13 +84,14 @@ async fn run_test(case: usize) -> Result<(), WsError> {
 }
 
 async fn update_report() -> Result<(), WsError> {
-    let mut client = ClientBuilder::new(&format!(
-        "ws://localhost:9002/updateReports?agent={}",
-        AGENT
-    ))
-    .async_connect(AsyncWsStringCodec::check_fn)
-    .await
-    .unwrap();
+    let url: http::Uri = format!("ws://localhost:9002/updateReports?agent={}", AGENT)
+        .parse()
+        .unwrap();
+    let stream = TcpStream::connect("localhost:9002").await.unwrap();
+    let mut client = ClientBuilder::new()
+        .async_connect(url, stream, AsyncWsStringCodec::check_fn)
+        .await
+        .unwrap();
     client.send((1000u16, String::new())).await.map(|_| ())
 }
 

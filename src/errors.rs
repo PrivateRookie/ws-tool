@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::{frame::OpCode, ConnectionState};
+use crate::frame::OpCode;
 
 /// errors during handshake, read/write frame
 #[derive(Debug, Error)]
@@ -9,12 +9,6 @@ pub enum WsError {
     #[error("invalid uri `{0}`")]
     InvalidUri(String),
     #[error("unsupported proxy, expect socks5 or http, got {0}")]
-    /// unsupported websocket proxy
-    UnsupportedProxy(String),
-    #[error("invalid proxy {0}")]
-    /// invalid websocket proxy
-    InvalidProxy(String),
-    #[error("cert {0} not found")]
     /// invalid cert file path
     CertFileNotFound(String),
     #[error("load cert {0} failed")]
@@ -40,12 +34,6 @@ pub enum WsError {
         /// detail error
         error: ProtocolError,
     },
-    /// raised by proxy
-    #[error("proxy error `{0}`")]
-    ProxyError(String),
-    /// invalid connection state
-    #[error("io on invalid connection state {0:?}")]
-    InvalidConnState(ConnectionState),
     /// peer send a frame with unknown opcode
     #[error("unsupported frame {0:?}")]
     UnsupportedFrame(OpCode),
