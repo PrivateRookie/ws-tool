@@ -1,103 +1,72 @@
 #[cfg(feature = "sync")]
 mod blocking {
 
-    #[cfg(feature = "sync_tls_rustls")]
     mod stream {
-        use rustls_connector::TlsStream;
         use std::io::{Read, Write};
 
         use crate::codec::Split;
 
         /// websocket stream
-        pub enum WsStream<S: Read + Write> {
-            /// plain tcp stream
-            Plain(S),
-            /// tls tcp stream
-            Tls(TlsStream<S>),
-        }
+        pub struct WsStream<S: Read + Write>(pub(crate) S);
 
         impl<S: Read + Write> std::fmt::Debug for WsStream<S> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match self {
-                    Self::Plain(_) => f.debug_struct("PlainWsStream").finish(),
-                    Self::Tls(_) => f.debug_struct("TlsWsStream").finish(),
-                }
+                f.debug_struct("WsStream").finish()
             }
         }
 
         impl<S: Read + Write> WsStream<S> {
+            /// create new ws stream
+            pub fn new(stream: S) -> Self {
+                Self(stream)
+            }
+
             /// return mutable reference underlying stream
             pub fn stream_mut(&mut self) -> &mut S {
-                match self {
-                    WsStream::Plain(s) => s,
-                    WsStream::Tls(tls) => tls.get_mut(),
-                }
+                &mut self.0
+            }
+
+            /// get immutable ref of underlying stream
+            pub fn stream(&self) -> &S {
+                &self.0
             }
         }
 
         impl<S: Read + Write> Read for WsStream<S> {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                match self {
-                    WsStream::Plain(s) => s.read(buf),
-                    WsStream::Tls(s) => s.read(buf),
-                }
+                self.0.read(buf)
             }
         }
 
         impl<S: Read + Write> Write for WsStream<S> {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                match self {
-                    WsStream::Plain(s) => s.write(buf),
-                    WsStream::Tls(s) => s.write(buf),
-                }
+                self.0.write(buf)
             }
 
             fn flush(&mut self) -> std::io::Result<()> {
-                match self {
-                    WsStream::Plain(s) => s.flush(),
-                    WsStream::Tls(s) => s.flush(),
-                }
+                self.0.flush()
             }
         }
 
         /// websocket readonly stream
-        pub enum WsReadStream<S: Read> {
-            /// plaint read stream
-            Plain(S),
-            /// tls wrapped read stream
-            Tls(S),
-        }
+        pub struct WsReadStream<S: Read>(pub(crate) S);
 
         impl<S: Read> Read for WsReadStream<S> {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                match self {
-                    WsReadStream::Plain(s) => s.read(buf),
-                    WsReadStream::Tls(s) => s.read(buf),
-                }
+                self.0.read(buf)
             }
         }
 
         /// websocket writeable stream
-        pub enum WsWriteStream<S: Write> {
-            /// plain stream
-            Plain(S),
-            /// tls wrapped write stream
-            Tls(S),
-        }
+        pub struct WsWriteStream<S: Write>(pub(crate) S);
 
         impl<S: Write> Write for WsWriteStream<S> {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                match self {
-                    WsWriteStream::Plain(s) => s.write(buf),
-                    WsWriteStream::Tls(s) => s.write(buf),
-                }
+                self.0.write(buf)
             }
 
             fn flush(&mut self) -> std::io::Result<()> {
-                match self {
-                    WsWriteStream::Plain(s) => s.flush(),
-                    WsWriteStream::Tls(s) => s.flush(),
-                }
+                self.0.flush()
             }
         }
 
@@ -112,122 +81,8 @@ mod blocking {
             type W = WsWriteStream<W>;
 
             fn split(self) -> (Self::R, Self::W) {
-                match self {
-                    WsStream::Plain(s) => {
-                        let (read, write) = s.split();
-                        (WsReadStream::Plain(read), WsWriteStream::Plain(write))
-                    }
-                    WsStream::Tls(s) => {
-                        let sock = s.sock;
-                        let (read, write) = sock.split();
-                        (WsReadStream::Tls(read), WsWriteStream::Tls(write))
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(not(feature = "sync_tls_rustls"))]
-    mod stream {
-        use crate::codec::Split;
-        use std::io::{Read, Write};
-
-        /// websocket stream
-        pub enum WsStream<S> {
-            /// plain tcp stream
-            Plain(S),
-        }
-
-        impl<S: Read + Write> std::fmt::Debug for WsStream<S> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match self {
-                    Self::Plain(_) => f.debug_struct("PlainWsStream").finish(),
-                }
-            }
-        }
-
-        impl<S> WsStream<S> {
-            /// return mutable reference underlying stream
-            pub fn stream_mut(&mut self) -> &mut S {
-                match self {
-                    WsStream::Plain(s) => s,
-                }
-            }
-        }
-
-        impl<S: Read> Read for WsStream<S> {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                match self {
-                    WsStream::Plain(s) => s.read(buf),
-                }
-            }
-        }
-
-        impl<S: Write> Write for WsStream<S> {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                match self {
-                    WsStream::Plain(s) => s.write(buf),
-                }
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                match self {
-                    WsStream::Plain(s) => s.flush(),
-                }
-            }
-        }
-
-        /// websocket readonly stream
-        pub enum WsReadStream<S: Read> {
-            /// plain stream
-            Plain(S),
-        }
-
-        impl<S: Read> Read for WsReadStream<S> {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                match self {
-                    WsReadStream::Plain(s) => s.read(buf),
-                }
-            }
-        }
-
-        /// websocket writeable stream
-        pub enum WsWriteStream<S: Write> {
-            /// plain stream
-            Plain(S),
-        }
-
-        impl<S: Write> Write for WsWriteStream<S> {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                match self {
-                    WsWriteStream::Plain(s) => s.write(buf),
-                }
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                match self {
-                    WsWriteStream::Plain(s) => s.flush(),
-                }
-            }
-        }
-
-        impl<R, W, S> Split for WsStream<S>
-        where
-            R: Read,
-            W: Write,
-            S: Read + Write + Split<R = R, W = W>,
-        {
-            type R = WsReadStream<R>;
-
-            type W = WsWriteStream<W>;
-
-            fn split(self) -> (Self::R, Self::W) {
-                match self {
-                    WsStream::Plain(s) => {
-                        let (read, write) = s.split();
-                        (WsReadStream::Plain(read), WsWriteStream::Plain(write))
-                    }
-                }
+                let (read, write) = self.0.split();
+                (WsReadStream(read), WsWriteStream(write))
             }
         }
     }
@@ -326,43 +181,28 @@ pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking {
-    #[cfg(feature = "async_tls_rustls")]
     mod ws_stream {
         use std::pin::Pin;
 
         use tokio::io::{AsyncRead, AsyncWrite};
-        use tokio_rustls::client::TlsStream;
 
         use crate::codec::Split;
 
         /// websocket readonly async stream
-        pub enum WsAsyncReadStream<S: AsyncRead> {
-            /// plain stream
-            Plain(S),
-            /// tls wrapped stream
-            Tls(S),
-        }
+        pub struct WsAsyncReadStream<S: AsyncRead>(pub(crate) S);
 
         impl<S: AsyncRead + Unpin> AsyncRead for WsAsyncReadStream<S> {
             fn poll_read(
-                self: std::pin::Pin<&mut Self>,
+                self: Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
                 buf: &mut tokio::io::ReadBuf<'_>,
             ) -> std::task::Poll<std::io::Result<()>> {
-                match self.get_mut() {
-                    WsAsyncReadStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
-                    WsAsyncReadStream::Tls(s) => Pin::new(s).poll_read(cx, buf),
-                }
+                Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
             }
         }
 
         /// websocket readonly async stream
-        pub enum WsAsyncWriteStream<S: AsyncWrite> {
-            /// plain stream
-            Plain(S),
-            /// tls wrapped stream
-            Tls(S),
-        }
+        pub struct WsAsyncWriteStream<S: AsyncWrite>(pub(crate) S);
 
         impl<S: AsyncWrite + Unpin> AsyncWrite for WsAsyncWriteStream<S> {
             fn poll_write(
@@ -370,30 +210,21 @@ mod non_blocking {
                 cx: &mut std::task::Context<'_>,
                 buf: &[u8],
             ) -> std::task::Poll<Result<usize, std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
-                    WsAsyncWriteStream::Tls(s) => Pin::new(s).poll_write(cx, buf),
-                }
+                Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
             }
 
             fn poll_flush(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Result<(), std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_flush(cx),
-                    WsAsyncWriteStream::Tls(s) => Pin::new(s).poll_flush(cx),
-                }
+                Pin::new(&mut self.get_mut().0).poll_flush(cx)
             }
 
             fn poll_shutdown(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Result<(), std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
-                    WsAsyncWriteStream::Tls(s) => Pin::new(s).poll_shutdown(cx),
-                }
+                Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
             }
         }
 
@@ -408,52 +239,38 @@ mod non_blocking {
             type W = WsAsyncWriteStream<W>;
 
             fn split(self) -> (Self::R, Self::W) {
-                match self {
-                    WsAsyncStream::Plain(s) => {
-                        let (read, write) = s.split();
-                        (
-                            WsAsyncReadStream::Plain(read),
-                            WsAsyncWriteStream::Plain(write),
-                        )
-                    }
-                    WsAsyncStream::Tls(s) => {
-                        let s = s.into_inner().0;
-                        let (read, write) = s.split();
-                        (WsAsyncReadStream::Tls(read), WsAsyncWriteStream::Tls(write))
-                    }
-                }
+                let (read, write) = self.0.split();
+                (WsAsyncReadStream(read), WsAsyncWriteStream(write))
             }
         }
 
         /// async version of websocket stream
         #[derive(Debug)]
-        pub enum WsAsyncStream<S: AsyncRead + AsyncWrite> {
-            /// plain tcp stream
-            Plain(S),
-            /// tls stream
-            Tls(TlsStream<S>),
-        }
-
+        pub struct WsAsyncStream<S: AsyncRead + AsyncWrite>(pub(crate) S);
         impl<S: AsyncWrite + AsyncRead> WsAsyncStream<S> {
+            /// create new ws async stream
+            pub fn new(stream: S) -> Self {
+                Self(stream)
+            }
+
             /// return mutable reference of underlying stream
             pub fn stream_mut(&mut self) -> &mut S {
-                match self {
-                    WsAsyncStream::Plain(s) => s,
-                    WsAsyncStream::Tls(s) => s.get_mut().0,
-                }
+                &mut self.0
+            }
+
+            /// get immutable ref of underlying stream
+            pub fn stream(&self) -> &S {
+                &self.0
             }
         }
 
         impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WsAsyncStream<S> {
             fn poll_read(
-                self: std::pin::Pin<&mut Self>,
+                self: Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
                 buf: &mut tokio::io::ReadBuf<'_>,
             ) -> std::task::Poll<std::io::Result<()>> {
-                match self.get_mut() {
-                    WsAsyncStream::Plain(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
-                    WsAsyncStream::Tls(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
-                }
+                Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
             }
         }
 
@@ -463,173 +280,21 @@ mod non_blocking {
                 cx: &mut std::task::Context<'_>,
                 buf: &[u8],
             ) -> std::task::Poll<Result<usize, std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncStream::Plain(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
-                    WsAsyncStream::Tls(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
-                }
+                Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
             }
 
             fn poll_flush(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Result<(), std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncStream::Plain(stream) => std::pin::Pin::new(stream).poll_flush(cx),
-                    WsAsyncStream::Tls(stream) => std::pin::Pin::new(stream).poll_flush(cx),
-                }
+                Pin::new(&mut self.get_mut().0).poll_flush(cx)
             }
 
             fn poll_shutdown(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Result<(), std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncStream::Plain(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
-                    WsAsyncStream::Tls(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
-                }
-            }
-        }
-    }
-
-    #[cfg(not(feature = "async_tls_rustls"))]
-    mod ws_stream {
-        use std::pin::Pin;
-        use tokio::io::{AsyncRead, AsyncWrite};
-
-        use crate::codec::Split;
-
-        /// websocket readonly async stream
-        pub enum WsAsyncReadStream<S: AsyncRead> {
-            /// plain stream
-            Plain(S),
-        }
-
-        impl<S: AsyncRead + Unpin> AsyncRead for WsAsyncReadStream<S> {
-            fn poll_read(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &mut tokio::io::ReadBuf<'_>,
-            ) -> std::task::Poll<std::io::Result<()>> {
-                match self.get_mut() {
-                    WsAsyncReadStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
-                }
-            }
-        }
-
-        /// websocket writable async stream
-        pub enum WsAsyncWriteStream<S: AsyncWrite> {
-            /// plain steam
-            Plain(S),
-        }
-
-        impl<S: AsyncWrite + Unpin> AsyncWrite for WsAsyncWriteStream<S> {
-            fn poll_write(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &[u8],
-            ) -> std::task::Poll<Result<usize, std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
-                }
-            }
-
-            fn poll_flush(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Result<(), std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_flush(cx),
-                }
-            }
-
-            fn poll_shutdown(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Result<(), std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncWriteStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
-                }
-            }
-        }
-
-        impl<R, W, S> Split for WsAsyncStream<S>
-        where
-            R: AsyncRead,
-            W: AsyncWrite,
-            S: AsyncRead + AsyncWrite + Split<R = R, W = W>,
-        {
-            type R = WsAsyncReadStream<R>;
-
-            type W = WsAsyncWriteStream<W>;
-
-            fn split(self) -> (Self::R, Self::W) {
-                match self {
-                    WsAsyncStream::Plain(s) => {
-                        let (read, write) = s.split();
-                        (
-                            WsAsyncReadStream::Plain(read),
-                            WsAsyncWriteStream::Plain(write),
-                        )
-                    }
-                }
-            }
-        }
-
-        /// websocket stream
-        #[derive(Debug)]
-        pub enum WsAsyncStream<S> {
-            /// plain tcp stream
-            Plain(S),
-        }
-
-        impl<S> WsAsyncStream<S> {
-            /// return mutable reference underlying stream
-            pub fn stream_mut(&mut self) -> &mut S {
-                match self {
-                    Self::Plain(s) => s,
-                }
-            }
-        }
-
-        impl<S: AsyncRead + Unpin> AsyncRead for WsAsyncStream<S> {
-            fn poll_read(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &mut tokio::io::ReadBuf<'_>,
-            ) -> std::task::Poll<std::io::Result<()>> {
-                match self.get_mut() {
-                    WsAsyncStream::Plain(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
-                }
-            }
-        }
-
-        impl<S: AsyncWrite + Unpin> AsyncWrite for WsAsyncStream<S> {
-            fn poll_write(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &[u8],
-            ) -> std::task::Poll<Result<usize, std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncStream::Plain(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
-                }
-            }
-
-            fn poll_flush(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Result<(), std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncStream::Plain(stream) => std::pin::Pin::new(stream).poll_flush(cx),
-                }
-            }
-
-            fn poll_shutdown(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Result<(), std::io::Error>> {
-                match self.get_mut() {
-                    WsAsyncStream::Plain(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
-                }
+                Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
             }
         }
     }

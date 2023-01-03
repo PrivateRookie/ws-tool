@@ -191,7 +191,7 @@ mod blocking {
     ///
     /// **NOTE**: low level api
     pub fn req_handshake<S: Read + Write>(
-        stream: &mut WsStream<S>,
+        stream: &mut S,
         mode: &Mode,
         uri: &http::Uri,
         protocols: String,
@@ -319,7 +319,7 @@ mod non_blocking {
     ///
     /// **NOTE**: low level api
     pub async fn async_req_handshake<S: AsyncRead + AsyncWrite + Unpin>(
-        stream: &mut WsAsyncStream<S>,
+        stream: &mut S,
         mode: &Mode,
         uri: &http::Uri,
         protocols: String,

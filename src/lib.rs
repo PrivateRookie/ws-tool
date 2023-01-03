@@ -46,52 +46,20 @@ pub enum ConnectionState {
 /// helper builder to construct websocket client
 #[allow(dead_code)]
 pub struct ClientBuilder {
-    uri: String,
-    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
-    http_proxy: Option<hproxy::ProxyConfig>,
-    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
-    socks5_proxy: Option<sproxy::ProxyConfig>,
     protocols: Vec<String>,
     extensions: Vec<String>,
-    #[cfg(any(feature = "async_tls_rustls", feature = "sync_tls_rustls"))]
-    certs: std::collections::HashSet<std::path::PathBuf>,
     version: u8,
     headers: HashMap<String, String>,
 }
 
 impl ClientBuilder {
     /// create builder with websocket url
-    pub fn new<S: ToString>(uri: S) -> Self {
+    pub fn new<S: ToString>() -> Self {
         Self {
-            uri: uri.to_string(),
-            #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
-            http_proxy: None,
-            #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
-            socks5_proxy: None,
             protocols: vec![],
             extensions: vec![],
             headers: HashMap::new(),
-            #[cfg(any(feature = "async_tls_rustls", feature = "sync_tls_rustls"))]
-            certs: std::collections::HashSet::new(),
             version: 13,
-        }
-    }
-
-    /// set websocket http proxy
-    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
-    pub fn http_proxy<C: Into<Option<hproxy::ProxyConfig>>>(self, conf: C) -> Self {
-        Self {
-            http_proxy: conf.into(),
-            ..self
-        }
-    }
-
-    /// set websocket socks5 proxy
-    #[cfg(any(feature = "async_proxy", feature = "sync_proxy"))]
-    pub fn socks5_proxy<C: Into<Option<sproxy::ProxyConfig>>>(self, conf: C) -> Self {
-        Self {
-            socks5_proxy: conf.into(),
-            ..self
         }
     }
 
@@ -121,21 +89,6 @@ impl ClientBuilder {
         Self { extensions, ..self }
     }
 
-    #[cfg(any(feature = "async_tls_rustls", feature = "sync_tls_rustls"))]
-    /// set ssl cert in wss connection
-    pub fn cert(mut self, cert: std::path::PathBuf) -> Self {
-        self.certs.insert(cert);
-        self
-    }
-
-    #[cfg(any(feature = "async_tls_rustls", feature = "sync_tls_rustls"))]
-    // set ssl certs in wss connection
-    ///
-    /// **NOTE** it will clear certs set by `cert` method
-    pub fn certs(self, certs: std::collections::HashSet<std::path::PathBuf>) -> Self {
-        Self { certs, ..self }
-    }
-
     /// set websocket version
     pub fn version(self, version: u8) -> Self {
         Self { version, ..self }
@@ -157,10 +110,7 @@ impl ClientBuilder {
 
 #[cfg(feature = "sync")]
 mod blocking {
-    use std::{
-        io::{Read, Write},
-        net::TcpStream,
-    };
+    use std::io::{Read, Write};
 
     use crate::{
         errors::WsError,
@@ -170,114 +120,28 @@ mod blocking {
     };
 
     impl ClientBuilder {
-        fn _connect(&self) -> Result<(String, http::Response<()>, WsStream<TcpStream>), WsError> {
-            let Self {
-                uri,
-                #[cfg(feature = "sync_proxy")]
-                http_proxy,
-                #[cfg(feature = "sync_proxy")]
-                socks5_proxy,
-                protocols,
-                extensions,
-                #[cfg(feature = "sync_tls_rustls")]
-                certs,
-                version,
-                headers,
-            } = self;
-            let uri = uri
-                .parse::<http::Uri>()
-                .map_err(|e| WsError::InvalidUri(format!("{uri} {e}")))?;
-            let mode = if let Some(schema) = uri.scheme_str() {
-                match schema.to_ascii_lowercase().as_str() {
-                    "ws" => Ok(Mode::WS),
-                    "wss" => Ok(Mode::WSS),
-                    _ => Err(WsError::InvalidUri(format!("invalid schema {schema}"))),
-                }
-            } else {
-                Err(WsError::InvalidUri("missing ws or wss schema".to_string()))
-            }?;
-            #[cfg(feature = "sync_tls_rustls")]
-            if mode == Mode::WS && !certs.is_empty() {
-                tracing::warn!("setting tls cert has no effect on insecure ws")
-            }
-            let host = uri
-                .host()
-                .ok_or_else(|| WsError::InvalidUri(format!("can not find host {}", self.uri)))?;
-            let port = match uri.port_u16() {
-                Some(port) => port,
-                None => mode.default_port(),
-            };
-
-            let stream;
-            #[cfg(feature = "async_proxy")]
-            {
-                match (http_proxy, socks5_proxy) {
-                    (None, None) => {
-                        stream = TcpStream::connect((host, port)).map_err(|e| {
-                            WsError::ConnectionFailed(format!(
-                                "failed to create tcp connection {e}",
-                            ))
-                        })?
-                    }
-                    (Some(config), None) => {
-                        stream = hproxy::create_conn(config, &format!("{}:{}", host, port))?
-                    }
-                    (None, Some(config)) => {
-                        stream = sproxy::create_conn(config, host.into(), port)?.0;
-                    }
-                    (Some(_), Some(config)) => {
-                        tracing::warn!(
-                            "both http proxy and socks5 proxy is set, use preferred socks5"
-                        );
-                        stream = sproxy::create_conn(config, host.into(), port)?.0;
-                    }
-                }
-            }
-
-            #[cfg(not(feature = "async_proxy"))]
-            {
-                stream = TcpStream::connect((host, port)).map_err(|e| {
-                    WsError::ConnectionFailed(format!("failed to create tcp connection {e}"))
-                })?;
-            }
-
-            tracing::debug!("tcp connection established");
-
-            let mut stream = match mode {
-                Mode::WS => WsStream::Plain(stream),
-                Mode::WSS => {
-                    #[cfg(feature = "sync_tls_rustls")]
-                    {
-                        use crate::protocol::wrap_tls;
-                        let tls_stream = wrap_tls(stream, host, &self.certs)?;
-                        WsStream::Tls(tls_stream)
-                    }
-
-                    #[cfg(not(feature = "sync_tls_rustls"))]
-                    {
-                        panic!("require `rustls`")
-                    }
-                }
-            };
+        /// perform protocol handshake & check server response
+        pub fn connect<C, F, S>(
+            &self,
+            mode: Mode,
+            uri: http::Uri,
+            mut stream: S,
+            mut check_fn: F,
+        ) -> Result<C, WsError>
+        where
+            S: Read + Write,
+            F: FnMut(String, http::Response<()>, WsStream<S>) -> Result<C, WsError>,
+        {
             let (key, resp) = req_handshake(
                 &mut stream,
                 &mode,
                 &uri,
-                protocols.to_vec().join(" ,"),
-                extensions.to_vec().join(" ,"),
-                *version,
-                headers.clone(),
+                self.protocols.to_vec().join(" ,"),
+                self.extensions.to_vec().join(" ,"),
+                self.version,
+                self.headers.clone(),
             )?;
-            Ok((key, resp, stream))
-        }
-
-        /// perform protocol handshake & check server response
-        pub fn connect<C, F>(&self, mut check_fn: F) -> Result<C, WsError>
-        where
-            F: FnMut(String, http::Response<()>, WsStream<TcpStream>) -> Result<C, WsError>,
-        {
-            let (key, resp, stream) = self._connect()?;
-            check_fn(key, resp, stream)
+            check_fn(key, resp, WsStream::new(stream))
         }
     }
 
@@ -295,7 +159,7 @@ mod blocking {
             F2: FnMut(http::Request<()>, WsStream<S>) -> Result<C, WsError>,
             T: ToString + std::fmt::Debug,
         {
-            let mut stream = WsStream::Plain(stream);
+            let mut stream = WsStream::new(stream);
             let req = handle_handshake(&mut stream)?;
             let (req, resp) = handshake_handler(req)?;
             let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
@@ -318,10 +182,7 @@ mod non_blocking {
     use std::fmt::Debug;
 
     use bytes::BytesMut;
-    use tokio::{
-        io::{AsyncRead, AsyncWrite, AsyncWriteExt},
-        net::TcpStream,
-    };
+    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
     use crate::{
         errors::WsError,
@@ -333,137 +194,31 @@ mod non_blocking {
     use super::ClientBuilder;
 
     impl ClientBuilder {
-        async fn _async_connect(
+        /// async version of connect
+        ///
+        /// perform protocol handshake & check server response
+        pub async fn async_connect<C, F, S>(
             &self,
-        ) -> Result<
-            (
-                String,
-                http::Response<()>,
-                BytesMut,
-                WsAsyncStream<TcpStream>,
-            ),
-            WsError,
-        > {
-            let Self {
-                uri,
-                #[cfg(feature = "async_proxy")]
-                http_proxy,
-                #[cfg(feature = "async_proxy")]
-                socks5_proxy,
-                protocols,
-                extensions,
-                #[cfg(feature = "async_tls_rustls")]
-                certs,
-                version,
-                headers,
-            } = self;
-            let uri = uri
-                .parse::<http::Uri>()
-                .map_err(|e| WsError::InvalidUri(format!("{uri} {e}")))?;
-            let mode = if let Some(schema) = uri.scheme_str() {
-                match schema.to_ascii_lowercase().as_str() {
-                    "ws" => Ok(Mode::WS),
-                    "wss" => Ok(Mode::WSS),
-                    _ => Err(WsError::InvalidUri(format!("invalid schema {schema}"))),
-                }
-            } else {
-                Err(WsError::InvalidUri("missing ws or wss schema".to_string()))
-            }?;
-            #[cfg(feature = "async_tls_rustls")]
-            if mode == Mode::WS && !certs.is_empty() {
-                tracing::warn!("setting tls cert has no effect on insecure ws")
-            }
-            let host = uri
-                .host()
-                .ok_or_else(|| WsError::InvalidUri(format!("can not find host {}", self.uri)))?;
-            let port = match uri.port_u16() {
-                Some(port) => port,
-                None => mode.default_port(),
-            };
-
-            let stream;
-            #[cfg(feature = "async_proxy")]
-            {
-                match (http_proxy, socks5_proxy) {
-                    (None, None) => {
-                        stream = TcpStream::connect((host, port)).await.map_err(|e| {
-                            WsError::ConnectionFailed(format!(
-                                "failed to create tcp connection {e}"
-                            ))
-                        })?
-                    }
-                    (Some(config), None) => {
-                        stream =
-                            hproxy::async_create_conn(config, &format!("{host}:{port}")).await?
-                    }
-                    (None, Some(config)) => {
-                        stream = sproxy::async_create_conn(config, host.into(), port)
-                            .await?
-                            .0;
-                    }
-                    (Some(_), Some(config)) => {
-                        tracing::warn!(
-                            "both http proxy and socks5 proxy is set, use preferred socks5"
-                        );
-                        stream = sproxy::async_create_conn(config, host.into(), port)
-                            .await?
-                            .0;
-                    }
-                }
-            }
-
-            #[cfg(not(feature = "async_proxy"))]
-            {
-                stream = TcpStream::connect((host, port)).await.map_err(|e| {
-                    WsError::ConnectionFailed(format!("failed to create tcp connection {e}"))
-                })?;
-            }
-
-            tracing::debug!("tcp connection established");
-
-            let mut stream = match mode {
-                Mode::WS => WsAsyncStream::Plain(stream),
-                Mode::WSS => {
-                    #[cfg(feature = "async_tls_rustls")]
-                    {
-                        use crate::protocol::async_wrap_tls;
-                        let tls_stream = async_wrap_tls(stream, host, &self.certs).await?;
-                        WsAsyncStream::Tls(tls_stream)
-                    }
-
-                    #[cfg(not(feature = "async_tls_rustls"))]
-                    {
-                        panic!("require `rustls`")
-                    }
-                }
-            };
+            mode: Mode,
+            uri: http::Uri,
+            mut stream: S,
+            mut check_fn: F,
+        ) -> Result<C, WsError>
+        where
+            S: AsyncRead + AsyncWrite + Unpin,
+            F: FnMut(String, http::Response<()>, BytesMut, WsAsyncStream<S>) -> Result<C, WsError>,
+        {
             let (key, resp, remain) = async_req_handshake(
                 &mut stream,
                 &mode,
                 &uri,
-                protocols.to_vec().join(" ,"),
-                extensions.to_vec().join(" ,"),
-                *version,
-                headers.clone(),
+                self.protocols.to_vec().join(" ,"),
+                self.extensions.to_vec().join(" ,"),
+                self.version,
+                self.headers.clone(),
             )
             .await?;
-            Ok((key, resp, remain, stream))
-        }
-
-        /// async version of connect
-        ///
-        /// perform protocol handshake & check server response
-        pub async fn async_connect<C, F>(&self, mut check_fn: F) -> Result<C, WsError>
-        where
-            F: FnMut(
-                String,
-                http::Response<()>,
-                BytesMut,
-                WsAsyncStream<TcpStream>,
-            ) -> Result<C, WsError>,
-        {
-            let (key, resp, remain, stream) = self._async_connect().await?;
-            check_fn(key, resp, remain, stream)
+            check_fn(key, resp, remain, WsAsyncStream::new(stream))
         }
     }
 
@@ -483,7 +238,7 @@ mod non_blocking {
             F2: FnMut(http::Request<()>, BytesMut, WsAsyncStream<S>) -> Result<C, WsError>,
             T: ToString + Debug,
         {
-            let mut stream = WsAsyncStream::Plain(stream);
+            let mut stream = WsAsyncStream::new(stream);
             let (req, remain) = async_handle_handshake(&mut stream).await?;
             let (req, resp) = handshake_handler(req)?;
             let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
