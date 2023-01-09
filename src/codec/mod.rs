@@ -10,25 +10,6 @@ pub use deflate::*;
 pub use frame::*;
 pub use text::*;
 
-// pub struct ReadHalf<R> {
-//     inner: R,
-// }
-
-// impl<R> ReadHalf<R> {
-//     pub fn inner_mut(&mut self) -> &mut R {
-//         &mut self.inner
-//     }
-// }
-
-// pub struct WriteHalf<W> {
-//     inner: W,
-// }
-
-// impl<W> WriteHalf<W> {
-//     pub fn inner_mut(&mut self) -> &mut W {
-//         &mut self.inner
-//     }
-// }
 
 /// split something into two parts
 pub trait Split {

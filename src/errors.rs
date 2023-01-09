@@ -93,7 +93,4 @@ pub enum ProtocolError {
     /// payload exceed payload len limit
     #[error("payload too large, max payload size {0}")]
     PayloadTooLarge(usize),
-    #[cfg(feature = "deflate")]
-    #[error("enable deflate but rsv1 not set")]
-    NotDeflateDataWhileEnabled,
 }
