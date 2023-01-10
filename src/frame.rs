@@ -53,6 +53,16 @@ impl OpCode {
             OpCode::ReservedControl => 11,
         }
     }
+
+    /// check is close type frame
+    pub fn is_close(&self) -> bool {
+        matches!(self, Self::Close)
+    }
+
+    /// check is text/binary ?
+    pub fn is_data(&self) -> bool {
+        matches!(self, Self::Text | Self::Binary | Self::Continue)
+    }
 }
 
 #[inline]
@@ -437,7 +447,7 @@ impl Header {
 
 /// owned read framed, usually from read frame from stream
 #[derive(Debug, Clone)]
-pub struct ReadFrame(pub(crate) BytesMut);
+pub struct ReadFrame(pub BytesMut);
 
 impl ReadFrame {
     /// construct read frame

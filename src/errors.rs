@@ -37,6 +37,15 @@ pub enum WsError {
     /// peer send a frame with unknown opcode
     #[error("unsupported frame {0:?}")]
     UnsupportedFrame(OpCode),
+
+    #[cfg(feature = "deflate")]
+    /// compress failed
+    #[error("compress failed {0}")]
+    CompressFailed(String),
+    #[cfg(feature = "deflate")]
+    /// decompress failed
+    #[error("decompress failed {0}")]
+    DeCompressFailed(String),
 }
 
 impl From<std::io::Error> for WsError {

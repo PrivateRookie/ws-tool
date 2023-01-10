@@ -28,6 +28,10 @@ mod non_blocking;
 #[cfg(feature = "async")]
 pub use non_blocking::*;
 
+use crate::errors::WsError;
+
+use super::default_handshake_handler;
+
 /// permessage-deflate window bit
 #[derive(Debug, Clone, Copy)]
 #[repr(i8)]
@@ -56,28 +60,49 @@ impl TryFrom<u8> for WindowBit {
     }
 }
 
+pub fn deflate_handshake_handler(
+    req: http::Request<()>,
+) -> Result<(http::Request<()>, http::Response<String>), WsError> {
+    let (req, mut resp) = default_handshake_handler(req)?;
+    let mut configs: Vec<PMDConfig> = vec![];
+    for (k, v) in req.headers() {
+        if k.as_str().to_lowercase() == EXT_ID {
+            if let Ok(s) = v.to_str() {
+                match PMDConfig::parse_str(s) {
+                    Ok(mut conf) => {
+                        configs.append(&mut conf);
+                    }
+                    Err(e) => return Err(WsError::HandShakeFailed(e)),
+                }
+            }
+        }
+    }
+    let config = configs.pop();
+    if let Some(config) 
+}
+
 /// permessage-deflate
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
-pub struct PMGConfig {
+pub struct PMDConfig {
     pub server_no_context_takeover: bool,
     pub client_no_context_takeover: bool,
     pub server_max_window_bits: WindowBit,
     pub client_max_window_bits: WindowBit,
 }
 
-impl Default for PMGConfig {
+impl Default for PMDConfig {
     fn default() -> Self {
         Self {
-            server_no_context_takeover: true,
-            client_no_context_takeover: true,
+            server_no_context_takeover: false,
+            client_no_context_takeover: false,
             server_max_window_bits: WindowBit::Fifteen,
             client_max_window_bits: WindowBit::Fifteen,
         }
     }
 }
 
-impl PMGConfig {
+impl PMDConfig {
     /// get extension string
     pub fn ext_string(&self) -> String {
         let mut s = format!("{EXT_ID};");
@@ -103,7 +128,7 @@ impl PMGConfig {
     }
 
     /// helper function to build multi permessage deflate config header
-    pub fn multi_ext_string(configs: &[PMGConfig]) -> String {
+    pub fn multi_ext_string(configs: &[PMDConfig]) -> String {
         configs
             .iter()
             .map(|conf| conf.ext_string())
@@ -113,17 +138,17 @@ impl PMGConfig {
 }
 
 #[derive(Default)]
-struct PMGParamCounter {
+struct PMDParamCounter {
     server_no_context_takeover: bool,
     client_no_context_takeover: bool,
     server_max_window_bits: bool,
     client_max_window_bits: bool,
 }
 
-impl PMGConfig {
+impl PMDConfig {
     /// case-insensitive parse one line header
     pub fn parse_str(source: &str) -> Result<Vec<Self>, String> {
-        let lines = source.split("\r\n").collect::<Vec<&str>>().len();
+        let lines = source.split("\r\n").count();
         if lines > 2 {
             return Err("should not contain multi line".to_string());
         }
@@ -131,7 +156,7 @@ impl PMGConfig {
         for part in source.split(',') {
             if part.trim_start().to_lowercase().starts_with(EXT_ID) {
                 let mut conf = Self::default();
-                let mut counter = PMGParamCounter::default();
+                let mut counter = PMDParamCounter::default();
                 for param in part.split(';').skip(1) {
                     let lower = param.trim().to_lowercase();
                     if lower.starts_with(SERVER_NO_CONTEXT_TAKEOVER) {
@@ -225,7 +250,7 @@ trait Context {
     where
         F: Fn(&mut libz_sys::z_stream) -> Option<Result<(), String>>,
     {
-        debug_assert!(output.len() == 0, "Output vector is not empty.");
+        debug_assert!(output.is_empty(), "Output vector is not empty.");
 
         let stream = self.stream();
 
@@ -243,7 +268,7 @@ trait Context {
 
             let out_slice = unsafe {
                 slice::from_raw_parts_mut(
-                    output.as_mut_ptr().offset(output_size as isize),
+                    output.as_mut_ptr().add(output_size),
                     output.capacity() - output_size,
                 )
             };
