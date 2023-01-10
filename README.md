@@ -58,6 +58,14 @@ cargo run --example autobahn_client --all-features
 
 report files should be under `test_reports` dir.
 
+## MISC
+
+### http header style
+
+for multiple extension/protocol, ws-tool prefer to use multiple header with the same name, instead of "," separated value.
+but ws-tool still try to parse extension/protocol from "," separated header value.
+
+
 
 ## autobahn test report
 

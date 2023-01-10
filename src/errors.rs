@@ -93,4 +93,9 @@ pub enum ProtocolError {
     /// payload exceed payload len limit
     #[error("payload too large, max payload size {0}")]
     PayloadTooLarge(usize),
+
+    #[cfg(feature = "deflate")]
+    /// compressed control frame
+    #[error("compressed control frame")]
+    CompressedControlFrame,
 }

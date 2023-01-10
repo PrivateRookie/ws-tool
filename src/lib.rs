@@ -134,8 +134,8 @@ mod blocking {
             let (key, resp) = req_handshake(
                 &mut stream,
                 &uri,
-                self.protocols.to_vec().join(" ,"),
-                self.extensions.to_vec().join(" ,"),
+                &self.protocols,
+                &self.extensions,
                 self.version,
                 self.headers.clone(),
             )?;
@@ -210,8 +210,8 @@ mod non_blocking {
             let (key, resp, remain) = async_req_handshake(
                 &mut stream,
                 &uri,
-                self.protocols.to_vec().join(" ,"),
-                self.extensions.to_vec().join(" ,"),
+                &self.protocols,
+                &self.extensions,
                 self.version,
                 self.headers.clone(),
             )
