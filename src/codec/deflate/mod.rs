@@ -60,25 +60,32 @@ impl TryFrom<u8> for WindowBit {
     }
 }
 
+/// permessage-deflate req handler
 pub fn deflate_handshake_handler(
     req: http::Request<()>,
 ) -> Result<(http::Request<()>, http::Response<String>), WsError> {
+    // TODO return error response if parse error
     let (req, mut resp) = default_handshake_handler(req)?;
     let mut configs: Vec<PMDConfig> = vec![];
     for (k, v) in req.headers() {
-        if k.as_str().to_lowercase() == EXT_ID {
+        if k.as_str().to_lowercase() == "sec-websocket-extensions" {
             if let Ok(s) = v.to_str() {
                 match PMDConfig::parse_str(s) {
                     Ok(mut conf) => {
                         configs.append(&mut conf);
                     }
-                    Err(e) => return Err(WsError::HandShakeFailed(e)),
+                    Err(e) => return Err(WsError::HandShakeFailed(dbg!(e))),
                 }
             }
         }
     }
-    let config = configs.pop();
-    if let Some(config) 
+    if let Some(config) = configs.pop() {
+        resp.headers_mut().insert(
+            EXT_ID,
+            http::HeaderValue::from_str(&config.ext_string()).unwrap(),
+        );
+    }
+    Ok((req, resp))
 }
 
 /// permessage-deflate
@@ -342,6 +349,7 @@ impl Compressor {
 
     /// compress data
     pub fn compress(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
+        tracing::info!("compress source {:x?}", input);
         self.stream_apply(input, output, |stream| unsafe {
             match libz_sys::deflate(stream, libz_sys::Z_SYNC_FLUSH) {
                 libz_sys::Z_OK | libz_sys::Z_BUF_ERROR => {
@@ -415,6 +423,7 @@ impl DeCompressor {
 
     /// decompress data
     pub fn decompress(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
+        tracing::info!("de compress source {:x?}", input);
         self.stream_apply(input, output, |stream| unsafe {
             match libz_sys::inflate(stream, libz_sys::Z_SYNC_FLUSH) {
                 libz_sys::Z_OK | libz_sys::Z_BUF_ERROR => {

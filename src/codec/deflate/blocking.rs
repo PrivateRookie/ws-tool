@@ -55,11 +55,12 @@ impl<S: Read + Write> WsDeflateCodec<S> {
     pub fn factory(req: http::Request<()>, stream: S) -> Result<Self, WsError> {
         let frame_config = FrameConfig {
             mask_send_frame: false,
+            check_rsv: false,
             ..Default::default()
         };
         let mut configs: Vec<PMDConfig> = vec![];
         for (k, v) in req.headers() {
-            if k.as_str().to_lowercase() == EXT_ID {
+            if k.as_str().to_lowercase() == "sec-websocket-extensions" {
                 if let Ok(s) = v.to_str() {
                     match PMDConfig::parse_str(s) {
                         Ok(mut conf) => {
@@ -93,7 +94,14 @@ impl<S: Read + Write> WsDeflateCodec<S> {
             }
         }
         let config = configs.pop();
-        let frame_codec = WsFrameCodec::new_with(stream, Default::default());
+        let frame_codec = WsFrameCodec::new_with(
+            stream,
+            FrameConfig {
+                check_rsv: false,
+                mask_send_frame: false,
+                ..Default::default()
+            },
+        );
         let codec = WsDeflateCodec::new(frame_codec, config, true);
         Ok(codec)
     }
@@ -107,7 +115,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
     pub fn receive(&mut self) -> Result<ReadFrame, WsError> {
         let mut frame = self.frame_codec.receive()?;
         let compressed = frame.header().rsv1();
-        let is_data_frame = matches!(frame.header().opcode(), OpCode::Text | OpCode::Binary);
+        let is_data_frame = frame.header().opcode().is_data();
         if compressed && !is_data_frame {
             return Err(WsError::ProtocolError {
                 close_code: 1000,
@@ -131,6 +139,8 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                 {
                     handler.de.reset().map_err(WsError::DeCompressFailed)?;
                 }
+                dbg!(());
+                println!("{:x?}", decompressed);
                 let header = frame.header();
                 let new = ReadFrame::new(
                     true,
@@ -167,6 +177,8 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                     .com
                     .compress(frame.payload(), &mut compressed)
                     .map_err(WsError::CompressFailed)?;
+                dbg!(());
+                println!("{:x?}", compressed);
                 compressed.truncate(compressed.len() - 4);
                 let new = ReadFrame::new(
                     header.fin(),
@@ -174,7 +186,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                     false,
                     false,
                     header.opcode(),
-                    header.mask(),
+                    dbg!(header.mask()),
                     &mut compressed[..],
                 );
                 if (self.is_server && handler.config.server_no_context_takeover)

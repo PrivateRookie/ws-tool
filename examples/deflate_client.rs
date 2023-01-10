@@ -46,14 +46,13 @@ fn main() {
                 false,
                 false,
                 OpCode::Text,
-                true,
+                false,
                 &mut data[..],
             ))
             .unwrap();
         match client.receive() {
             Ok(item) => {
                 if item.header().opcode().is_data() {
-                    dbg!(&item);
                     let payload = item.payload().to_vec();
                     let msg = String::from_utf8(payload).unwrap();
                     println!("[RECV] > {}", msg);
