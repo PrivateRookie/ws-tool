@@ -447,7 +447,7 @@ impl Header {
 
 /// owned read framed, usually from read frame from stream
 #[derive(Debug, Clone)]
-pub struct ReadFrame(pub BytesMut);
+pub struct ReadFrame(pub(crate) BytesMut);
 
 impl ReadFrame {
     /// construct read frame
