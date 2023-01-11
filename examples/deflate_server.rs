@@ -3,7 +3,7 @@ use std::net::TcpListener;
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, deflate_handshake_handler, WsDeflateCodec},
+    codec::{deflate_handshake_handler, WsDeflateCodec},
     ServerBuilder,
 };
 
@@ -18,7 +18,7 @@ struct Args {
     port: u16,
 
     /// level
-    #[arg(short, long, default_value = "info")]
+    #[arg(short, long, default_value = "debug")]
     level: tracing::Level,
 }
 

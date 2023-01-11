@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use crate::{
     codec::{FrameConfig, WsFrameCodec},
     errors::{ProtocolError, WsError},
-    frame::{OpCode, ReadFrame},
+    frame::ReadFrame,
     protocol::standard_handshake_resp_check,
 };
 
@@ -72,6 +72,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
             }
         }
         let config = configs.pop();
+        tracing::debug!("use deflate config {:?}", config);
         let frame_codec = WsFrameCodec::new_with(stream, frame_config);
         let codec = WsDeflateCodec::new(frame_codec, config, true);
         Ok(codec)
@@ -102,7 +103,8 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                 ..Default::default()
             },
         );
-        let codec = WsDeflateCodec::new(frame_codec, config, true);
+        tracing::debug!("use deflate config: {:?}", config);
+        let codec = WsDeflateCodec::new(frame_codec, config, false);
         Ok(codec)
     }
 
@@ -113,7 +115,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
 
     /// receive a message
     pub fn receive(&mut self) -> Result<ReadFrame, WsError> {
-        let mut frame = self.frame_codec.receive()?;
+        let frame = self.frame_codec.receive()?;
         let compressed = frame.header().rsv1();
         let is_data_frame = frame.header().opcode().is_data();
         if compressed && !is_data_frame {
@@ -123,25 +125,22 @@ impl<S: Read + Write> WsDeflateCodec<S> {
             });
         }
         // TODO handle continue frame
-        let frame: Result<ReadFrame, WsError> = self
-            .stream_handler
-            .as_mut()
-            .map(|handler| {
+        let frame: ReadFrame = match self.stream_handler.as_mut() {
+            Some(handler) => {
                 let mut decompressed = Vec::with_capacity(frame.payload().len() * 2);
-                frame.0.extend_from_slice(&[0, 0, 255, 255]);
+                let (header, mut payload) = frame.split();
+                payload.extend_from_slice(&[0, 0, 255, 255]);
                 handler
                     .de
-                    .decompress(&frame.payload(), &mut decompressed)
+                    .decompress(&payload, &mut decompressed)
                     .map_err(WsError::DeCompressFailed)?;
 
                 if (self.is_server && handler.config.server_no_context_takeover)
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {
                     handler.de.reset().map_err(WsError::DeCompressFailed)?;
+                    tracing::debug!("reset decompressor state");
                 }
-                dbg!(());
-                println!("{:x?}", decompressed);
-                let header = frame.header();
                 let new = ReadFrame::new(
                     true,
                     false,
@@ -151,18 +150,19 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                     header.mask(),
                     &mut decompressed[..],
                 );
-                Ok(new)
-            })
-            .unwrap_or_else(|| {
+                new
+            }
+            None => {
                 if frame.header().rsv1() {
-                    Err(WsError::DeCompressFailed(
+                    return Err(WsError::DeCompressFailed(
                         "extension not enabled but got compressed frame".into(),
-                    ))
+                    ));
                 } else {
-                    Ok(frame)
+                    frame
                 }
-            });
-        frame
+            }
+        };
+        Ok(frame)
     }
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
@@ -177,8 +177,6 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                     .com
                     .compress(frame.payload(), &mut compressed)
                     .map_err(WsError::CompressFailed)?;
-                dbg!(());
-                println!("{:x?}", compressed);
                 compressed.truncate(compressed.len() - 4);
                 let new = ReadFrame::new(
                     header.fin(),
@@ -186,13 +184,14 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                     false,
                     false,
                     header.opcode(),
-                    dbg!(header.mask()),
+                    header.mask(),
                     &mut compressed[..],
                 );
                 if (self.is_server && handler.config.server_no_context_takeover)
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {
                     handler.com.reset().map_err(WsError::CompressFailed)?;
+                    tracing::debug!("reset compressor");
                 }
                 Ok(new)
             })

@@ -5,7 +5,7 @@ use http::Uri;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{PMDConfig, WsDeflateCodec},
+    codec::{PMDConfig, WindowBit, WsDeflateCodec},
     frame::{OpCode, ReadFrame},
     ClientBuilder,
 };
@@ -18,6 +18,8 @@ struct Args {
 fn main() {
     tracing_subscriber::fmt::fmt()
         .with_max_level(Level::DEBUG)
+        .with_line_number(true)
+        .with_file(true)
         .finish()
         .try_init()
         .expect("failed to init log");
@@ -25,7 +27,11 @@ fn main() {
     let uri: Uri = arg.uri.parse().unwrap();
     let stream =
         TcpStream::connect(format!("{}:{}", uri.host().unwrap(), uri.port().unwrap())).unwrap();
-    let config = PMDConfig::default();
+    let config = PMDConfig {
+        server_max_window_bits: WindowBit::Nine,
+        client_max_window_bits: WindowBit::Nine,
+        ..PMDConfig::default()
+    };
     let mut client = ClientBuilder::new()
         .extension(config.ext_string())
         .connect(uri, stream, WsDeflateCodec::check_fn)
@@ -38,7 +44,7 @@ fn main() {
         if &input == "quit\n" {
             break;
         }
-        let mut data = input.as_bytes().to_vec();
+        let mut data = input.trim_end().as_bytes().to_vec();
         client
             .send_read_frame(ReadFrame::new(
                 true,
@@ -60,7 +66,7 @@ fn main() {
                         break;
                     }
                 } else {
-                    println!("[RECV] controm frame");
+                    println!("[RECV] control frame");
                 }
                 input.clear()
             }
@@ -70,5 +76,4 @@ fn main() {
             }
         }
     }
-    loop {}
 }

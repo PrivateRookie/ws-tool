@@ -349,7 +349,7 @@ impl Compressor {
 
     /// compress data
     pub fn compress(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
-        tracing::info!("compress source {:x?}", input);
+        // tracing::debug!("compress source {:?}", input);
         self.stream_apply(input, output, |stream| unsafe {
             match libz_sys::deflate(stream, libz_sys::Z_SYNC_FLUSH) {
                 libz_sys::Z_OK | libz_sys::Z_BUF_ERROR => {
@@ -361,7 +361,9 @@ impl Compressor {
                 }
                 code => Some(Err(format!("Failed to perform compression: {}", code))),
             }
-        })
+        })?;
+        // tracing::debug!("compress output {:?}", output);
+        Ok(())
     }
 
     /// reset compressor state
@@ -423,7 +425,7 @@ impl DeCompressor {
 
     /// decompress data
     pub fn decompress(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
-        tracing::info!("de compress source {:x?}", input);
+        // tracing::debug!("decompress source {:?}", input);
         self.stream_apply(input, output, |stream| unsafe {
             match libz_sys::inflate(stream, libz_sys::Z_SYNC_FLUSH) {
                 libz_sys::Z_OK | libz_sys::Z_BUF_ERROR => {
@@ -435,7 +437,9 @@ impl DeCompressor {
                 }
                 code => Some(Err(format!("Failed to perform decompression: {}", code))),
             }
-        })
+        })?;
+        // tracing::debug!("decompress output {:?}", output);
+        Ok(())
     }
 
     /// reset decompressor state
@@ -444,5 +448,25 @@ impl DeCompressor {
             libz_sys::Z_OK => Ok(()),
             code => Err(format!("Failed to reset compression context: {}", code)),
         }
+    }
+}
+
+#[test]
+fn ab() {
+    let mut com = Compressor::new(WindowBit::Fifteen);
+    let mut de = DeCompressor::new(WindowBit::Fifteen);
+
+    for idx in 0..10 {
+        let mut compressed = vec![];
+        let msg = format!(
+            "Hello, this is the {idx} times, should {idx} + {idx} = {}, {idx} * {idx} = {}, testing abc",
+            idx * 2,
+            idx * idx
+        );
+        com.compress(msg.as_bytes(), &mut compressed).unwrap();
+        println!("compressed   {:0>3} {:?}", compressed.len(), &compressed);
+        let mut output = vec![];
+        de.decompress(&compressed, &mut output).unwrap();
+        println!("decompressed {:0>3} {:?}", output.len(), output);
     }
 }
