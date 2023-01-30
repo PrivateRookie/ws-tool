@@ -50,7 +50,7 @@ fn run_test(case: usize) -> Result<(), WsError> {
                         break;
                     }
                     OpCode::Ping => {
-                        client.send(code, frame.payload())?;
+                        client.send_mut(OpCode::Pong, frame.payload_mut(), true)?;
                     }
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
@@ -63,14 +63,23 @@ fn run_test(case: usize) -> Result<(), WsError> {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&close_code.to_be_bytes());
                     data.extend_from_slice(error.to_string().as_bytes());
-                    client
-                        .send(OpCode::Close, vec![&close_code.to_be_bytes()[..], &data])
-                        .unwrap();
+                    if client
+                        .send_mut(
+                            OpCode::Close,
+                            vec![&mut close_code.to_be_bytes()[..], &mut data],
+                            true,
+                        )
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
                 _ => {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&1000u16.to_be_bytes());
-                    client.send(OpCode::Close, &data).unwrap();
+                    if client.send(OpCode::Close, &data).is_err() {
+                        break;
+                    }
                 }
             },
         }

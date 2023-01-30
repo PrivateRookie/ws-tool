@@ -130,7 +130,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
         let is_data_frame = frame.header().opcode().is_data();
         if compressed && !is_data_frame {
             return Err(WsError::ProtocolError {
-                close_code: 1000,
+                close_code: 1002,
                 error: ProtocolError::CompressedControlFrame,
             });
         }

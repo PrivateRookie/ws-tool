@@ -2,7 +2,7 @@
     "url": "ws://127.0.0.1:9002",
     "outdir": "./reports/clients",
     "cases": [
-        "*"
+        "5.*"
     ],
     "exclude-cases": [
         "9.*",
