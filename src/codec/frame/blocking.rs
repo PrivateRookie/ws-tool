@@ -376,7 +376,7 @@ impl<S: Read + Write> WsFrameCodec<S> {
     /// used to client side to construct a new client
     pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
         standard_handshake_resp_check(key.as_bytes(), &resp)?;
-        Ok(Self::new_with(stream, FrameConfig::default()))
+        Ok(Self::new_with(stream, Default::default()))
     }
 
     impl_recv! {}

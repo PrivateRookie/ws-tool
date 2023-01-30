@@ -181,7 +181,6 @@ impl FrameReadState {
             }
         }
 
-        // TODO check nonzero value according to extension negotiation
         let leading_bits = self.get_leading_bits();
         if self.config.check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
             return Err(WsError::ProtocolError {

@@ -22,7 +22,7 @@ macro_rules! impl_recv {
             let op_code = header.opcode();
             let mut data = frame.0;
             data.advance(header_len);
-            let close_code = if op_code == OpCode::Close {
+            let close_code = if op_code == OpCode::Close && data.len() >= 2 {
                 let close_code = data.get_u16();
                 Some(close_code)
             } else {

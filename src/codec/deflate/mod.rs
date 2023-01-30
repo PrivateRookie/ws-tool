@@ -33,7 +33,7 @@ use crate::errors::WsError;
 use super::default_handshake_handler;
 
 /// permessage-deflate window bit
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(i8)]
 #[allow(missing_docs)]
 pub enum WindowBit {
@@ -74,7 +74,7 @@ pub fn deflate_handshake_handler(
                     Ok(mut conf) => {
                         configs.append(&mut conf);
                     }
-                    Err(e) => return Err(WsError::HandShakeFailed(dbg!(e))),
+                    Err(e) => return Err(WsError::HandShakeFailed(e)),
                 }
             }
         }
@@ -448,25 +448,5 @@ impl DeCompressor {
             libz_sys::Z_OK => Ok(()),
             code => Err(format!("Failed to reset compression context: {}", code)),
         }
-    }
-}
-
-#[test]
-fn ab() {
-    let mut com = Compressor::new(WindowBit::Fifteen);
-    let mut de = DeCompressor::new(WindowBit::Fifteen);
-
-    for idx in 0..10 {
-        let mut compressed = vec![];
-        let msg = format!(
-            "Hello, this is the {idx} times, should {idx} + {idx} = {}, {idx} * {idx} = {}, testing abc",
-            idx * 2,
-            idx * idx
-        );
-        com.compress(msg.as_bytes(), &mut compressed).unwrap();
-        println!("compressed   {:0>3} {:?}", compressed.len(), &compressed);
-        let mut output = vec![];
-        de.decompress(&compressed, &mut output).unwrap();
-        println!("decompressed {:0>3} {:?}", output.len(), output);
     }
 }

@@ -1,9 +1,9 @@
 use bytes::BytesMut;
-use std::net::TcpStream;
+use tokio::net::TcpStream;
 use tracing::*;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{WsFrameCodec, WsStringCodec},
+    codec::{AsyncWsFrameCodec, AsyncWsStringCodec},
     errors::WsError,
     frame::OpCode,
     ClientBuilder,
@@ -11,46 +11,49 @@ use ws_tool::{
 
 const AGENT: &str = "ws-tool-client";
 
-fn get_case_count() -> Result<usize, WsError> {
-    let stream = TcpStream::connect("localhost:9002").unwrap();
+async fn get_case_count() -> Result<usize, WsError> {
+    let stream = TcpStream::connect("localhost:9002").await.unwrap();
     let mut client = ClientBuilder::new()
-        .connect(
+        .async_connect(
             "ws://localhost:9002/getCaseCount".parse().unwrap(),
             stream,
-            WsStringCodec::check_fn,
+            AsyncWsStringCodec::check_fn,
         )
+        .await
         .unwrap();
-    let msg = client.receive().unwrap();
-    client.receive().unwrap();
-    // send_close(&mut client, 1001, "".to_string()).unwrap();
+    let msg = client.receive().await.unwrap();
+    client.receive().await.unwrap();
+    // send_close(&mut client, 1001, "".to_string()).await.unwrap();
     Ok(msg.data.parse().unwrap())
 }
 
-fn run_test(case: usize) -> Result<(), WsError> {
+async fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
     let url: http::Uri = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT)
         .parse()
         .unwrap();
-    let stream = TcpStream::connect("localhost:9002").unwrap();
+    let stream = TcpStream::connect("localhost:9002").await.unwrap();
     let mut client = ClientBuilder::new()
-        .connect(url, stream, WsFrameCodec::check_fn)
+        .async_connect(url, stream, AsyncWsFrameCodec::check_fn)
+        .await
         .unwrap();
     loop {
-        match client.receive() {
-            Ok(mut frame) => {
-                let code = frame.header().opcode();
+        match client.receive().await {
+            Ok(frame) => {
+                let (header, data) = frame.split();
+                let code = header.opcode();
                 match &code {
                     OpCode::Text | OpCode::Binary => {
-                        client.send_mut(code, frame.payload_mut(), true)?;
+                        client.send(code, &data).await?;
                     }
                     OpCode::Close => {
                         let mut data = BytesMut::new();
                         data.extend_from_slice(&1000u16.to_be_bytes());
-                        client.send_mut(OpCode::Close, &mut data, true).unwrap();
+                        client.send(OpCode::Close, &data).await.unwrap();
                         break;
                     }
                     OpCode::Ping => {
-                        client.send(code, frame.payload())?;
+                        client.send(code, &data).await?;
                     }
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
@@ -65,12 +68,13 @@ fn run_test(case: usize) -> Result<(), WsError> {
                     data.extend_from_slice(error.to_string().as_bytes());
                     client
                         .send(OpCode::Close, vec![&close_code.to_be_bytes()[..], &data])
+                        .await
                         .unwrap();
                 }
                 _ => {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&1000u16.to_be_bytes());
-                    client.send(OpCode::Close, &data).unwrap();
+                    client.send(OpCode::Close, &data).await.unwrap();
                 }
             },
         }
@@ -79,30 +83,32 @@ fn run_test(case: usize) -> Result<(), WsError> {
     Ok(())
 }
 
-fn update_report() -> Result<(), WsError> {
+async fn update_report() -> Result<(), WsError> {
     let url: http::Uri = format!("ws://localhost:9002/updateReports?agent={}", AGENT)
         .parse()
         .unwrap();
-    let stream = TcpStream::connect("localhost:9002").unwrap();
+    let stream = TcpStream::connect("localhost:9002").await.unwrap();
     let mut client = ClientBuilder::new()
-        .connect(url, stream, WsStringCodec::check_fn)
+        .async_connect(url, stream, AsyncWsStringCodec::check_fn)
+        .await
         .unwrap();
-    client.send((1000u16, String::new())).map(|_| ())
+    client.send((1000u16, String::new())).await.map(|_| ())
 }
 
-fn main() -> Result<(), ()> {
+#[tokio::main]
+async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::INFO)
+        .with_max_level(Level::DEBUG)
         .finish()
         .try_init()
         .expect("failed to init log");
-    let count = get_case_count().unwrap();
+    let count = get_case_count().await.unwrap();
     info!("total case {}", count);
     for case in 1..=count {
-        if let Err(e) = run_test(case) {
+        if let Err(e) = run_test(case).await {
             error!("case {} {}", case, e);
         }
     }
-    update_report().unwrap();
+    update_report().await.unwrap();
     Ok(())
 }

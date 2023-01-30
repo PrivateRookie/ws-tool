@@ -71,7 +71,12 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                 }
             }
         }
-        let config = configs.pop();
+        let mut config = configs.pop();
+        if let Some(conf) = config.as_mut() {
+            let min = conf.client_max_window_bits.min(conf.server_max_window_bits);
+            conf.client_max_window_bits = min;
+            conf.server_max_window_bits = min;
+        }
         tracing::debug!("use deflate config {:?}", config);
         let frame_codec = WsFrameCodec::new_with(stream, frame_config);
         let codec = WsDeflateCodec::new(frame_codec, config, true);
@@ -94,7 +99,12 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                 }
             }
         }
-        let config = configs.pop();
+        let mut config = configs.pop();
+        if let Some(conf) = config.as_mut() {
+            let min = conf.client_max_window_bits.min(conf.server_max_window_bits);
+            conf.client_max_window_bits = min;
+            conf.server_max_window_bits = min;
+        }
         let frame_codec = WsFrameCodec::new_with(
             stream,
             FrameConfig {
@@ -124,7 +134,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                 error: ProtocolError::CompressedControlFrame,
             });
         }
-        // TODO handle continue frame
+        // DOUBT handle continue frame?
         let frame: ReadFrame = match self.stream_handler.as_mut() {
             Some(handler) => {
                 let mut decompressed = Vec::with_capacity(frame.payload().len() * 2);
