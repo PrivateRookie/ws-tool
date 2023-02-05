@@ -445,6 +445,17 @@ impl Header {
     }
 }
 
+/// unified frame type
+#[allow(missing_docs)]
+pub enum Frame<'a> {
+    Read(ReadFrame),
+    Owned(OwnedFrame),
+    BorrowedFrame {
+        header: HeaderView<'a>,
+        payload: Payload<'a>,
+    },
+}
+
 /// owned read framed, usually from read frame from stream
 #[derive(Debug, Clone)]
 pub struct ReadFrame(pub(crate) BytesMut);

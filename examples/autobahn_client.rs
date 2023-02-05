@@ -63,14 +63,7 @@ fn run_test(case: usize) -> Result<(), WsError> {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&close_code.to_be_bytes());
                     data.extend_from_slice(error.to_string().as_bytes());
-                    if client
-                        .send_mut(
-                            OpCode::Close,
-                            vec![&mut close_code.to_be_bytes()[..], &mut data],
-                            true,
-                        )
-                        .is_err()
-                    {
+                    if client.send_mut(OpCode::Close, &mut data, true).is_err() {
                         break;
                     }
                 }

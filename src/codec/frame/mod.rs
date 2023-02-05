@@ -241,6 +241,7 @@ impl FrameReadState {
                 let fin = header.fin();
                 let mut buf = unmasked_frame.0;
                 buf.advance(header_len);
+                // TODO 未更新 header 里长度信息
                 self.fragmented_data.0.unsplit(buf);
                 if fin {
                     // if String::from_utf8(fragmented_data.to_vec()).is_err() {
