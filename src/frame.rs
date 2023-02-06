@@ -1,5 +1,5 @@
-use crate::codec::apply_mask_fast32;
-use bytes::{Bytes, BytesMut};
+use crate::codec::{apply_mask, apply_mask_fast32};
+use bytes::{BufMut, Bytes, BytesMut};
 use std::fmt::Debug;
 
 /// Defines the interpretation of the "Payload data".  If an unknown
@@ -448,12 +448,73 @@ impl Header {
 /// unified frame type
 #[allow(missing_docs)]
 pub enum Frame<'a> {
-    Read(ReadFrame),
     Owned(OwnedFrame),
     BorrowedFrame {
         header: HeaderView<'a>,
         payload: Payload<'a>,
     },
+}
+
+#[allow(missing_docs)]
+pub struct OwnedFrame {
+    header: Header,
+    payload: BytesMut,
+}
+
+#[allow(missing_docs)]
+impl OwnedFrame {
+    pub fn new(code: OpCode, mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
+        let header = Header::new(true, false, false, false, mask, code, data.len() as u64);
+        let mut payload = BytesMut::with_capacity(data.len());
+        payload.extend_from_slice(data);
+        if let Some(mask) = header.masking_key() {
+            apply_mask(&mut payload, mask);
+        }
+        Self { header, payload }
+    }
+
+    pub fn with_raw(header: Header, payload: BytesMut) -> Self {
+        Self { header, payload }
+    }
+
+    pub fn text_frame(mask: impl Into<Option<[u8; 4]>>, data: &str) -> Self {
+        Self::new(OpCode::Text, mask, data.as_bytes())
+    }
+
+    pub fn binary_frame(mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
+        Self::new(OpCode::Binary, mask, data)
+    }
+
+    pub fn ping_frame(mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
+        assert!(data.len() <= 125);
+        Self::new(OpCode::Ping, mask, data)
+    }
+
+    pub fn pong_frame(mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
+        assert!(data.len() <= 125);
+        Self::new(OpCode::Pong, mask, data)
+    }
+
+    pub fn close_frame(
+        mask: impl Into<Option<[u8; 4]>>,
+        code: impl Into<Option<u16>>,
+        data: &[u8],
+    ) -> Self {
+        assert!(data.len() <= 123);
+        let code = code.into();
+        assert!(code.is_some() || data.is_empty());
+        let mut payload = BytesMut::with_capacity(2 + data.len());
+        if let Some(code) = code {
+            payload.put_u16(code);
+            payload.extend_from_slice(data);
+        }
+        Self::new(OpCode::Close, mask, &payload)
+    }
+}
+
+pub struct BorrowedFrame<'a> {
+    header: HeaderView<'a>,
+    payload: Bytes,
 }
 
 /// owned read framed, usually from read frame from stream
@@ -533,13 +594,13 @@ impl ReadFrame {
 
 /// borrowed data contains payload
 #[derive(Debug, Clone)]
-pub struct BorrowedFrame<'a> {
+pub struct BorrowedFrameOld<'a> {
     pub(crate) header: Header,
     /// borrowed payload
     pub payload: Payload<'a>,
 }
 
-impl<'a> BorrowedFrame<'a> {
+impl<'a> BorrowedFrameOld<'a> {
     /// immutable header view
     pub fn header(&self) -> HeaderView {
         self.header.view()
@@ -558,12 +619,12 @@ impl<'a> BorrowedFrame<'a> {
 
 /// header for user p
 #[derive(Debug, Clone)]
-pub struct OwnedFrame {
+pub struct OwnedFrameOld {
     header: Header,
     payload: BytesMut,
 }
 
-impl OwnedFrame {
+impl OwnedFrameOld {
     /// construct new owned frame
     #[allow(clippy::too_many_arguments)]
     pub fn new<M: Into<Option<[u8; 4]>>>(
