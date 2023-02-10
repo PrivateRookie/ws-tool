@@ -4,7 +4,7 @@ use bytes::{Buf, BytesMut};
 
 use crate::{
     codec::{
-        FrameConfig, FrameReadState, FrameWriteState, Split, WsFrameCodec, WsFrameRecv, WsFrameSend,
+        FrameCodec, FrameConfig, FrameReadState, FrameRecv, FrameSend, FrameWriteState, Split,
     },
     errors::WsError,
     frame::OpCode,
@@ -59,15 +59,15 @@ macro_rules! impl_send {
 }
 
 /// recv part of bytes message
-pub struct WsBytesRecv<S: Read> {
-    frame_codec: WsFrameRecv<S>,
+pub struct BytesRecv<S: Read> {
+    frame_codec: FrameRecv<S>,
 }
 
-impl<S: Read> WsBytesRecv<S> {
+impl<S: Read> BytesRecv<S> {
     /// construct method
     pub fn new(stream: S, state: FrameReadState) -> Self {
         Self {
-            frame_codec: WsFrameRecv::new(stream, state),
+            frame_codec: FrameRecv::new(stream, state),
         }
     }
 
@@ -75,15 +75,15 @@ impl<S: Read> WsBytesRecv<S> {
 }
 
 /// send part of bytes message
-pub struct WsBytesSend<S: Write> {
-    frame_codec: WsFrameSend<S>,
+pub struct BytesSend<S: Write> {
+    frame_codec: FrameSend<S>,
 }
 
-impl<S: Write> WsBytesSend<S> {
+impl<S: Write> BytesSend<S> {
     /// construct method
     pub fn new(stream: S, state: FrameWriteState) -> Self {
         Self {
-            frame_codec: WsFrameSend::new(stream, state),
+            frame_codec: FrameSend::new(stream, state),
         }
     }
 
@@ -91,22 +91,22 @@ impl<S: Write> WsBytesSend<S> {
 }
 
 /// recv/send bytes message
-pub struct WsBytesCodec<S: Read + Write> {
-    frame_codec: WsFrameCodec<S>,
+pub struct BytesCodec<S: Read + Write> {
+    frame_codec: FrameCodec<S>,
 }
 
-impl<S: Read + Write> WsBytesCodec<S> {
+impl<S: Read + Write> BytesCodec<S> {
     /// construct method
     pub fn new(stream: S) -> Self {
         Self {
-            frame_codec: WsFrameCodec::new(stream),
+            frame_codec: FrameCodec::new(stream),
         }
     }
 
     /// construct with stream & config
     pub fn new_with(stream: S, config: FrameConfig) -> Self {
         Self {
-            frame_codec: WsFrameCodec::new_with(stream, config),
+            frame_codec: FrameCodec::new_with(stream, config),
         }
     }
 
@@ -135,23 +135,23 @@ impl<S: Read + Write> WsBytesCodec<S> {
     impl_send! {}
 }
 
-impl<R, W, S> WsBytesCodec<S>
+impl<R, W, S> BytesCodec<S>
 where
     R: Read,
     W: Write,
     S: Read + Write + Split<R = R, W = W>,
 {
     /// split codec to recv and send parts
-    pub fn split(self) -> (WsBytesRecv<R>, WsBytesSend<W>) {
-        let WsFrameCodec {
+    pub fn split(self) -> (BytesRecv<R>, BytesSend<W>) {
+        let FrameCodec {
             stream,
             read_state,
             write_state,
         } = self.frame_codec;
         let (read, write) = stream.split();
         (
-            WsBytesRecv::new(read, read_state),
-            WsBytesSend::new(write, write_state),
+            BytesRecv::new(read, read_state),
+            BytesSend::new(write, write_state),
         )
     }
 }

@@ -5,7 +5,7 @@ use http::Uri;
 use tokio::net::TcpStream;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::AsyncWsStringCodec, ClientBuilder};
+use ws_tool::{codec::AsyncStringCodec, ClientBuilder};
 
 /// websocket client demo with raw frame
 #[derive(Parser)]
@@ -33,7 +33,7 @@ async fn main() -> Result<(), ()> {
         .async_connect(
             args.uri.to_string().try_into().unwrap(),
             stream,
-            AsyncWsStringCodec::check_fn,
+            AsyncStringCodec::check_fn,
         )
         .await
         .unwrap();

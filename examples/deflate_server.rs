@@ -3,7 +3,7 @@ use std::net::TcpListener;
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{deflate_handshake_handler, WsDeflateCodec},
+    codec::{deflate_handshake_handler, DeflateCodec},
     ServerBuilder,
 };
 
@@ -35,7 +35,7 @@ fn main() {
     let listener = TcpListener::bind(format!("{}:{}", args.host, args.port)).unwrap();
     for stream in listener.incoming().flatten() {
         let mut server =
-            ServerBuilder::accept(stream, deflate_handshake_handler, WsDeflateCodec::factory)
+            ServerBuilder::accept(stream, deflate_handshake_handler, DeflateCodec::factory)
                 .unwrap();
         loop {
             match server.receive() {

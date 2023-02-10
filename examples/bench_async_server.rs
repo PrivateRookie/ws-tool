@@ -2,7 +2,7 @@ use clap::Parser;
 use tokio::io::BufStream;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, AsyncWsBytesCodec},
+    codec::{default_handshake_handler, AsyncBytesCodec},
     frame::OpCode,
     ServerBuilder,
 };
@@ -52,7 +52,7 @@ async fn main() -> Result<(), ()> {
                     } else {
                         BufStream::new(stream)
                     };
-                    AsyncWsBytesCodec::factory(req, remain, stream)
+                    AsyncBytesCodec::factory(req, remain, stream)
                 },
             )
             .await

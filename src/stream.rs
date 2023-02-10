@@ -49,9 +49,9 @@ mod blocking {
         }
 
         /// websocket readonly stream
-        pub struct WsReadStream<S: Read>(pub(crate) S);
+        pub struct ReadStream<S: Read>(pub(crate) S);
 
-        impl<S: Read> Read for WsReadStream<S> {
+        impl<S: Read> Read for ReadStream<S> {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
                 self.0.read(buf)
             }
@@ -76,13 +76,13 @@ mod blocking {
             W: Write,
             S: Read + Write + Split<R = R, W = W>,
         {
-            type R = WsReadStream<R>;
+            type R = ReadStream<R>;
 
             type W = WsWriteStream<W>;
 
             fn split(self) -> (Self::R, Self::W) {
                 let (read, write) = self.0.split();
-                (WsReadStream(read), WsWriteStream(write))
+                (ReadStream(read), WsWriteStream(write))
             }
         }
     }
@@ -189,9 +189,9 @@ mod non_blocking {
         use crate::codec::Split;
 
         /// websocket readonly async stream
-        pub struct WsAsyncReadStream<S: AsyncRead>(pub(crate) S);
+        pub struct AsyncReadStream<S: AsyncRead>(pub(crate) S);
 
-        impl<S: AsyncRead + Unpin> AsyncRead for WsAsyncReadStream<S> {
+        impl<S: AsyncRead + Unpin> AsyncRead for AsyncReadStream<S> {
             fn poll_read(
                 self: Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
@@ -202,9 +202,9 @@ mod non_blocking {
         }
 
         /// websocket readonly async stream
-        pub struct WsAsyncWriteStream<S: AsyncWrite>(pub(crate) S);
+        pub struct AsyncWriteStream<S: AsyncWrite>(pub(crate) S);
 
-        impl<S: AsyncWrite + Unpin> AsyncWrite for WsAsyncWriteStream<S> {
+        impl<S: AsyncWrite + Unpin> AsyncWrite for AsyncWriteStream<S> {
             fn poll_write(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
@@ -228,26 +228,26 @@ mod non_blocking {
             }
         }
 
-        impl<R, W, S> Split for WsAsyncStream<S>
+        impl<R, W, S> Split for AsyncStream<S>
         where
             R: AsyncRead,
             W: AsyncWrite,
             S: AsyncRead + AsyncWrite + Split<R = R, W = W>,
         {
-            type R = WsAsyncReadStream<R>;
+            type R = AsyncReadStream<R>;
 
-            type W = WsAsyncWriteStream<W>;
+            type W = AsyncWriteStream<W>;
 
             fn split(self) -> (Self::R, Self::W) {
                 let (read, write) = self.0.split();
-                (WsAsyncReadStream(read), WsAsyncWriteStream(write))
+                (AsyncReadStream(read), AsyncWriteStream(write))
             }
         }
 
         /// async version of websocket stream
         #[derive(Debug)]
-        pub struct WsAsyncStream<S: AsyncRead + AsyncWrite>(pub(crate) S);
-        impl<S: AsyncWrite + AsyncRead> WsAsyncStream<S> {
+        pub struct AsyncStream<S: AsyncRead + AsyncWrite>(pub(crate) S);
+        impl<S: AsyncWrite + AsyncRead> AsyncStream<S> {
             /// create new ws async stream
             pub fn new(stream: S) -> Self {
                 Self(stream)
@@ -264,7 +264,7 @@ mod non_blocking {
             }
         }
 
-        impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for WsAsyncStream<S> {
+        impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for AsyncStream<S> {
             fn poll_read(
                 self: Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
@@ -274,7 +274,7 @@ mod non_blocking {
             }
         }
 
-        impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for WsAsyncStream<S> {
+        impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for AsyncStream<S> {
             fn poll_write(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,

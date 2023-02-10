@@ -4,7 +4,7 @@ use clap::Parser;
 use dashmap::DashMap;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::WsBytesCodec, stream::BufStream, ClientBuilder};
+use ws_tool::{codec::BytesCodec, stream::BufStream, ClientBuilder};
 
 /// websocket client demo with raw frame
 #[derive(Parser)]
@@ -87,7 +87,7 @@ fn main() -> Result<(), ()> {
                         } else {
                             BufStream::new(stream)
                         };
-                        WsBytesCodec::check_fn(key, resp, stream)
+                        BytesCodec::check_fn(key, resp, stream)
                     })
                     .unwrap();
                 client

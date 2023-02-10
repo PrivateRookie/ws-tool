@@ -4,7 +4,7 @@ use bytes::BytesMut;
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, WsBytesCodec},
+    codec::{default_handshake_handler, BytesCodec},
     frame::OpCode,
     Message, ServerBuilder,
 };
@@ -39,7 +39,7 @@ fn main() -> Result<(), ()> {
         std::thread::spawn(move || {
             tracing::info!("got connect from {:?}", addr);
             let server =
-                ServerBuilder::accept(stream, default_handshake_handler, WsBytesCodec::factory)
+                ServerBuilder::accept(stream, default_handshake_handler, BytesCodec::factory)
                     .unwrap();
             let (mut read, mut write) = server.split();
             let (tx, rx) = mpsc::channel::<Message<BytesMut>>();

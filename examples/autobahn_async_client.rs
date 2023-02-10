@@ -3,13 +3,13 @@ use tokio::net::TcpStream;
 use tracing::*;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{AsyncWsFrameCodec, AsyncWsStringCodec},
+    codec::{AsyncFrameCodec, AsyncStringCodec},
     errors::WsError,
     frame::OpCode,
     ClientBuilder,
 };
 
-const AGENT: &str = "ws-tool-client";
+const AGENT: &str = "ws-tool-async_client";
 
 async fn get_case_count() -> Result<usize, WsError> {
     let stream = TcpStream::connect("localhost:9002").await.unwrap();
@@ -17,13 +17,13 @@ async fn get_case_count() -> Result<usize, WsError> {
         .async_connect(
             "ws://localhost:9002/getCaseCount".parse().unwrap(),
             stream,
-            AsyncWsStringCodec::check_fn,
+            AsyncStringCodec::check_fn,
         )
         .await
         .unwrap();
     let msg = client.receive().await.unwrap();
     client.receive().await.unwrap();
-    // send_close(&mut client, 1001, "".to_string()).await.unwrap();
+    // send_close(&mut client, 1001, "".to_string()).unwrap();
     Ok(msg.data.parse().unwrap())
 }
 
@@ -34,17 +34,16 @@ async fn run_test(case: usize) -> Result<(), WsError> {
         .unwrap();
     let stream = TcpStream::connect("localhost:9002").await.unwrap();
     let mut client = ClientBuilder::new()
-        .async_connect(url, stream, AsyncWsFrameCodec::check_fn)
+        .async_connect(url, stream, AsyncFrameCodec::check_fn)
         .await
         .unwrap();
     loop {
         match client.receive().await {
             Ok(frame) => {
-                let (header, data) = frame.parts();
-                let code = header.opcode();
+                let code = frame.header().opcode();
                 match &code {
                     OpCode::Text | OpCode::Binary => {
-                        client.send(code, &data).await?;
+                        client.send(code, frame.payload()).await?;
                     }
                     OpCode::Close => {
                         let mut data = BytesMut::new();
@@ -53,7 +52,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                         break;
                     }
                     OpCode::Ping => {
-                        client.send(code, &data).await?;
+                        client.send(OpCode::Pong, frame.payload()).await?;
                     }
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
@@ -66,12 +65,16 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&close_code.to_be_bytes());
                     data.extend_from_slice(error.to_string().as_bytes());
-                    client.send(OpCode::Close, &data).await.unwrap();
+                    if client.send(OpCode::Close, &data).await.is_err() {
+                        break;
+                    }
                 }
                 _ => {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&1000u16.to_be_bytes());
-                    client.send(OpCode::Close, &data).await.unwrap();
+                    if client.send(OpCode::Close, &data).await.is_err() {
+                        break;
+                    }
                 }
             },
         }
@@ -86,7 +89,7 @@ async fn update_report() -> Result<(), WsError> {
         .unwrap();
     let stream = TcpStream::connect("localhost:9002").await.unwrap();
     let mut client = ClientBuilder::new()
-        .async_connect(url, stream, AsyncWsStringCodec::check_fn)
+        .async_connect(url, stream, AsyncStringCodec::check_fn)
         .await
         .unwrap();
     client.send((1000u16, String::new())).await.map(|_| ())
@@ -95,7 +98,7 @@ async fn update_report() -> Result<(), WsError> {
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::INFO)
         .finish()
         .try_init()
         .expect("failed to init log");

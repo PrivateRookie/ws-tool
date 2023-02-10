@@ -241,7 +241,7 @@ mod non_blocking {
     use bytes::BytesMut;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-    use crate::{errors::WsError, protocol::prepare_handshake, stream::WsAsyncStream};
+    use crate::{errors::WsError, protocol::prepare_handshake, stream::AsyncStream};
 
     use super::{handle_parse_handshake, perform_parse_req};
 
@@ -348,7 +348,7 @@ mod non_blocking {
 
     /// async version of handling protocol handshake
     pub async fn async_handle_handshake<S: AsyncRead + AsyncWrite + Unpin>(
-        stream: &mut WsAsyncStream<S>,
+        stream: &mut AsyncStream<S>,
     ) -> Result<(http::Request<()>, BytesMut), WsError> {
         let mut read_bytes = BytesMut::with_capacity(1024);
         let mut buf: [u8; 1024] = [0; 1024];

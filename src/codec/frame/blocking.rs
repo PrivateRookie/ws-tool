@@ -11,7 +11,6 @@ use std::io::{Read, Write};
 
 type IOResult<T> = std::io::Result<T>;
 
-// TODO apply auto mask config
 impl FrameReadState {
     fn poll<S: Read>(&mut self, stream: &mut S) -> IOResult<usize> {
         self.read_data.resize(self.read_idx + 1024, 0);
@@ -123,12 +122,12 @@ impl FrameWriteState {
 }
 
 /// recv part of websocket stream
-pub struct WsFrameRecv<S: Read> {
+pub struct FrameRecv<S: Read> {
     stream: S,
     read_state: FrameReadState,
 }
 
-impl<S: Read> WsFrameRecv<S> {
+impl<S: Read> FrameRecv<S> {
     /// construct method
     pub fn new(stream: S, read_state: FrameReadState) -> Self {
         Self { stream, read_state }
@@ -141,12 +140,12 @@ impl<S: Read> WsFrameRecv<S> {
 }
 
 /// send part of websocket frame
-pub struct WsFrameSend<S: Write> {
+pub struct FrameSend<S: Write> {
     stream: S,
     write_state: FrameWriteState,
 }
 
-impl<S: Write> WsFrameSend<S> {
+impl<S: Write> FrameSend<S> {
     /// construct method
     pub fn new(stream: S, write_state: FrameWriteState) -> Self {
         Self {
@@ -180,7 +179,7 @@ impl<S: Write> WsFrameSend<S> {
 }
 
 /// recv/send websocket frame
-pub struct WsFrameCodec<S: Read + Write> {
+pub struct FrameCodec<S: Read + Write> {
     /// underlying transport stream
     pub stream: S,
     /// read state
@@ -189,7 +188,7 @@ pub struct WsFrameCodec<S: Read + Write> {
     pub write_state: FrameWriteState,
 }
 
-impl<S: Read + Write> WsFrameCodec<S> {
+impl<S: Read + Write> FrameCodec<S> {
     /// construct method
     pub fn new(stream: S) -> Self {
         Self {
@@ -255,23 +254,23 @@ impl<S: Read + Write> WsFrameCodec<S> {
     }
 }
 
-impl<R, W, S> WsFrameCodec<S>
+impl<R, W, S> FrameCodec<S>
 where
     R: Read,
     W: Write,
     S: Read + Write + Split<R = R, W = W>,
 {
     /// split codec to recv and send parts
-    pub fn split(self) -> (WsFrameRecv<R>, WsFrameSend<W>) {
-        let WsFrameCodec {
+    pub fn split(self) -> (FrameRecv<R>, FrameSend<W>) {
+        let FrameCodec {
             stream,
             read_state,
             write_state,
         } = self;
         let (read, write) = stream.split();
         (
-            WsFrameRecv::new(read, read_state),
-            WsFrameSend::new(write, write_state),
+            FrameRecv::new(read, read_state),
+            FrameSend::new(write, write_state),
         )
     }
 }

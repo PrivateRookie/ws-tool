@@ -1,32 +1,24 @@
 use std::io::{Read, Write};
 
 use crate::{
-    codec::{FrameConfig, WsFrameCodec},
+    codec::{FrameCodec, FrameConfig},
     errors::{ProtocolError, WsError},
     frame::OwnedFrame,
     protocol::standard_handshake_resp_check,
 };
 
-use super::{Compressor, DeCompressor, PMDConfig, EXT_ID};
-
-/// helper struct to handle com/de stream
-#[allow(missing_docs)]
-pub struct StreamHandler {
-    pub config: PMDConfig,
-    pub com: Compressor,
-    pub de: DeCompressor,
-}
+use super::{Compressor, DeCompressor, PMDConfig, StreamHandler, EXT_ID};
 
 /// recv/send deflate message
-pub struct WsDeflateCodec<S: Read + Write> {
-    frame_codec: WsFrameCodec<S>,
+pub struct DeflateCodec<S: Read + Write> {
+    frame_codec: FrameCodec<S>,
     stream_handler: Option<StreamHandler>,
     is_server: bool,
 }
 
-impl<S: Read + Write> WsDeflateCodec<S> {
+impl<S: Read + Write> DeflateCodec<S> {
     /// construct method
-    pub fn new(frame_codec: WsFrameCodec<S>, config: Option<PMDConfig>, is_server: bool) -> Self {
+    pub fn new(frame_codec: FrameCodec<S>, config: Option<PMDConfig>, is_server: bool) -> Self {
         let stream_handler = if let Some(config) = config {
             let com_size = if is_server {
                 config.client_max_window_bits
@@ -78,8 +70,8 @@ impl<S: Read + Write> WsDeflateCodec<S> {
             conf.server_max_window_bits = min;
         }
         tracing::debug!("use deflate config {:?}", config);
-        let frame_codec = WsFrameCodec::new_with(stream, frame_config);
-        let codec = WsDeflateCodec::new(frame_codec, config, true);
+        let frame_codec = FrameCodec::new_with(stream, frame_config);
+        let codec = DeflateCodec::new(frame_codec, config, true);
         Ok(codec)
     }
 
@@ -105,7 +97,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
             conf.client_max_window_bits = min;
             conf.server_max_window_bits = min;
         }
-        let frame_codec = WsFrameCodec::new_with(
+        let frame_codec = FrameCodec::new_with(
             stream,
             FrameConfig {
                 check_rsv: false,
@@ -114,7 +106,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
             },
         );
         tracing::debug!("use deflate config: {:?}", config);
-        let codec = WsDeflateCodec::new(frame_codec, config, false);
+        let codec = DeflateCodec::new(frame_codec, config, false);
         Ok(codec)
     }
 

@@ -1,6 +1,6 @@
 use crate::{
     codec::{
-        FrameConfig, FrameReadState, FrameWriteState, Split, WsFrameCodec, WsFrameRecv, WsFrameSend,
+        FrameConfig, FrameReadState, FrameWriteState, Split, FrameCodec, FrameRecv, FrameSend,
     },
     errors::{ProtocolError, WsError},
     frame::OpCode,
@@ -66,16 +66,16 @@ macro_rules! impl_send {
 }
 
 /// recv part of text message
-pub struct WsStringRecv<S: Read> {
-    frame_codec: WsFrameRecv<S>,
+pub struct StringRecv<S: Read> {
+    frame_codec: FrameRecv<S>,
     validate_utf8: bool,
 }
 
-impl<S: Read> WsStringRecv<S> {
+impl<S: Read> StringRecv<S> {
     /// construct method
     pub fn new(stream: S, state: FrameReadState, validate_utf8: bool) -> Self {
         Self {
-            frame_codec: WsFrameRecv::new(stream, state),
+            frame_codec: FrameRecv::new(stream, state),
             validate_utf8,
         }
     }
@@ -84,15 +84,15 @@ impl<S: Read> WsStringRecv<S> {
 }
 
 /// send part of text message
-pub struct WsStringSend<S: Write> {
-    frame_codec: WsFrameSend<S>,
+pub struct StringSend<S: Write> {
+    frame_codec: FrameSend<S>,
 }
 
-impl<S: Write> WsStringSend<S> {
+impl<S: Write> StringSend<S> {
     /// construct method
     pub fn new(stream: S, state: FrameWriteState) -> Self {
         Self {
-            frame_codec: WsFrameSend::new(stream, state),
+            frame_codec: FrameSend::new(stream, state),
         }
     }
 
@@ -100,16 +100,16 @@ impl<S: Write> WsStringSend<S> {
 }
 
 /// recv/send text message
-pub struct WsStringCodec<S: Read + Write> {
-    frame_codec: WsFrameCodec<S>,
+pub struct StringCodec<S: Read + Write> {
+    frame_codec: FrameCodec<S>,
     validate_utf8: bool,
 }
 
-impl<S: Read + Write> WsStringCodec<S> {
+impl<S: Read + Write> StringCodec<S> {
     /// construct method
     pub fn new(stream: S) -> Self {
         Self {
-            frame_codec: WsFrameCodec::new(stream),
+            frame_codec: FrameCodec::new(stream),
             validate_utf8: false,
         }
     }
@@ -117,7 +117,7 @@ impl<S: Read + Write> WsStringCodec<S> {
     /// construct with config
     pub fn new_with(stream: S, config: FrameConfig, validate_utf8: bool) -> Self {
         Self {
-            frame_codec: WsFrameCodec::new_with(stream, config),
+            frame_codec: FrameCodec::new_with(stream, config),
             validate_utf8,
         }
     }
@@ -147,23 +147,23 @@ impl<S: Read + Write> WsStringCodec<S> {
     impl_send! {}
 }
 
-impl<R, W, S> WsStringCodec<S>
+impl<R, W, S> StringCodec<S>
 where
     R: Read,
     W: Write,
     S: Read + Write + Split<R = R, W = W>,
 {
     /// split codec to recv and send parts
-    pub fn split(self) -> (WsStringRecv<R>, WsStringSend<W>) {
-        let WsFrameCodec {
+    pub fn split(self) -> (StringRecv<R>, StringSend<W>) {
+        let FrameCodec {
             stream,
             read_state,
             write_state,
         } = self.frame_codec;
         let (read, write) = stream.split();
         (
-            WsStringRecv::new(read, read_state, self.validate_utf8),
-            WsStringSend::new(write, write_state),
+            StringRecv::new(read, read_state, self.validate_utf8),
+            StringSend::new(write, write_state),
         )
     }
 }

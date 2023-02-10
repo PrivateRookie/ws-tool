@@ -5,7 +5,7 @@ use http::Uri;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{PMDConfig, WindowBit, WsDeflateCodec},
+    codec::{PMDConfig, WindowBit, DeflateCodec},
     frame::{OpCode, OwnedFrame},
     ClientBuilder,
 };
@@ -34,7 +34,7 @@ fn main() {
     };
     let mut client = ClientBuilder::new()
         .extension(config.ext_string())
-        .connect(uri, stream, WsDeflateCodec::check_fn)
+        .connect(uri, stream, DeflateCodec::check_fn)
         .unwrap();
     let mut input = String::new();
     loop {

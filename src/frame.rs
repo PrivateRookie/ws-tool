@@ -347,22 +347,23 @@ impl Header {
 }
 
 /// unified frame type
-#[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub enum Frame<'a> {
+    /// owned frame
     Owned(OwnedFrame),
+    /// borrowed payload frame
     BorrowedFrame(BorrowedFrame<'a>),
 }
 
-#[allow(missing_docs)]
+/// owned frame
 #[derive(Debug, Clone)]
 pub struct OwnedFrame {
     header: Header,
     payload: BytesMut,
 }
 
-#[allow(missing_docs)]
 impl OwnedFrame {
+    /// construct new owned frame
     pub fn new(code: OpCode, mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
         let header = Header::new(true, false, false, false, mask, code, data.len() as u64);
         let mut payload = BytesMut::with_capacity(data.len());
@@ -373,28 +374,36 @@ impl OwnedFrame {
         Self { header, payload }
     }
 
+    /// use constructed header and payload
+    ///
+    /// **NOTE**: this will not check header and payload
     pub fn with_raw(header: Header, payload: BytesMut) -> Self {
         Self { header, payload }
     }
 
+    /// helper function to construct a text frame
     pub fn text_frame(mask: impl Into<Option<[u8; 4]>>, data: &str) -> Self {
         Self::new(OpCode::Text, mask, data.as_bytes())
     }
 
+    /// helper function to construct a binary frame
     pub fn binary_frame(mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
         Self::new(OpCode::Binary, mask, data)
     }
 
+    /// helper function to construct a ping frame
     pub fn ping_frame(mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
         assert!(data.len() <= 125);
         Self::new(OpCode::Ping, mask, data)
     }
 
+    /// helper function to construct a pong frame
     pub fn pong_frame(mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
         assert!(data.len() <= 125);
         Self::new(OpCode::Pong, mask, data)
     }
 
+    /// helper function to construct a close frame
     pub fn close_frame(
         mask: impl Into<Option<[u8; 4]>>,
         code: impl Into<Option<u16>>,
@@ -411,6 +420,7 @@ impl OwnedFrame {
         Self::new(OpCode::Close, mask, &payload)
     }
 
+    /// unmask frame if masked
     pub fn unmask(&mut self) -> Option<[u8; 4]> {
         if let Some(mask) = self.header.masking_key() {
             apply_mask_fast32(&mut self.payload, mask);
@@ -422,6 +432,9 @@ impl OwnedFrame {
         }
     }
 
+    /// mask frame with provide mask key
+    ///
+    /// this will override old mask
     pub fn mask(&mut self, mask: [u8; 4]) {
         self.unmask();
         self.header.set_mask(true);
@@ -429,6 +442,10 @@ impl OwnedFrame {
         apply_mask_fast32(&mut self.payload, mask);
     }
 
+    /// extend frame payload
+    ///
+    /// **NOTE** this function will unmask first, and then extend payload, mask with old
+    /// mask key finally
     pub fn extend_from_slice(&mut self, data: &[u8]) {
         if let Some(mask) = self.unmask() {
             self.payload.extend_from_slice(data);
@@ -440,37 +457,42 @@ impl OwnedFrame {
         }
     }
 
+    /// get frame header
     pub fn header(&self) -> &Header {
         &self.header
     }
 
+    /// get mutable frame header
     pub fn header_mut(&mut self) -> &mut Header {
         &mut self.header
     }
 
+    /// get payload
     pub fn payload(&self) -> &BytesMut {
         &self.payload
     }
 
+    /// consume frame return header and payload
     pub fn parts(mut self) -> (Header, BytesMut) {
         self.unmask();
         (self.header, self.payload)
     }
 }
 
-#[allow(missing_docs)]
+/// borrowed frame
 #[derive(Debug, Clone)]
 pub struct BorrowedFrame<'a> {
     header: HeaderView<'a>,
     payload: Bytes,
 }
 
-#[allow(missing_docs)]
 impl<'a> BorrowedFrame<'a> {
+    /// get frame header
     pub fn header(&self) -> HeaderView<'a> {
         self.header
     }
 
+    /// get frame payload
     pub fn payload(&self) -> &Bytes {
         &self.payload
     }

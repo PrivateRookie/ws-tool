@@ -1,7 +1,7 @@
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, WsBytesCodec},
+    codec::{default_handshake_handler, BytesCodec},
     frame::OpCode,
     stream::BufStream,
     ServerBuilder,
@@ -47,7 +47,7 @@ fn main() -> Result<(), ()> {
                     } else {
                         BufStream::new(stream)
                     };
-                    WsBytesCodec::factory(req, BufStream::new(stream))
+                    BytesCodec::factory(req, BufStream::new(stream))
                 })
                 .unwrap();
 

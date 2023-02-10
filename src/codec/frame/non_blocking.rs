@@ -138,12 +138,12 @@ impl FrameWriteState {
 }
 
 /// recv part of websocket stream
-pub struct AsyncWsFrameRecv<S: AsyncRead> {
+pub struct AsyncFrameRecv<S: AsyncRead> {
     stream: S,
     read_state: FrameReadState,
 }
 
-impl<S: AsyncRead + Unpin> AsyncWsFrameRecv<S> {
+impl<S: AsyncRead + Unpin> AsyncFrameRecv<S> {
     /// construct method
     pub fn new(stream: S, read_state: FrameReadState) -> Self {
         Self { stream, read_state }
@@ -156,12 +156,12 @@ impl<S: AsyncRead + Unpin> AsyncWsFrameRecv<S> {
 }
 
 /// send part of websocket frame
-pub struct AsyncWsFrameSend<S: AsyncWrite> {
+pub struct AsyncFrameSend<S: AsyncWrite> {
     stream: S,
     write_state: FrameWriteState,
 }
 
-impl<S: AsyncWrite + Unpin> AsyncWsFrameSend<S> {
+impl<S: AsyncWrite + Unpin> AsyncFrameSend<S> {
     /// construct method
     pub fn new(stream: S, write_state: FrameWriteState) -> Self {
         Self {
@@ -198,7 +198,7 @@ impl<S: AsyncWrite + Unpin> AsyncWsFrameSend<S> {
 }
 
 /// recv/send websocket frame
-pub struct AsyncWsFrameCodec<S: AsyncRead + AsyncWrite> {
+pub struct AsyncFrameCodec<S: AsyncRead + AsyncWrite> {
     /// underlying transport stream
     pub stream: S,
     /// read state
@@ -207,7 +207,7 @@ pub struct AsyncWsFrameCodec<S: AsyncRead + AsyncWrite> {
     pub write_state: FrameWriteState,
 }
 
-impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncFrameCodec<S> {
     /// construct method
     pub fn new(stream: S) -> Self {
         Self {
@@ -283,23 +283,23 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
     }
 }
 
-impl<R, W, S> AsyncWsFrameCodec<S>
+impl<R, W, S> AsyncFrameCodec<S>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
     S: AsyncRead + AsyncWrite + Unpin + Split<R = R, W = W>,
 {
     /// split codec to recv and send parts
-    pub fn split(self) -> (AsyncWsFrameRecv<R>, AsyncWsFrameSend<W>) {
-        let AsyncWsFrameCodec {
+    pub fn split(self) -> (AsyncFrameRecv<R>, AsyncFrameSend<W>) {
+        let AsyncFrameCodec {
             stream,
             read_state,
             write_state,
         } = self;
         let (read, write) = stream.split();
         (
-            AsyncWsFrameRecv::new(read, read_state),
-            AsyncWsFrameSend::new(write, write_state),
+            AsyncFrameRecv::new(read, read_state),
+            AsyncFrameSend::new(write, write_state),
         )
     }
 }

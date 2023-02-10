@@ -7,7 +7,7 @@ use clap::Parser;
 use tokio_rustls::rustls::{self, Certificate, PrivateKey};
 use tokio_rustls::TlsAcceptor;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::codec::AsyncWsStringCodec;
+use ws_tool::codec::AsyncStringCodec;
 use ws_tool::{codec::default_handshake_handler, ServerBuilder};
 
 /// websocket client connect to binance futures websocket
@@ -103,7 +103,7 @@ async fn main() -> Result<(), ()> {
             stream,
             default_handshake_handler,
             // AsyncWsStringCodec::factory,
-            AsyncWsStringCodec::factory,
+            AsyncStringCodec::factory,
         )
         .await
         .unwrap();
@@ -123,7 +123,7 @@ async fn main() -> Result<(), ()> {
             stream,
             default_handshake_handler,
             // AsyncWsStringCodec::factory,
-            AsyncWsStringCodec::factory,
+            AsyncStringCodec::factory,
         )
         .await
         .unwrap();

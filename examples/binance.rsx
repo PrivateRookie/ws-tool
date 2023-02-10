@@ -1,7 +1,7 @@
 use clap::Parser;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::AsyncWsStringCodec, ClientBuilder};
+use ws_tool::{codec::AsyncStringCodec, ClientBuilder};
 
 /// websocket client connect to binance futures websocket
 #[derive(Parser)]
@@ -87,7 +87,7 @@ async fn main() -> Result<(), ()> {
     }
 
     let mut client = builder
-        .async_connect(uri,stream,AsyncWsStringCodec::check_fn)
+        .async_connect(uri,stream,AsyncStringCodec::check_fn)
         .await
         .unwrap();
 

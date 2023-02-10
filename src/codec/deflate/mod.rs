@@ -88,6 +88,16 @@ pub fn deflate_handshake_handler(
     Ok((req, resp))
 }
 
+/// helper struct to handle com/de stream
+pub struct StreamHandler {
+    /// permessage deflate config
+    pub config: PMDConfig,
+    /// compressor
+    pub com: Compressor,
+    /// decompressor
+    pub de: DeCompressor,
+}
+
 /// permessage-deflate
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
