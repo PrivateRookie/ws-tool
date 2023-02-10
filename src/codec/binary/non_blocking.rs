@@ -36,25 +36,21 @@ macro_rules! impl_recv {
 macro_rules! impl_send {
     () => {
         /// send a message
-        pub async fn send<'a, T: Into<Message<&'a mut [u8]>>>(
+        pub async fn send<'a, T: Into<Message<&'a [u8]>>>(
             &mut self,
             msg: T,
         ) -> Result<(), WsError> {
-            let msg: Message<&'a mut [u8]> = msg.into();
+            let msg: Message<&'a [u8]> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {
-                    self.frame_codec
-                        .send_mut(
-                            msg.code,
-                            vec![&mut close_code.to_be_bytes()[..], msg.data],
-                            true,
-                        )
-                        .await
+                    let mut data = close_code.to_be_bytes().to_vec();
+                    data.extend_from_slice(msg.data);
+                    self.frame_codec.send(msg.code, &data).await
                 } else {
-                    self.frame_codec.send_mut(msg.code, msg.data, true).await
+                    self.frame_codec.send(msg.code, msg.data).await
                 }
             } else {
-                self.frame_codec.send_mut(msg.code, msg.data, true).await
+                self.frame_codec.send(msg.code, msg.data).await
             }
         }
 

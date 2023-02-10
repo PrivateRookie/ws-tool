@@ -47,25 +47,18 @@ macro_rules! impl_send {
             let msg: Message<String> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {
-                    self.frame_codec.send_mut(
-                        msg.code,
-                        vec![
-                            &mut close_code.to_be_bytes()[..],
-                            &mut msg.data.as_bytes().to_vec(),
-                        ],
-                        true,
-                    )
+                    let mut data = close_code.to_be_bytes().to_vec();
+                    data.extend_from_slice(msg.data.as_bytes());
+                    self.frame_codec.send(msg.code, &data)
                 } else {
-                    self.frame_codec
-                        .send_mut(msg.code, &mut msg.data.as_bytes().to_vec()[..], true)
+                    self.frame_codec.send(msg.code, msg.data.as_bytes())
                 }
             } else {
-                self.frame_codec
-                    .send_mut(msg.code, &mut msg.data.as_bytes().to_vec()[..], true)
+                self.frame_codec.send(msg.code, msg.data.as_bytes())
             }
         }
 
-        /// flush underlaying stream
+        /// flush underlying stream
         pub fn flush(&mut self) -> Result<(), WsError> {
             self.frame_codec.flush()
         }

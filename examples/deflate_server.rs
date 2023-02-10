@@ -33,18 +33,16 @@ fn main() {
         .expect("failed to init log");
     tracing::info!("binding on {}:{}", args.host, args.port);
     let listener = TcpListener::bind(format!("{}:{}", args.host, args.port)).unwrap();
-    for conn in listener.incoming() {
-        if let Ok(stream) = conn {
-            let mut server =
-                ServerBuilder::accept(stream, deflate_handshake_handler, WsDeflateCodec::factory)
-                    .unwrap();
-            loop {
-                match server.receive() {
-                    Ok(msg) => server.send_read_frame(msg).unwrap(),
-                    Err(e) => {
-                        dbg!(e);
-                        break;
-                    }
+    for stream in listener.incoming().flatten() {
+        let mut server =
+            ServerBuilder::accept(stream, deflate_handshake_handler, WsDeflateCodec::factory)
+                .unwrap();
+        loop {
+            match server.receive() {
+                Ok(msg) => server.send_owned_frame(msg).unwrap(),
+                Err(e) => {
+                    dbg!(e);
+                    break;
                 }
             }
         }

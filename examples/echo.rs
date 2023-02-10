@@ -1,6 +1,8 @@
 use std::{io::Write, path::PathBuf};
 
 use clap::Parser;
+use http::Uri;
+use tokio::net::TcpStream;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{codec::AsyncWsStringCodec, ClientBuilder};
@@ -8,7 +10,7 @@ use ws_tool::{codec::AsyncWsStringCodec, ClientBuilder};
 /// websocket client demo with raw frame
 #[derive(Parser)]
 struct Args {
-    uri: String,
+    uri: Uri,
     /// cert file path
     #[arg(short, long)]
     cert: Option<PathBuf>,
@@ -23,12 +25,16 @@ async fn main() -> Result<(), ()> {
         .expect("failed to init log");
     let args = Args::parse();
 
-    let mut builder = ClientBuilder::new(&args.uri);
-    if let Some(cert) = args.cert {
-        builder = builder.cert(cert);
-    }
+    let builder = ClientBuilder::new();
+    let stream = TcpStream::connect((args.uri.host().unwrap(), args.uri.port_u16().unwrap()))
+        .await
+        .unwrap();
     let mut client = builder
-        .async_connect(AsyncWsStringCodec::check_fn)
+        .async_connect(
+            args.uri.to_string().try_into().unwrap(),
+            stream,
+            AsyncWsStringCodec::check_fn,
+        )
         .await
         .unwrap();
 
@@ -47,6 +53,7 @@ async fn main() -> Result<(), ()> {
                 if item.data == "quit" {
                     break;
                 }
+                client.send((1000u16, "done".into())).await.ok();
                 input.clear()
             }
             Err(e) => {

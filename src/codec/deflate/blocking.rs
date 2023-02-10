@@ -134,7 +134,6 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                 error: ProtocolError::CompressedControlFrame,
             });
         }
-        // DOUBT handle continue frame?
         let frame: OwnedFrame = match self.stream_handler.as_mut() {
             Some(handler) => {
                 let mut decompressed = Vec::with_capacity(frame.payload().len() * 2);
@@ -167,7 +166,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
     }
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
-    pub fn send_read_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
+    pub fn send_owned_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
         let frame: Result<OwnedFrame, WsError> = self
             .stream_handler
             .as_mut()
@@ -192,6 +191,6 @@ impl<S: Read + Write> WsDeflateCodec<S> {
             })
             .unwrap_or(Ok(frame));
 
-        self.frame_codec.send_read_frame(frame?)
+        self.frame_codec.send_owned_frame(frame?)
     }
 }

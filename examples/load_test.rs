@@ -9,7 +9,7 @@ use ws_tool::{codec::WsBytesCodec, stream::BufStream, ClientBuilder};
 /// websocket client demo with raw frame
 #[derive(Parser)]
 struct Args {
-    uri: String,
+    uri: http::Uri,
 
     // client size
     #[arg(short, long, default_value = "1")]
@@ -77,9 +77,9 @@ fn main() -> Result<(), ()> {
             let counter = counter.clone();
             let uri = args.uri.clone();
             std::thread::spawn(move || {
-                let builder = ClientBuilder::new(uri);
+                let builder = ClientBuilder::new();
                 let mut client = builder
-                    .connect(|key, resp, stream| {
+                    .connect(args.uri, , |key, resp, stream| {
                         let stream = if let Some(buffer) = args.buffer {
                             BufStream::with_capacity(buffer, buffer, stream)
                         } else {

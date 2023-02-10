@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use crate::frame::OpCode;
 
+// TODO add custom error kind
 /// errors during handshake, read/write frame
 #[derive(Debug, Error)]
 pub enum WsError {

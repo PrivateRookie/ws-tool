@@ -6,7 +6,7 @@ use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{PMDConfig, WindowBit, WsDeflateCodec},
-    frame::{OpCode, ReadFrame},
+    frame::{OpCode, OwnedFrame},
     ClientBuilder,
 };
 
@@ -44,18 +44,9 @@ fn main() {
         if &input == "quit\n" {
             break;
         }
-        let mut data = input.trim_end().as_bytes().to_vec();
-        client
-            .send_read_frame(ReadFrame::new(
-                true,
-                false,
-                false,
-                false,
-                OpCode::Text,
-                false,
-                &mut data[..],
-            ))
-            .unwrap();
+        let data = input.trim_end().as_bytes();
+        let frame = OwnedFrame::new(OpCode::Text, None, data);
+        client.send_owned_frame(frame).unwrap();
         match client.receive() {
             Ok(item) => {
                 if item.header().opcode().is_data() {
