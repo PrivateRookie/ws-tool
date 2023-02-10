@@ -5,7 +5,7 @@ use super::{FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     codec::Split,
     errors::WsError,
-    frame::{Header, OpCode, Payload, PayloadMut, ReadFrame},
+    frame::{Header, OpCode, OwnedFrame, Payload, PayloadMut},
     protocol::standard_handshake_resp_check,
 };
 
@@ -46,7 +46,7 @@ impl FrameReadState {
     async fn async_read_one_frame<S: AsyncRead + Unpin>(
         &mut self,
         stream: &mut S,
-    ) -> Result<ReadFrame, WsError> {
+    ) -> Result<OwnedFrame, WsError> {
         while !self.is_header_ok() {
             self.async_poll(stream).await?;
         }
@@ -59,7 +59,7 @@ impl FrameReadState {
     pub async fn async_receive<S: AsyncRead + Unpin>(
         &mut self,
         stream: &mut S,
-    ) -> Result<ReadFrame, WsError> {
+    ) -> Result<OwnedFrame, WsError> {
         loop {
             let frame = self.async_read_one_frame(stream).await?;
             if let Some(frame) = self.check_frame(frame)? {
@@ -244,16 +244,16 @@ impl FrameWriteState {
     async fn async_send_read_frame<S: AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
-        frame: ReadFrame,
+        frame: OwnedFrame,
     ) -> IOResult<()> {
-        stream.write_all(&frame.0).await
+        stream.write_all(frame.payload()).await
     }
 }
 
 macro_rules! impl_recv {
     () => {
         /// receive a frame
-        pub async fn receive(&mut self) -> Result<ReadFrame, WsError> {
+        pub async fn receive(&mut self) -> Result<OwnedFrame, WsError> {
             self.read_state.async_receive(&mut self.stream).await
         }
     };
@@ -293,7 +293,7 @@ macro_rules! impl_send {
         }
 
         /// send a read frame, **this method will not check validation of frame and do not fragment**
-        pub async fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
+        pub async fn send_read_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
             self.write_state
                 .async_send_read_frame(&mut self.stream, frame)
                 .await

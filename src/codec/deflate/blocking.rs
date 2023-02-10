@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use crate::{
     codec::{FrameConfig, WsFrameCodec},
     errors::{ProtocolError, WsError},
-    frame::ReadFrame,
+    frame::OwnedFrame,
     protocol::standard_handshake_resp_check,
 };
 
@@ -124,7 +124,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
     }
 
     /// receive a message
-    pub fn receive(&mut self) -> Result<ReadFrame, WsError> {
+    pub fn receive(&mut self) -> Result<OwnedFrame, WsError> {
         let frame = self.frame_codec.receive()?;
         let compressed = frame.header().rsv1();
         let is_data_frame = frame.header().opcode().is_data();
@@ -135,10 +135,10 @@ impl<S: Read + Write> WsDeflateCodec<S> {
             });
         }
         // DOUBT handle continue frame?
-        let frame: ReadFrame = match self.stream_handler.as_mut() {
+        let frame: OwnedFrame = match self.stream_handler.as_mut() {
             Some(handler) => {
                 let mut decompressed = Vec::with_capacity(frame.payload().len() * 2);
-                let (header, mut payload) = frame.split();
+                let (header, mut payload) = frame.parts();
                 payload.extend_from_slice(&[0, 0, 255, 255]);
                 handler
                     .de
@@ -151,16 +151,7 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                     handler.de.reset().map_err(WsError::DeCompressFailed)?;
                     tracing::debug!("reset decompressor state");
                 }
-                let new = ReadFrame::new(
-                    true,
-                    false,
-                    false,
-                    false,
-                    header.opcode(),
-                    header.mask(),
-                    &mut decompressed[..],
-                );
-                new
+                OwnedFrame::new(header.opcode(), None, &decompressed[..])
             }
             None => {
                 if frame.header().rsv1() {
@@ -176,8 +167,8 @@ impl<S: Read + Write> WsDeflateCodec<S> {
     }
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
-    pub fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
-        let frame: Result<ReadFrame, WsError> = self
+    pub fn send_read_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
+        let frame: Result<OwnedFrame, WsError> = self
             .stream_handler
             .as_mut()
             .map(|handler| {
@@ -188,15 +179,9 @@ impl<S: Read + Write> WsDeflateCodec<S> {
                     .compress(frame.payload(), &mut compressed)
                     .map_err(WsError::CompressFailed)?;
                 compressed.truncate(compressed.len() - 4);
-                let new = ReadFrame::new(
-                    header.fin(),
-                    true,
-                    false,
-                    false,
-                    header.opcode(),
-                    header.mask(),
-                    &mut compressed[..],
-                );
+                let mut new = OwnedFrame::new(header.opcode(), header.masking_key(), &compressed);
+                new.header_mut().set_fin(header.fin());
+
                 if (self.is_server && handler.config.server_no_context_takeover)
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {

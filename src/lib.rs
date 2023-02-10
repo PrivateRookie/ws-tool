@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use bytes::{Bytes, BytesMut};
 use errors::WsError;
-use frame::{BorrowedFrameOld, OpCode, ReadFrame};
+use frame::{OpCode, OwnedFrame, BorrowedFrame};
 
 pub use http;
 
@@ -292,13 +292,13 @@ impl DefaultCode for Bytes {
     }
 }
 
-impl DefaultCode for ReadFrame {
+impl DefaultCode for OwnedFrame {
     fn code(&self) -> OpCode {
         self.header().opcode()
     }
 }
 
-impl<'a> DefaultCode for BorrowedFrameOld<'a> {
+impl<'a> DefaultCode for BorrowedFrame<'a> {
     fn code(&self) -> OpCode {
         self.header().opcode()
     }

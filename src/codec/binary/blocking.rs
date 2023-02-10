@@ -17,11 +17,8 @@ macro_rules! impl_recv {
         /// receive a message
         pub fn receive(&mut self) -> Result<Message<BytesMut>, WsError> {
             let frame = self.frame_codec.receive()?;
-            let header = frame.header();
-            let header_len = header.payload_idx().0;
+            let (header, mut data) = frame.parts();
             let op_code = header.opcode();
-            let mut data = frame.0;
-            data.advance(header_len);
             let close_code = if op_code == OpCode::Close {
                 Some(data.get_u16())
             } else {

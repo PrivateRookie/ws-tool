@@ -2,7 +2,7 @@ use super::{FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     codec::Split,
     errors::WsError,
-    frame::{Header, OpCode, Payload, PayloadMut, ReadFrame},
+    frame::{Header, OpCode, OwnedFrame, Payload, PayloadMut},
     protocol::standard_handshake_resp_check,
 };
 use std::io::{Read, Write};
@@ -35,7 +35,7 @@ impl FrameReadState {
         }
     }
 
-    fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<ReadFrame, WsError> {
+    fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
         while !self.is_header_ok() {
             self.poll(stream)?;
         }
@@ -45,7 +45,7 @@ impl FrameReadState {
     }
 
     /// **NOTE** masked frame has already been unmasked
-    pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<ReadFrame, WsError> {
+    pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
         loop {
             let frame = self.read_one_frame(stream)?;
             if let Some(frame) = self.check_frame(frame)? {
@@ -83,25 +83,10 @@ impl FrameWriteState {
                 payload.apply_mask(key)
             }
         }
-        // let payload_size: usize = payload.0.iter().map(|part| part.len()).sum();
-        // if payload_size <= THRESHOLD {
-        //     let mut data = header.0;
-        //     data.reserve(payload_size);
-        //     for part in payload.0 {
-        //         data.extend_from_slice(part);
-        //     }
-        //     stream.write_all(&data)?;
-        // } else {
-        //     stream.write_all(&header.0)?;
-        //     for part in payload.0 {
-        //         stream.write_all(part)?;
-        //     }
-        // }
         stream.write_all(&header.0)?;
         for part in payload.0 {
             stream.write_all(part)?;
         }
-
         Ok(())
     }
 
@@ -236,15 +221,16 @@ impl FrameWriteState {
         Ok(())
     }
 
-    fn send_read_frame<S: Write>(&mut self, stream: &mut S, frame: ReadFrame) -> IOResult<()> {
-        stream.write_all(&frame.0)
+    fn send_read_frame<S: Write>(&mut self, stream: &mut S, frame: OwnedFrame) -> IOResult<()> {
+        stream.write_all(&frame.header().0)?;
+        stream.write_all(frame.payload())
     }
 }
 
 macro_rules! impl_recv {
     () => {
         /// receive a frame
-        pub fn receive(&mut self) -> Result<ReadFrame, WsError> {
+        pub fn receive(&mut self) -> Result<OwnedFrame, WsError> {
             self.read_state.receive(&mut self.stream)
         }
     };
@@ -282,7 +268,7 @@ macro_rules! impl_send {
         }
 
         /// send a read frame, **this method will not check validation of frame and do not fragment**
-        pub fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
+        pub fn send_read_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
             self.write_state
                 .send_read_frame(&mut self.stream, frame)
                 .map_err(|e| WsError::IOError(Box::new(e)))

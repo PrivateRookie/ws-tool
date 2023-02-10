@@ -1,7 +1,3 @@
-use std::io::{Read, Write};
-
-use bytes::Buf;
-
 use crate::{
     codec::{
         FrameConfig, FrameReadState, FrameWriteState, Split, WsFrameCodec, WsFrameRecv, WsFrameSend,
@@ -11,17 +7,16 @@ use crate::{
     protocol::standard_handshake_resp_check,
     Message,
 };
+use bytes::Buf;
+use std::io::{Read, Write};
 
 macro_rules! impl_recv {
     () => {
         /// for close frame with body, first two bytes of string are close reason
         pub fn receive(&mut self) -> Result<Message<String>, WsError> {
             let frame = self.frame_codec.receive()?;
-            let header = frame.header();
-            let header_len = header.payload_idx().0;
+            let (header, mut data) = frame.parts();
             let op_code = header.opcode();
-            let mut data = frame.0;
-            data.advance(header_len);
             let close_code = if op_code == OpCode::Close && data.len() >= 2 {
                 let close_code = data.get_u16();
                 Some(close_code)
