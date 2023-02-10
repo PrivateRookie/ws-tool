@@ -264,19 +264,27 @@ impl FrameReadState {
                 if !header.fin() {
                     self.fragmented = true;
                     self.fragmented_type = opcode.clone();
+                    if opcode == OpCode::Text
+                        && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
+                    {
+                        return Err(WsError::ProtocolError {
+                            close_code: 1007,
+                            error: ProtocolError::InvalidUtf8,
+                        });
+                    }
                     self.fragmented_data.header_mut().set_opcode(opcode);
                     self.fragmented_data
                         .extend_from_slice(unmasked_frame.payload());
                     Ok(None)
                 } else {
-                    // if opcode == OpCode::Text
-                    //     && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
-                    // {
-                    //     return Err(WsError::ProtocolError {
-                    //         close_code: 1007,
-                    //         error: ProtocolError::InvalidUtf8,
-                    //     });
-                    // }
+                    if opcode == OpCode::Text
+                        && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
+                    {
+                        return Err(WsError::ProtocolError {
+                            close_code: 1007,
+                            error: ProtocolError::InvalidUtf8,
+                        });
+                    }
                     Ok(Some(unmasked_frame))
                 }
             }

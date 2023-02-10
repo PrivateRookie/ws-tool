@@ -82,12 +82,12 @@ async fn main() -> Result<(), ()> {
             auth,
         };
 
-        let stream = sproxy::create_conn(&config, target_addr, target_port)
+        let stream = sproxy::create_conn(&config, target_addr, target_port);
         builder = builder.socks5_proxy()
     }
 
     let mut client = builder
-        .async_connect(AsyncWsStringCodec::check_fn)
+        .async_connect(uri,stream,AsyncWsStringCodec::check_fn)
         .await
         .unwrap();
 

@@ -278,10 +278,10 @@ impl Header {
                 leading_byte &= 128;
                 header[1] = leading_byte | 126;
                 let len_arr = (len as u16).to_be_bytes();
-                header[2] = len_arr[0];
-                header[3] = len_arr[1];
                 let idx = 1 + 3;
                 header.resize(idx + mask_len, 0);
+                header[2] = len_arr[0];
+                header[3] = len_arr[1];
                 if let Some(mask) = mask {
                     header[idx..].copy_from_slice(&mask);
                 }
@@ -291,9 +291,9 @@ impl Header {
                 leading_byte &= 128;
                 header[1] = leading_byte | 127;
                 let len_arr = len.to_be_bytes();
-                header[2..10].copy_from_slice(&len_arr[..8]);
-                let idx = 1 + 3;
+                let idx = 1 + 9;
                 header.resize(idx + mask_len, 0);
+                header[2..10].copy_from_slice(&len_arr[..8]);
                 if let Some(mask) = mask {
                     header[idx..].copy_from_slice(&mask);
                 }

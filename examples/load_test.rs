@@ -1,4 +1,4 @@
-use std::{process::exit, sync::Arc, thread::JoinHandle};
+use std::{net::TcpStream, process::exit, sync::Arc, thread::JoinHandle};
 
 use clap::Parser;
 use dashmap::DashMap;
@@ -78,8 +78,10 @@ fn main() -> Result<(), ()> {
             let uri = args.uri.clone();
             std::thread::spawn(move || {
                 let builder = ClientBuilder::new();
+                let stream =
+                    TcpStream::connect((uri.host().unwrap(), uri.port_u16().unwrap())).unwrap();
                 let mut client = builder
-                    .connect(args.uri, , |key, resp, stream| {
+                    .connect(uri, stream, |key, resp, stream| {
                         let stream = if let Some(buffer) = args.buffer {
                             BufStream::with_capacity(buffer, buffer, stream)
                         } else {
@@ -98,9 +100,9 @@ fn main() -> Result<(), ()> {
 
                 let counter_c = counter.clone();
                 let w = std::thread::spawn(move || {
-                    let mut payload = vec![0].repeat(size);
+                    let payload = vec![0].repeat(size);
                     loop {
-                        w.send(&mut payload[..]).unwrap();
+                        w.send(&payload[..]).unwrap();
                         let mut ent = counter_c.entry(idx).or_default();
                         ent.0 += 1;
                     }

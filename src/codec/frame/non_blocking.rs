@@ -90,6 +90,12 @@ impl FrameWriteState {
             }
         };
 
+        if payload.is_empty() {
+            let mask = mask_fn();
+            let header = Header::new(true, false, false, false, mask, opcode, 0);
+            stream.write_all(&header.0).await?;
+            return Ok(());
+        }
         let chunk_size = if self.config.auto_fragment_size > 0 {
             self.config.auto_fragment_size
         } else {

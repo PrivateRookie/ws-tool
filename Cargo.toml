@@ -25,6 +25,8 @@ tracing = "0.1"
 bytes = "1"
 httparse = "1.8"
 sha-1 = "0.10"
+simdutf8 = "0.1.4"
+
 futures = { version = "0.3", optional = true }
 tokio = { version = "1", features = ["rt", "net", "io-util"], optional = true }
 

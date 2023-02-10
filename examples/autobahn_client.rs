@@ -37,20 +37,20 @@ fn run_test(case: usize) -> Result<(), WsError> {
         .unwrap();
     loop {
         match client.receive() {
-            Ok(mut frame) => {
+            Ok(frame) => {
                 let code = frame.header().opcode();
                 match &code {
                     OpCode::Text | OpCode::Binary => {
-                        client.send_mut(code, frame.payload_mut(), true)?;
+                        client.send(code, frame.payload())?;
                     }
                     OpCode::Close => {
                         let mut data = BytesMut::new();
                         data.extend_from_slice(&1000u16.to_be_bytes());
-                        client.send_mut(OpCode::Close, &mut data, true).unwrap();
+                        client.send(OpCode::Close, &data).unwrap();
                         break;
                     }
                     OpCode::Ping => {
-                        client.send_mut(OpCode::Pong, frame.payload_mut(), true)?;
+                        client.send(OpCode::Pong, frame.payload())?;
                     }
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
@@ -63,7 +63,7 @@ fn run_test(case: usize) -> Result<(), WsError> {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&close_code.to_be_bytes());
                     data.extend_from_slice(error.to_string().as_bytes());
-                    if client.send_mut(OpCode::Close, &mut data, true).is_err() {
+                    if client.send(OpCode::Close, &data).is_err() {
                         break;
                     }
                 }

@@ -53,8 +53,8 @@ fn main() -> Result<(), ()> {
 
             loop {
                 match rx.recv() {
-                    Ok(mut msg) => {
-                        write.send(&mut msg.data[..]).unwrap();
+                    Ok(msg) => {
+                        write.send(&msg.data[..]).unwrap();
                     }
                     Err(e) => {
                         dbg!(e);

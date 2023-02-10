@@ -52,11 +52,11 @@ fn main() -> Result<(), ()> {
                 .unwrap();
 
             loop {
-                let mut msg = server.receive().unwrap();
+                let msg = server.receive().unwrap();
                 if msg.code == OpCode::Close {
                     break;
                 }
-                server.send(&mut msg.data[..]).unwrap();
+                server.send(&msg.data[..]).unwrap();
             }
             tracing::info!("one conn down");
         });

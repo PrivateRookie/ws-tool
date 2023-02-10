@@ -58,11 +58,11 @@ async fn main() -> Result<(), ()> {
             .await
             .unwrap();
             loop {
-                let mut msg = server.receive().await.unwrap();
+                let msg = server.receive().await.unwrap();
                 if msg.code == OpCode::Close {
                     break;
                 }
-                server.send(&mut msg.data[..]).await.unwrap();
+                server.send(&msg.data[..]).await.unwrap();
             }
             tracing::info!("one conn down");
         });

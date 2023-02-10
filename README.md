@@ -6,8 +6,8 @@ An easy to use websocket client/server toolkit, supporting blocking/async IO.
 
 | IO type  | split | proxy(auth) | tls | buffered  stream | deflate | use as client | use as server |
 | -------- | ----- | ----------- | --- | ---------------- | ------- | ------------- | ------------- |
-| blocking | ✅     | ✅           | ✅   | ✅                | 🚧wip    | ✅             | ✅             |
-| async    | ✅     | ✅           | ✅   | ✅                | 🚧wip    | ✅             | ✅             |
+| blocking | ✅     | ✅           | ✅   | ✅                | ✅       | ✅             | ✅             |
+| async    | ✅     | ✅           | ✅   | ✅                | ✅       | ✅             | ✅             |
 
 
 It's tested by autobaha test suit. see [examples/autobahn-client](examples/autobahn-client.rs)
@@ -78,7 +78,7 @@ but ws-tool still try to parse extension/protocol from "," separated header valu
 ## TODO
 
 - [x] add proxy auth config
-- [ ] support custom https proxy cert
+- [x] support custom https proxy cert
 - [x] split client into writer & reader
 - [x] add buffered stream
 
