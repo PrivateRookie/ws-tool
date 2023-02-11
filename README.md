@@ -67,22 +67,6 @@ but ws-tool still try to parse extension/protocol from "," separated header valu
 
 
 
-## autobahn test report
-
-<details>
-<summary>click to expand report</summary>
-
-![report](./assets/report.jpeg)
-</details>
-
-## TODO
-
-- [x] add proxy auth config
-- [x] support custom https proxy cert
-- [x] split client into writer & reader
-- [x] add buffered stream
-
-
 ## REF
 
 - [WebSocket RFC](https://tools.ietf.org/html/rfc6455)

@@ -26,13 +26,6 @@ echo "building..."
 echo "cargo build --no-default-features --features async,async_tls_rustls"
 cargo build --no-default-features --features async,async_tls_rustls
 
-echo "building..."
-echo "cargo build --no-default-features --features async,async_tls_rustls,async_proxy"
-cargo build --no-default-features --features async,async_tls_rustls,async_proxy
-
-echo "building..."
-echo "cargo build --no-default-features --features async,async_proxy"
-cargo build --no-default-features --features async,async_proxy
 
 echo "building..."
 echo "cargo build --no-default-features --all-features"

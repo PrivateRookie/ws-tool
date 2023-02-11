@@ -81,7 +81,7 @@ pub fn deflate_handshake_handler(
     }
     if let Some(config) = configs.pop() {
         resp.headers_mut().insert(
-            EXT_ID,
+            "sec-websocket-extensions",
             http::HeaderValue::from_str(&config.ext_string()).unwrap(),
         );
     }
@@ -324,13 +324,13 @@ impl Drop for Compressor {
     fn drop(&mut self) {
         match unsafe { libz_sys::deflateEnd(self.stream.as_mut()) } {
             libz_sys::Z_STREAM_ERROR => {
-                tracing::warn!("Compression stream encountered bad state.")
+                tracing::trace!("Compression stream encountered bad state.")
             }
             // Ignore discarded data error because we are raw
             libz_sys::Z_OK | libz_sys::Z_DATA_ERROR => {
                 tracing::trace!("Deallocated compression context.")
             }
-            code => tracing::error!("Bad zlib status encountered: {}", code),
+            code => tracing::trace!("Bad zlib status encountered: {}", code),
         }
     }
 }
@@ -402,13 +402,13 @@ impl Drop for DeCompressor {
     fn drop(&mut self) {
         match unsafe { libz_sys::deflateEnd(self.stream.as_mut()) } {
             libz_sys::Z_STREAM_ERROR => {
-                tracing::warn!("Decompression stream encountered bad state.")
+                tracing::trace!("Decompression stream encountered bad state.")
             }
             // Ignore discarded data error because we are raw
             libz_sys::Z_OK | libz_sys::Z_DATA_ERROR => {
                 tracing::trace!("Deallocated decompression context.")
             }
-            code => tracing::error!("Bad zlib status encountered: {}", code),
+            code => tracing::trace!("Bad zlib status encountered: {}", code),
         }
     }
 }

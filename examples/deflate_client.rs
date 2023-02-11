@@ -2,11 +2,12 @@ use std::{io::Write, net::TcpStream};
 
 use clap::Parser;
 use http::Uri;
+use rand::random;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{PMDConfig, WindowBit, DeflateCodec},
-    frame::{OpCode, OwnedFrame},
+    codec::{DeflateCodec, PMDConfig, WindowBit},
+    frame::OwnedFrame,
     ClientBuilder,
 };
 
@@ -44,8 +45,7 @@ fn main() {
         if &input == "quit\n" {
             break;
         }
-        let data = input.trim_end().as_bytes();
-        let frame = OwnedFrame::new(OpCode::Text, None, data);
+        let frame = OwnedFrame::text_frame(random::<[u8; 4]>(), input.trim_end());
         client.send_owned_frame(frame).unwrap();
         match client.receive() {
             Ok(item) => {

@@ -9,7 +9,7 @@ use ws_tool::{
     ClientBuilder,
 };
 
-const AGENT: &str = "ws-tool-async_client";
+const AGENT: &str = "async-client";
 
 async fn get_case_count() -> Result<usize, WsError> {
     let stream = TcpStream::connect("localhost:9002").await.unwrap();

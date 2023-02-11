@@ -9,7 +9,7 @@ use ws_tool::{
     ClientBuilder,
 };
 
-const AGENT: &str = "ws-tool-deflate-client";
+const AGENT: &str = "deflate-client";
 
 fn get_case_count() -> Result<usize, WsError> {
     let stream = TcpStream::connect("localhost:9002").unwrap();
@@ -40,10 +40,18 @@ fn run_test(case: usize) -> Result<(), WsError> {
         client_max_window_bits: WindowBit::Nine,
         ..PMDConfig::default()
     };
-    let mut client = ClientBuilder::new()
-        .extension(config.ext_string())
-        .connect(url, stream, DeflateCodec::check_fn)
-        .unwrap();
+    let mut client = match ClientBuilder::new().extension(config.ext_string()).connect(
+        url,
+        stream,
+        DeflateCodec::check_fn,
+    ) {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::error!("{e}");
+            return Ok(());
+        }
+    };
+    let now = std::time::Instant::now();
     loop {
         match client.receive() {
             Ok(frame) => {
@@ -58,6 +66,7 @@ fn run_test(case: usize) -> Result<(), WsError> {
                     }
                     OpCode::Close => {
                         client.send_owned_frame(OwnedFrame::close_frame(mask_key(), 1000, &[]))?;
+                        tracing::info!("case {case} elapsed {:?}", now.elapsed());
                         break;
                     }
                     OpCode::Ping => {

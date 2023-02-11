@@ -8,7 +8,7 @@ use crate::{
     protocol::standard_handshake_resp_check,
 };
 
-use super::{Compressor, DeCompressor, PMDConfig, StreamHandler, EXT_ID};
+use super::{Compressor, DeCompressor, PMDConfig, StreamHandler};
 
 /// recv/send deflate message
 pub struct AsyncDeflateCodec<S: AsyncRead + AsyncWrite> {
@@ -91,7 +91,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
         standard_handshake_resp_check(key.as_bytes(), &resp)?;
         let mut configs: Vec<PMDConfig> = vec![];
         for (k, v) in resp.headers() {
-            if k.as_str().to_lowercase() == EXT_ID {
+            if k.as_str().to_lowercase() == "sec-websocket-extensions" {
                 if let Ok(s) = v.to_str() {
                     match PMDConfig::parse_str(s) {
                         Ok(mut conf) => {
@@ -139,6 +139,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
                 error: ProtocolError::CompressedControlFrame,
             });
         }
+        if !is_data_frame {
+            return Ok(frame);
+        }
         let frame: OwnedFrame = match self.stream_handler.as_mut() {
             Some(handler) => {
                 let mut decompressed = Vec::with_capacity(frame.payload().len() * 2);
@@ -153,7 +156,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {
                     handler.de.reset().map_err(WsError::DeCompressFailed)?;
-                    tracing::debug!("reset decompressor state");
+                    tracing::trace!("reset decompressor state");
                 }
                 OwnedFrame::new(header.opcode(), None, &decompressed[..])
             }
@@ -171,31 +174,41 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
     }
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
-    pub async fn send_owned_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
+    pub async fn send_owned_frame(&mut self, mut frame: OwnedFrame) -> Result<(), WsError> {
+        if !frame.header().opcode().is_data() {
+            return self.frame_codec.send_owned_frame(frame).await;
+        }
+        let prev_mask = frame.unmask();
+        let header = frame.header();
         let frame: Result<OwnedFrame, WsError> = self
             .stream_handler
             .as_mut()
             .map(|handler| {
-                let header = frame.header();
                 let mut compressed = Vec::with_capacity(frame.payload().len());
                 handler
                     .com
                     .compress(frame.payload(), &mut compressed)
                     .map_err(WsError::CompressFailed)?;
                 compressed.truncate(compressed.len() - 4);
-                let mut new = OwnedFrame::new(header.opcode(), header.masking_key(), &compressed);
-                new.header_mut().set_fin(header.fin());
+                let mut new = OwnedFrame::new(header.opcode(), prev_mask, &compressed);
+                let header = new.header_mut();
+                header.set_rsv1(true);
+                header.set_fin(header.fin());
 
                 if (self.is_server && handler.config.server_no_context_takeover)
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {
                     handler.com.reset().map_err(WsError::CompressFailed)?;
-                    tracing::debug!("reset compressor");
+                    tracing::trace!("reset compressor");
                 }
                 Ok(new)
             })
-            .unwrap_or(Ok(frame));
-
+            .unwrap_or_else(|| {
+                if let Some(mask) = prev_mask {
+                    frame.mask(mask);
+                }
+                Ok(frame)
+            });
         self.frame_codec.send_owned_frame(frame?).await
     }
 }

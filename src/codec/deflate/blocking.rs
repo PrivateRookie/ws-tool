@@ -144,7 +144,7 @@ impl<S: Read + Write> DeflateCodec<S> {
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {
                     handler.de.reset().map_err(WsError::DeCompressFailed)?;
-                    tracing::debug!("reset decompressor state");
+                    tracing::trace!("reset decompressor state");
                 }
                 OwnedFrame::new(header.opcode(), None, &decompressed[..])
             }
@@ -163,11 +163,10 @@ impl<S: Read + Write> DeflateCodec<S> {
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
     pub fn send_owned_frame(&mut self, mut frame: OwnedFrame) -> Result<(), WsError> {
-        let prev_mask = frame.unmask();
         if !frame.header().opcode().is_data() {
             return self.frame_codec.send_owned_frame(frame);
         }
-
+        let prev_mask = frame.unmask();
         let header = frame.header();
         let frame: Result<OwnedFrame, WsError> = self
             .stream_handler
@@ -188,11 +187,16 @@ impl<S: Read + Write> DeflateCodec<S> {
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {
                     handler.com.reset().map_err(WsError::CompressFailed)?;
-                    tracing::debug!("reset compressor");
+                    tracing::trace!("reset compressor");
                 }
                 Ok(new)
             })
-            .unwrap_or(Ok(frame));
+            .unwrap_or_else(|| {
+                if let Some(mask) = prev_mask {
+                    frame.mask(mask);
+                }
+                Ok(frame)
+            });
         self.frame_codec.send_owned_frame(frame?)
     }
 }

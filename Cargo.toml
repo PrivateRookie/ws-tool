@@ -44,16 +44,13 @@ rustls-connector = { version = "0.16", optional = true, features = [
 libz-sys = { version = "1.1.8", optional = true }
 
 # proxy deps
-hproxy = { version = "0.1", optional = true }
-sproxy = { version = "0.1", optional = true }
+
 
 [features]
 default = ["sync"]
 sync = []
-sync_proxy = ["sync", "hproxy/sync", "sproxy/sync"]
 sync_tls_rustls = ["sync", "rustls-connector"]
 async = ["tokio", "futures"]
-async_proxy = ["async", "hproxy/async", "sproxy/async"]
 async_tls_rustls = [
     "async",
     "tokio-rustls",
@@ -72,6 +69,7 @@ rcgen = "0.8"
 dashmap = { version = "5.4.0", features = ["serde"] }
 serde_json = { version = "1" }
 serde = { version = "1", features = ["derive"] }
-
+hproxy = { version = "0.1", features = ["sync", "async"] }
+sproxy = { version = "0.1", features = ["sync", "async"] }
 # benchmark deps
 tungstenite = "0.18.0"
