@@ -324,7 +324,7 @@ impl Drop for Compressor {
     fn drop(&mut self) {
         match unsafe { libz_sys::deflateEnd(self.stream.as_mut()) } {
             libz_sys::Z_STREAM_ERROR => {
-                tracing::error!("Compression stream encountered bad state.")
+                tracing::warn!("Compression stream encountered bad state.")
             }
             // Ignore discarded data error because we are raw
             libz_sys::Z_OK | libz_sys::Z_DATA_ERROR => {
@@ -369,7 +369,7 @@ impl Compressor {
                         None
                     }
                 }
-                code => Some(Err(format!("Failed to perform compression: {}", code))),
+                code => Some(Err(code.to_string())),
             }
         })?;
         // tracing::debug!("compress output {:?}", output);
@@ -402,7 +402,7 @@ impl Drop for DeCompressor {
     fn drop(&mut self) {
         match unsafe { libz_sys::deflateEnd(self.stream.as_mut()) } {
             libz_sys::Z_STREAM_ERROR => {
-                tracing::error!("Decompression stream encountered bad state.")
+                tracing::warn!("Decompression stream encountered bad state.")
             }
             // Ignore discarded data error because we are raw
             libz_sys::Z_OK | libz_sys::Z_DATA_ERROR => {
@@ -445,7 +445,7 @@ impl DeCompressor {
                         None
                     }
                 }
-                code => Some(Err(format!("Failed to perform decompression: {}", code))),
+                code => Some(Err(code.to_string())),
             }
         })?;
         // tracing::debug!("decompress output {:?}", output);

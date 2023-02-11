@@ -2,7 +2,7 @@ use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
-    codec::{AsyncFrameCodec, FrameConfig},
+    codec::{AsyncFrameCodec, FrameConfig, ValidateUtf8Policy},
     errors::{ProtocolError, WsError},
     frame::OwnedFrame,
     protocol::standard_handshake_resp_check,
@@ -53,6 +53,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
         let frame_config = FrameConfig {
             mask_send_frame: false,
             check_rsv: false,
+            validate_utf8: ValidateUtf8Policy::Off,
             ..Default::default()
         };
         let mut configs: Vec<PMDConfig> = vec![];
@@ -112,6 +113,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
             FrameConfig {
                 check_rsv: false,
                 mask_send_frame: false,
+                validate_utf8: ValidateUtf8Policy::Off,
                 ..Default::default()
             },
             remain,

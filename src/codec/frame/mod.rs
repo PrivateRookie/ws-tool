@@ -16,6 +16,28 @@ mod non_blocking;
 #[cfg(feature = "async")]
 pub use non_blocking::*;
 
+/// text frame utf-8 checking policy
+#[derive(Debug, Clone)]
+pub enum ValidateUtf8Policy {
+    /// no not validate utf
+    Off,
+    /// fail if fragment frame payload is not valid utf8
+    FastFail,
+    /// check utf8 after merged
+    On,
+}
+
+#[allow(missing_docs)]
+impl ValidateUtf8Policy {
+    pub fn should_check(&self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    pub fn is_fast_fail(&self) -> bool {
+        matches!(self, Self::FastFail)
+    }
+}
+
 /// frame send/recv config
 #[derive(Debug, Clone)]
 pub struct FrameConfig {
@@ -31,6 +53,8 @@ pub struct FrameConfig {
     pub auto_fragment_size: usize,
     /// auto merge fragmented frames into one frame
     pub merge_frame: bool,
+    /// utf8 check policy
+    pub validate_utf8: ValidateUtf8Policy,
 }
 
 impl Default for FrameConfig {
@@ -42,6 +66,7 @@ impl Default for FrameConfig {
             max_frame_payload_size: 0,
             auto_fragment_size: 0,
             merge_frame: true,
+            validate_utf8: ValidateUtf8Policy::FastFail,
         }
     }
 }
@@ -249,6 +274,7 @@ impl FrameReadState {
                         &mut self.fragmented_data,
                         OwnedFrame::new(OpCode::Binary, None, &[]),
                     );
+                    self.fragmented = false;
                     Ok(Some(completed_frame))
                 } else {
                     Ok(None)
@@ -265,6 +291,7 @@ impl FrameReadState {
                     self.fragmented = true;
                     self.fragmented_type = opcode.clone();
                     if opcode == OpCode::Text
+                        && self.config.validate_utf8.is_fast_fail()
                         && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
                     {
                         return Err(WsError::ProtocolError {
@@ -278,6 +305,7 @@ impl FrameReadState {
                     Ok(None)
                 } else {
                     if opcode == OpCode::Text
+                        && self.config.validate_utf8.should_check()
                         && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
                     {
                         return Err(WsError::ProtocolError {

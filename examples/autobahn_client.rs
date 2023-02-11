@@ -66,12 +66,12 @@ fn run_test(case: usize) -> Result<(), WsError> {
                         break;
                     }
                 }
-                _ => {
+                e => {
+                    tracing::warn!("{e}");
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&1000u16.to_be_bytes());
-                    if client.send(OpCode::Close, &data).is_err() {
-                        break;
-                    }
+                    client.send(OpCode::Close, &data).ok();
+                    break;
                 }
             },
         }

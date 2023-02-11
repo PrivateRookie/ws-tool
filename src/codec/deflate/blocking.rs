@@ -1,13 +1,13 @@
 use std::io::{Read, Write};
 
 use crate::{
-    codec::{FrameCodec, FrameConfig},
+    codec::{FrameCodec, FrameConfig, ValidateUtf8Policy},
     errors::{ProtocolError, WsError},
     frame::OwnedFrame,
     protocol::standard_handshake_resp_check,
 };
 
-use super::{Compressor, DeCompressor, PMDConfig, StreamHandler, EXT_ID};
+use super::{Compressor, DeCompressor, PMDConfig, StreamHandler};
 
 /// recv/send deflate message
 pub struct DeflateCodec<S: Read + Write> {
@@ -48,6 +48,7 @@ impl<S: Read + Write> DeflateCodec<S> {
         let frame_config = FrameConfig {
             mask_send_frame: false,
             check_rsv: false,
+            validate_utf8: ValidateUtf8Policy::Off,
             ..Default::default()
         };
         let mut configs: Vec<PMDConfig> = vec![];
@@ -80,7 +81,7 @@ impl<S: Read + Write> DeflateCodec<S> {
         standard_handshake_resp_check(key.as_bytes(), &resp)?;
         let mut configs: Vec<PMDConfig> = vec![];
         for (k, v) in resp.headers() {
-            if k.as_str().to_lowercase() == EXT_ID {
+            if k.as_str().to_lowercase() == "sec-websocket-extensions" {
                 if let Ok(s) = v.to_str() {
                     match PMDConfig::parse_str(s) {
                         Ok(mut conf) => {
@@ -102,6 +103,7 @@ impl<S: Read + Write> DeflateCodec<S> {
             FrameConfig {
                 check_rsv: false,
                 mask_send_frame: false,
+                validate_utf8: ValidateUtf8Policy::Off,
                 ..Default::default()
             },
         );
@@ -126,6 +128,9 @@ impl<S: Read + Write> DeflateCodec<S> {
                 error: ProtocolError::CompressedControlFrame,
             });
         }
+        if !is_data_frame {
+            return Ok(frame);
+        }
         let frame: OwnedFrame = match self.stream_handler.as_mut() {
             Some(handler) => {
                 let mut decompressed = Vec::with_capacity(frame.payload().len() * 2);
@@ -135,7 +140,6 @@ impl<S: Read + Write> DeflateCodec<S> {
                     .de
                     .decompress(&payload, &mut decompressed)
                     .map_err(WsError::DeCompressFailed)?;
-
                 if (self.is_server && handler.config.server_no_context_takeover)
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {
@@ -158,20 +162,27 @@ impl<S: Read + Write> DeflateCodec<S> {
     }
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
-    pub fn send_owned_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
+    pub fn send_owned_frame(&mut self, mut frame: OwnedFrame) -> Result<(), WsError> {
+        let prev_mask = frame.unmask();
+        if !frame.header().opcode().is_data() {
+            return self.frame_codec.send_owned_frame(frame);
+        }
+
+        let header = frame.header();
         let frame: Result<OwnedFrame, WsError> = self
             .stream_handler
             .as_mut()
             .map(|handler| {
-                let header = frame.header();
                 let mut compressed = Vec::with_capacity(frame.payload().len());
                 handler
                     .com
                     .compress(frame.payload(), &mut compressed)
                     .map_err(WsError::CompressFailed)?;
                 compressed.truncate(compressed.len() - 4);
-                let mut new = OwnedFrame::new(header.opcode(), header.masking_key(), &compressed);
-                new.header_mut().set_fin(header.fin());
+                let mut new = OwnedFrame::new(header.opcode(), prev_mask, &compressed);
+                let header = new.header_mut();
+                header.set_rsv1(true);
+                header.set_fin(header.fin());
 
                 if (self.is_server && handler.config.server_no_context_takeover)
                     || (!self.is_server && handler.config.client_no_context_takeover)
@@ -182,7 +193,6 @@ impl<S: Read + Write> DeflateCodec<S> {
                 Ok(new)
             })
             .unwrap_or(Ok(frame));
-
         self.frame_codec.send_owned_frame(frame?)
     }
 }

@@ -69,12 +69,13 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                         break;
                     }
                 }
-                _ => {
-                    let mut data = BytesMut::new();
-                    data.extend_from_slice(&1000u16.to_be_bytes());
-                    if client.send(OpCode::Close, &data).await.is_err() {
-                        break;
-                    }
+                e => {
+                    tracing::warn!("{e}");
+                    client
+                        .send(OpCode::Close, &1000u16.to_be_bytes())
+                        .await
+                        .ok();
+                    break;
                 }
             },
         }

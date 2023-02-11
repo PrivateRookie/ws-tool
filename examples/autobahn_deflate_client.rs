@@ -85,13 +85,12 @@ fn run_test(case: usize) -> Result<(), WsError> {
                         break;
                     }
                 }
-                _ => {
-                    if client
+                e => {
+                    tracing::warn!("{e}");
+                    client
                         .send_owned_frame(OwnedFrame::close_frame(mask_key(), 1000, &[]))
-                        .is_err()
-                    {
-                        break;
-                    }
+                        .ok();
+                    break;
                 }
             },
         }
@@ -114,6 +113,8 @@ fn update_report() -> Result<(), WsError> {
 fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
         .with_max_level(Level::INFO)
+        .with_file(true)
+        .with_line_number(true)
         .finish()
         .try_init()
         .expect("failed to init log");
