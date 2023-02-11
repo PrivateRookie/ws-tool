@@ -1,6 +1,6 @@
 [package]
 name = "ws-tool"
-version = "0.6.0-alpha"
+version = "0.7.0-alpha"
 authors = ["PrivateRookie <996514515@qq.com>"]
 edition = "2021"
 description = "an easy to use websocket tool"
