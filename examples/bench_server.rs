@@ -1,7 +1,7 @@
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, WsBytesCodec},
+    codec::{default_handshake_handler, BytesCodec},
     frame::OpCode,
     stream::BufStream,
     ServerBuilder,
@@ -47,16 +47,16 @@ fn main() -> Result<(), ()> {
                     } else {
                         BufStream::new(stream)
                     };
-                    WsBytesCodec::factory(req, BufStream::new(stream))
+                    BytesCodec::factory(req, BufStream::new(stream))
                 })
                 .unwrap();
 
             loop {
-                let mut msg = server.receive().unwrap();
+                let msg = server.receive().unwrap();
                 if msg.code == OpCode::Close {
                     break;
                 }
-                server.send(&mut msg.data[..]).unwrap();
+                server.send(&msg.data[..]).unwrap();
             }
             tracing::info!("one conn down");
         });

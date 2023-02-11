@@ -1,15 +1,15 @@
-use std::{process::exit, sync::Arc, thread::JoinHandle};
+use std::{net::TcpStream, process::exit, sync::Arc, thread::JoinHandle};
 
 use clap::Parser;
 use dashmap::DashMap;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::WsBytesCodec, stream::BufStream, ClientBuilder};
+use ws_tool::{codec::BytesCodec, stream::BufStream, ClientBuilder};
 
 /// websocket client demo with raw frame
 #[derive(Parser)]
 struct Args {
-    uri: String,
+    uri: http::Uri,
 
     // client size
     #[arg(short, long, default_value = "1")]
@@ -77,15 +77,17 @@ fn main() -> Result<(), ()> {
             let counter = counter.clone();
             let uri = args.uri.clone();
             std::thread::spawn(move || {
-                let builder = ClientBuilder::new(uri);
+                let builder = ClientBuilder::new();
+                let stream =
+                    TcpStream::connect((uri.host().unwrap(), uri.port_u16().unwrap())).unwrap();
                 let mut client = builder
-                    .connect(|key, resp, stream| {
+                    .connect(uri, stream, |key, resp, stream| {
                         let stream = if let Some(buffer) = args.buffer {
                             BufStream::with_capacity(buffer, buffer, stream)
                         } else {
                             BufStream::new(stream)
                         };
-                        WsBytesCodec::check_fn(key, resp, stream)
+                        BytesCodec::check_fn(key, resp, stream)
                     })
                     .unwrap();
                 client
@@ -98,9 +100,9 @@ fn main() -> Result<(), ()> {
 
                 let counter_c = counter.clone();
                 let w = std::thread::spawn(move || {
-                    let mut payload = vec![0].repeat(size);
+                    let payload = vec![0].repeat(size);
                     loop {
-                        w.send(&mut payload[..]).unwrap();
+                        w.send(&payload[..]).unwrap();
                         let mut ent = counter_c.entry(idx).or_default();
                         ent.0 += 1;
                     }

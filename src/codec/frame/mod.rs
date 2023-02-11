@@ -1,7 +1,7 @@
 use crate::errors::{ProtocolError, WsError};
-use crate::frame::{get_bit, parse_opcode, OpCode, ReadFrame};
+use crate::frame::{get_bit, parse_opcode, Header, HeaderView, OpCode, OwnedFrame};
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 use std::fmt::Debug;
 
 #[cfg(feature = "sync")]
@@ -15,6 +15,28 @@ mod non_blocking;
 
 #[cfg(feature = "async")]
 pub use non_blocking::*;
+
+/// text frame utf-8 checking policy
+#[derive(Debug, Clone)]
+pub enum ValidateUtf8Policy {
+    /// no not validate utf
+    Off,
+    /// fail if fragment frame payload is not valid utf8
+    FastFail,
+    /// check utf8 after merged
+    On,
+}
+
+#[allow(missing_docs)]
+impl ValidateUtf8Policy {
+    pub fn should_check(&self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    pub fn is_fast_fail(&self) -> bool {
+        matches!(self, Self::FastFail)
+    }
+}
 
 /// frame send/recv config
 #[derive(Debug, Clone)]
@@ -31,6 +53,8 @@ pub struct FrameConfig {
     pub auto_fragment_size: usize,
     /// auto merge fragmented frames into one frame
     pub merge_frame: bool,
+    /// utf8 check policy
+    pub validate_utf8: ValidateUtf8Policy,
 }
 
 impl Default for FrameConfig {
@@ -42,6 +66,7 @@ impl Default for FrameConfig {
             max_frame_payload_size: 0,
             auto_fragment_size: 0,
             merge_frame: true,
+            validate_utf8: ValidateUtf8Policy::FastFail,
         }
     }
 }
@@ -89,7 +114,7 @@ pub struct FrameReadState {
     config: FrameConfig,
     read_idx: usize,
     read_data: BytesMut,
-    fragmented_data: ReadFrame,
+    fragmented_data: OwnedFrame,
     fragmented_type: OpCode,
 }
 
@@ -100,7 +125,7 @@ impl Default for FrameReadState {
             fragmented: false,
             read_idx: 0,
             read_data: BytesMut::new(),
-            fragmented_data: ReadFrame::empty(OpCode::Binary),
+            fragmented_data: OwnedFrame::new(OpCode::Binary, None, &[]),
             fragmented_type: OpCode::default(),
         }
     }
@@ -181,7 +206,6 @@ impl FrameReadState {
             }
         }
 
-        // TODO check nonzero value according to extension negotiation
         let leading_bits = self.get_leading_bits();
         if self.config.check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
             return Err(WsError::ProtocolError {
@@ -214,20 +238,24 @@ impl FrameReadState {
     }
 
     /// get a frame and reset state
-    pub fn consume_frame(&mut self, len: usize) -> ReadFrame {
-        let data = self.read_data.split_to(len);
+    pub fn consume_frame(&mut self, len: usize) -> OwnedFrame {
+        let mut data = self.read_data.split_to(len);
+        let view = HeaderView(&data);
+        let payload_len = view.payload_len();
+        let header = data.split_to(data.len() - payload_len as usize);
         self.read_idx = self.read_data.len();
-        let mut frame = ReadFrame(data);
-        if let Some(key) = frame.header().masking_key() {
-            if self.config.auto_unmask {
-                apply_mask_fast32(frame.payload_mut(), key);
-            }
+        let mut frame = OwnedFrame::with_raw(Header::raw(header), data);
+        if self.config.auto_unmask {
+            frame.unmask();
         }
         frame
     }
 
     /// perform protocol checking after receiving a frame
-    pub fn check_frame(&mut self, unmasked_frame: ReadFrame) -> Result<Option<ReadFrame>, WsError> {
+    pub fn check_frame(
+        &mut self,
+        unmasked_frame: OwnedFrame,
+    ) -> Result<Option<OwnedFrame>, WsError> {
         let header = unmasked_frame.header();
         let opcode = header.opcode();
         match opcode {
@@ -238,21 +266,15 @@ impl FrameReadState {
                         error: ProtocolError::MissInitialFragmentedFrame,
                     });
                 }
-                let (header_len, _) = header.payload_idx();
                 let fin = header.fin();
-                let mut buf = unmasked_frame.0;
-                buf.advance(header_len);
-                self.fragmented_data.0.unsplit(buf);
+                self.fragmented_data
+                    .extend_from_slice(unmasked_frame.payload());
                 if fin {
-                    // if String::from_utf8(fragmented_data.to_vec()).is_err() {
-                    //     return Err(WsError::ProtocolError {
-                    //         close_code: 1007,
-                    //         error: ProtocolError::InvalidUtf8,
-                    //     });
-                    // }
-                    let completed_frame = self
-                        .fragmented_data
-                        .replace(ReadFrame::empty(OpCode::Binary));
+                    let completed_frame = std::mem::replace(
+                        &mut self.fragmented_data,
+                        OwnedFrame::new(OpCode::Binary, None, &[]),
+                    );
+                    self.fragmented = false;
                     Ok(Some(completed_frame))
                 } else {
                     Ok(None)
@@ -268,21 +290,29 @@ impl FrameReadState {
                 if !header.fin() {
                     self.fragmented = true;
                     self.fragmented_type = opcode.clone();
+                    if opcode == OpCode::Text
+                        && self.config.validate_utf8.is_fast_fail()
+                        && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
+                    {
+                        return Err(WsError::ProtocolError {
+                            close_code: 1007,
+                            error: ProtocolError::InvalidUtf8,
+                        });
+                    }
                     self.fragmented_data.header_mut().set_opcode(opcode);
-                    let header_len = header.payload_idx().0;
-                    let mut buf = unmasked_frame.0;
-                    buf.advance(header_len);
-                    self.fragmented_data.0.unsplit(buf);
+                    self.fragmented_data
+                        .extend_from_slice(unmasked_frame.payload());
                     Ok(None)
                 } else {
-                    // if opcode == OpCode::Text
-                    //     && String::from_utf8(frame.payload_data_unmask().to_vec()).is_err()
-                    // {
-                    //     return Err(WsError::ProtocolError {
-                    //         close_code: 1007,
-                    //         error: ProtocolError::InvalidUtf8,
-                    //     });
-                    // }
+                    if opcode == OpCode::Text
+                        && self.config.validate_utf8.should_check()
+                        && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
+                    {
+                        return Err(WsError::ProtocolError {
+                            close_code: 1007,
+                            error: ProtocolError::InvalidUtf8,
+                        });
+                    }
                     Ok(Some(unmasked_frame))
                 }
             }

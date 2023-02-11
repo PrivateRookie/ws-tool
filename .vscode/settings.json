@@ -1,9 +1,12 @@
 {
     "cSpell.words": [
+        "compresser",
+        "decompressor",
         "hproxy",
         "httparse",
         "Nagle",
         "NODELAY",
+        "permessage",
         "rustls",
         "rutls",
         "sproxy",

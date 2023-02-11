@@ -1,7 +1,8 @@
 use clap::Parser;
+use tokio::net::TcpStream;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::AsyncWsStringCodec, ClientBuilder};
+use ws_tool::{codec::AsyncStringCodec, ClientBuilder};
 
 /// websocket client connect to binance futures websocket
 #[derive(Parser)]
@@ -36,7 +37,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::INFO)
+        .with_max_level(Level::DEBUG)
         .finish()
         .try_init()
         .expect("failed to init log");
@@ -45,8 +46,8 @@ async fn main() -> Result<(), ()> {
     let uri: http::Uri = format!("wss://fstream.binance.com/stream?streams={}", channels)
         .parse()
         .unwrap();
-    let mut builder = ClientBuilder::new();
-    if let Some(host) = args.hp_host {
+    let builder = ClientBuilder::new();
+    let stream = if let Some(host) = args.hp_host {
         let auth = args
             .hp_auth
             .map(|auth| {
@@ -63,9 +64,11 @@ async fn main() -> Result<(), ()> {
             auth,
             keep_alive: true,
         };
-        let stream = hproxy::create_conn(&config, &format!("fstream.binance.com:443")).unwrap();
-    }
-    if let Some(host) = args.sp_host {
+
+        hproxy::async_create_conn(&config, "fstream.binance.com")
+            .await
+            .unwrap()
+    } else if let Some(host) = args.sp_host {
         let auth = args
             .sp_auth
             .map(|auth| {
@@ -81,13 +84,16 @@ async fn main() -> Result<(), ()> {
             port: args.sp_port,
             auth,
         };
-
-        let stream = sproxy::create_conn(&config, target_addr, target_port)
-        builder = builder.socks5_proxy()
-    }
+        let (stream, _, _) = sproxy::async_create_conn(&config, "fstream.binance.com".into(), 443)
+            .await
+            .unwrap();
+        stream
+    } else {
+        TcpStream::connect("fstream.binance.com:443").await.unwrap()
+    };
 
     let mut client = builder
-        .async_connect(AsyncWsStringCodec::check_fn)
+        .async_connect(uri, stream, AsyncStringCodec::check_fn)
         .await
         .unwrap();
 

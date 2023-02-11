@@ -1,11 +1,11 @@
 use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use super::{FrameConfig, FrameReadState, FrameWriteState};
+use super::{apply_mask_fast32, FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     codec::Split,
     errors::WsError,
-    frame::{Header, OpCode, Payload, PayloadMut, ReadFrame},
+    frame::{Header, OpCode, OwnedFrame},
     protocol::standard_handshake_resp_check,
 };
 
@@ -46,7 +46,7 @@ impl FrameReadState {
     async fn async_read_one_frame<S: AsyncRead + Unpin>(
         &mut self,
         stream: &mut S,
-    ) -> Result<ReadFrame, WsError> {
+    ) -> Result<OwnedFrame, WsError> {
         while !self.is_header_ok() {
             self.async_poll(stream).await?;
         }
@@ -59,7 +59,7 @@ impl FrameReadState {
     pub async fn async_receive<S: AsyncRead + Unpin>(
         &mut self,
         stream: &mut S,
-    ) -> Result<ReadFrame, WsError> {
+    ) -> Result<OwnedFrame, WsError> {
         loop {
             let frame = self.async_read_one_frame(stream).await?;
             if let Some(frame) = self.check_frame(frame)? {
@@ -70,136 +70,17 @@ impl FrameReadState {
 }
 
 impl FrameWriteState {
-    #[allow(clippy::too_many_arguments)]
-    async fn async_send_one_mut<'a, S: AsyncWrite + Unpin, M: Into<Option<[u8; 4]>>>(
-        &mut self,
-        stream: &mut S,
-        fin: bool,
-        rsv1: bool,
-        rsv2: bool,
-        rsv3: bool,
-        mask_key: M,
-        opcode: OpCode,
-        mut payload: PayloadMut<'a>,
-        mask_payload: bool,
-    ) -> IOResult<()> {
-        let header = Header::new(
-            fin,
-            rsv1,
-            rsv2,
-            rsv3,
-            mask_key,
-            opcode,
-            payload.len() as u64,
-        );
-        if mask_payload {
-            if let Some(key) = header.masking_key() {
-                payload.apply_mask(key)
-            }
-        }
-        stream.write_all(&header.0).await?;
-        for part in payload.0 {
-            stream.write_all(part).await?;
-        }
-        Ok(())
-    }
-
-    /// send mutable payload
-    ///
-    /// if mask_payload is set, mask payload first
-    ///
-    /// will auto fragment if auto_fragment_size > 0
-    pub async fn async_send_mut<'a, S: AsyncWrite + Unpin>(
-        &mut self,
-        stream: &mut S,
-        opcode: OpCode,
-        payload: PayloadMut<'a>,
-        mask_payload: bool,
-    ) -> IOResult<()> {
-        let split_size = self.config.auto_fragment_size;
-        let mask_send = self.config.mask_send_frame;
-        let mask_fn = || {
-            if mask_send {
-                Some(rand::random())
-            } else {
-                None
-            }
-        };
-        if split_size > 0 {
-            let parts = payload.split_with(split_size);
-            let total = parts.len();
-            for (idx, part) in parts.into_iter().enumerate() {
-                let fin = idx + 1 == total;
-                let key = mask_fn();
-                self.async_send_one_mut(
-                    stream,
-                    fin,
-                    false,
-                    false,
-                    false,
-                    key,
-                    opcode.clone(),
-                    part,
-                    mask_payload,
-                )
-                .await?;
-            }
-        } else {
-            let key = mask_fn();
-            self.async_send_one_mut(
-                stream,
-                true,
-                false,
-                false,
-                false,
-                key,
-                opcode,
-                payload,
-                mask_payload,
-            )
-            .await?;
-        }
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn async_send_one<'a, S: AsyncWrite + Unpin, M: Into<Option<[u8; 4]>>>(
-        &mut self,
-        stream: &mut S,
-        fin: bool,
-        rsv1: bool,
-        rsv2: bool,
-        rsv3: bool,
-        mask_key: M,
-        opcode: OpCode,
-        payload: Payload<'a>,
-    ) -> IOResult<()> {
-        let header = Header::new(
-            fin,
-            rsv1,
-            rsv2,
-            rsv3,
-            mask_key,
-            opcode,
-            payload.len() as u64,
-        );
-        stream.write_all(&header.0).await?;
-        for part in payload.0 {
-            stream.write_all(part).await?;
-        }
-        Ok(())
-    }
-
     /// send immutable payload
     ///
+    /// if need to mask, copy data to inner buffer and then apply mask
+    ///
     /// will auto fragment if auto_fragment_size > 0
-    pub async fn async_send<'a, S: AsyncWrite + Unpin>(
+    pub async fn async_send<S: AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
         opcode: OpCode,
-        payload: Payload<'a>,
+        payload: &[u8],
     ) -> IOResult<()> {
-        let split_size = self.config.auto_fragment_size;
         let mask_send = self.config.mask_send_frame;
         let mask_fn = || {
             if mask_send {
@@ -208,130 +89,79 @@ impl FrameWriteState {
                 None
             }
         };
-        if split_size > 0 {
-            let parts = payload.split_with(split_size);
-            let total = parts.len();
-            for (idx, part) in parts.into_iter().enumerate() {
-                let fin = idx + 1 == total;
-                self.async_send_one(
-                    stream,
-                    fin,
-                    false,
-                    false,
-                    false,
-                    mask_fn(),
-                    opcode.clone(),
-                    part,
-                )
-                .await?;
-            }
+
+        if payload.is_empty() {
+            let mask = mask_fn();
+            let header = Header::new(true, false, false, false, mask, opcode, 0);
+            stream.write_all(&header.0).await?;
+            return Ok(());
+        }
+        let chunk_size = if self.config.auto_fragment_size > 0 {
+            self.config.auto_fragment_size
         } else {
-            self.async_send_one(
-                stream,
-                true,
+            payload.len()
+        };
+        let parts: Vec<&[u8]> = payload.chunks(chunk_size).collect();
+        let total = parts.len();
+        for (idx, chunk) in parts.into_iter().enumerate() {
+            let fin = idx + 1 == total;
+            let mask = mask_fn();
+            let header = Header::new(
+                fin,
                 false,
                 false,
                 false,
-                mask_fn(),
-                opcode,
-                payload,
-            )
-            .await?;
+                mask,
+                opcode.clone(),
+                chunk.len() as u64,
+            );
+            stream.write_all(&header.0).await?;
+            if let Some(mask) = mask {
+                let mut data = BytesMut::from_iter(chunk);
+                apply_mask_fast32(&mut data, mask);
+                stream.write_all(&data).await?;
+            } else {
+                stream.write_all(chunk).await?;
+            }
         }
         Ok(())
     }
 
-    async fn async_send_read_frame<S: AsyncWrite + Unpin>(
+    async fn async_send_owned_frame<S: AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
-        frame: ReadFrame,
+        frame: OwnedFrame,
     ) -> IOResult<()> {
-        stream.write_all(&frame.0).await
+        stream.write_all(&frame.header().0).await?;
+        stream.write_all(frame.payload()).await
     }
-}
-
-macro_rules! impl_recv {
-    () => {
-        /// receive a frame
-        pub async fn receive(&mut self) -> Result<ReadFrame, WsError> {
-            self.read_state.async_receive(&mut self.stream).await
-        }
-    };
-}
-
-macro_rules! impl_send {
-    () => {
-        /// send mutable payload
-        ///
-        /// if mask_payload is set, mask payload first
-        ///
-        /// will auto fragment if auto_fragment_size > 0
-        pub async fn send_mut<'a, P: Into<PayloadMut<'a>>>(
-            &mut self,
-            opcode: OpCode,
-            payload: P,
-            mask_payload: bool,
-        ) -> Result<(), WsError> {
-            self.write_state
-                .async_send_mut(&mut self.stream, opcode, payload.into(), mask_payload)
-                .await
-                .map_err(|e| WsError::IOError(Box::new(e)))
-        }
-
-        /// send immutable payload
-        ///
-        /// will auto fragment if auto_fragment_size > 0
-        pub async fn send<'a, P: Into<Payload<'a>>>(
-            &mut self,
-            opcode: OpCode,
-            payload: P,
-        ) -> Result<(), WsError> {
-            self.write_state
-                .async_send(&mut self.stream, opcode, payload.into())
-                .await
-                .map_err(|e| WsError::IOError(Box::new(e)))
-        }
-
-        /// send a read frame, **this method will not check validation of frame and do not fragment**
-        pub async fn send_read_frame(&mut self, frame: ReadFrame) -> Result<(), WsError> {
-            self.write_state
-                .async_send_read_frame(&mut self.stream, frame)
-                .await
-                .map_err(|e| WsError::IOError(Box::new(e)))
-        }
-
-        /// flush to ensure all data are send
-        pub async fn flush(&mut self) -> Result<(), WsError> {
-            self.stream
-                .flush()
-                .await
-                .map_err(|e| WsError::IOError(Box::new(e)))
-        }
-    };
 }
 
 /// recv part of websocket stream
-pub struct AsyncWsFrameRecv<S: AsyncRead> {
+pub struct AsyncFrameRecv<S: AsyncRead> {
     stream: S,
     read_state: FrameReadState,
 }
 
-impl<S: AsyncRead + Unpin> AsyncWsFrameRecv<S> {
+impl<S: AsyncRead + Unpin> AsyncFrameRecv<S> {
     /// construct method
     pub fn new(stream: S, read_state: FrameReadState) -> Self {
         Self { stream, read_state }
     }
 
-    impl_recv! {}
+    /// receive a frame
+    pub async fn receive(&mut self) -> Result<OwnedFrame, WsError> {
+        self.read_state.async_receive(&mut self.stream).await
+    }
 }
 
 /// send part of websocket frame
-pub struct AsyncWsFrameSend<S: AsyncWrite> {
+pub struct AsyncFrameSend<S: AsyncWrite> {
     stream: S,
     write_state: FrameWriteState,
 }
 
-impl<S: AsyncWrite + Unpin> AsyncWsFrameSend<S> {
+impl<S: AsyncWrite + Unpin> AsyncFrameSend<S> {
     /// construct method
     pub fn new(stream: S, write_state: FrameWriteState) -> Self {
         Self {
@@ -340,11 +170,35 @@ impl<S: AsyncWrite + Unpin> AsyncWsFrameSend<S> {
         }
     }
 
-    impl_send! {}
+    /// send immutable payload
+    ///
+    /// will auto fragment if auto_fragment_size > 0
+    pub async fn send(&mut self, opcode: OpCode, payload: &[u8]) -> Result<(), WsError> {
+        self.write_state
+            .async_send(&mut self.stream, opcode, payload)
+            .await
+            .map_err(|e| WsError::IOError(Box::new(e)))
+    }
+
+    /// send a read frame, **this method will not check validation of frame and do not fragment**
+    pub async fn send_owned_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
+        self.write_state
+            .async_send_owned_frame(&mut self.stream, frame)
+            .await
+            .map_err(|e| WsError::IOError(Box::new(e)))
+    }
+
+    /// flush to ensure all data are send
+    pub async fn flush(&mut self) -> Result<(), WsError> {
+        self.stream
+            .flush()
+            .await
+            .map_err(|e| WsError::IOError(Box::new(e)))
+    }
 }
 
 /// recv/send websocket frame
-pub struct AsyncWsFrameCodec<S: AsyncRead + AsyncWrite> {
+pub struct AsyncFrameCodec<S: AsyncRead + AsyncWrite> {
     /// underlying transport stream
     pub stream: S,
     /// read state
@@ -353,7 +207,7 @@ pub struct AsyncWsFrameCodec<S: AsyncRead + AsyncWrite> {
     pub write_state: FrameWriteState,
 }
 
-impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncFrameCodec<S> {
     /// construct method
     pub fn new(stream: S) -> Self {
         Self {
@@ -397,28 +251,55 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsFrameCodec<S> {
         Ok(Self::new_with(stream, FrameConfig::default(), remain))
     }
 
-    impl_recv! {}
+    /// receive a frame
+    pub async fn receive(&mut self) -> Result<OwnedFrame, WsError> {
+        self.read_state.async_receive(&mut self.stream).await
+    }
 
-    impl_send! {}
+    /// send payload
+    ///
+    /// will auto fragment if auto_fragment_size > 0
+    pub async fn send(&mut self, opcode: OpCode, payload: &[u8]) -> Result<(), WsError> {
+        self.write_state
+            .async_send(&mut self.stream, opcode, payload)
+            .await
+            .map_err(|e| WsError::IOError(Box::new(e)))
+    }
+
+    /// send a read frame, **this method will not check validation of frame and do not fragment**
+    pub async fn send_owned_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
+        self.write_state
+            .async_send_owned_frame(&mut self.stream, frame)
+            .await
+            .map_err(|e| WsError::IOError(Box::new(e)))
+    }
+
+    /// flush to ensure all data are send
+    pub async fn flush(&mut self) -> Result<(), WsError> {
+        self.stream
+            .flush()
+            .await
+            .map_err(|e| WsError::IOError(Box::new(e)))
+    }
 }
 
-impl<R, W, S> AsyncWsFrameCodec<S>
+impl<R, W, S> AsyncFrameCodec<S>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
     S: AsyncRead + AsyncWrite + Unpin + Split<R = R, W = W>,
 {
     /// split codec to recv and send parts
-    pub fn split(self) -> (AsyncWsFrameRecv<R>, AsyncWsFrameSend<W>) {
-        let AsyncWsFrameCodec {
+    pub fn split(self) -> (AsyncFrameRecv<R>, AsyncFrameSend<W>) {
+        let AsyncFrameCodec {
             stream,
             read_state,
             write_state,
         } = self;
         let (read, write) = stream.split();
         (
-            AsyncWsFrameRecv::new(read, read_state),
-            AsyncWsFrameSend::new(write, write_state),
+            AsyncFrameRecv::new(read, read_state),
+            AsyncFrameSend::new(write, write_state),
         )
     }
 }

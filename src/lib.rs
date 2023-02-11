@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use bytes::{Bytes, BytesMut};
 use errors::WsError;
-use frame::{BorrowedFrame, OpCode, ReadFrame};
+use frame::{OpCode, OwnedFrame, BorrowedFrame};
 
 pub use http;
 
@@ -134,8 +134,8 @@ mod blocking {
             let (key, resp) = req_handshake(
                 &mut stream,
                 &uri,
-                self.protocols.to_vec().join(" ,"),
-                self.extensions.to_vec().join(" ,"),
+                &self.protocols,
+                &self.extensions,
                 self.version,
                 self.headers.clone(),
             )?;
@@ -186,7 +186,7 @@ mod non_blocking {
         check_uri,
         errors::WsError,
         protocol::{async_handle_handshake, async_req_handshake},
-        stream::WsAsyncStream,
+        stream::AsyncStream,
         ServerBuilder,
     };
 
@@ -204,19 +204,19 @@ mod non_blocking {
         ) -> Result<C, WsError>
         where
             S: AsyncRead + AsyncWrite + Unpin,
-            F: FnMut(String, http::Response<()>, BytesMut, WsAsyncStream<S>) -> Result<C, WsError>,
+            F: FnMut(String, http::Response<()>, BytesMut, AsyncStream<S>) -> Result<C, WsError>,
         {
             check_uri(&uri)?;
             let (key, resp, remain) = async_req_handshake(
                 &mut stream,
                 &uri,
-                self.protocols.to_vec().join(" ,"),
-                self.extensions.to_vec().join(" ,"),
+                &self.protocols,
+                &self.extensions,
                 self.version,
                 self.headers.clone(),
             )
             .await?;
-            check_fn(key, resp, remain, WsAsyncStream::new(stream))
+            check_fn(key, resp, remain, AsyncStream::new(stream))
         }
     }
 
@@ -233,10 +233,10 @@ mod non_blocking {
         where
             S: AsyncRead + AsyncWrite + Unpin,
             F1: FnMut(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: FnMut(http::Request<()>, BytesMut, WsAsyncStream<S>) -> Result<C, WsError>,
+            F2: FnMut(http::Request<()>, BytesMut, AsyncStream<S>) -> Result<C, WsError>,
             T: ToString + Debug,
         {
-            let mut stream = WsAsyncStream::new(stream);
+            let mut stream = AsyncStream::new(stream);
             let (req, remain) = async_handle_handshake(&mut stream).await?;
             let (req, resp) = handshake_handler(req)?;
             let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
@@ -292,7 +292,7 @@ impl DefaultCode for Bytes {
     }
 }
 
-impl DefaultCode for ReadFrame {
+impl DefaultCode for OwnedFrame {
     fn code(&self) -> OpCode {
         self.header().opcode()
     }

@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use crate::frame::OpCode;
 
+// TODO add custom error kind
 /// errors during handshake, read/write frame
 #[derive(Debug, Error)]
 pub enum WsError {
@@ -37,6 +38,15 @@ pub enum WsError {
     /// peer send a frame with unknown opcode
     #[error("unsupported frame {0:?}")]
     UnsupportedFrame(OpCode),
+
+    #[cfg(feature = "deflate")]
+    /// compress failed
+    #[error("compress failed {0}")]
+    CompressFailed(String),
+    #[cfg(feature = "deflate")]
+    /// decompress failed
+    #[error("decompress failed {0}")]
+    DeCompressFailed(String),
 }
 
 impl From<std::io::Error> for WsError {
@@ -93,7 +103,9 @@ pub enum ProtocolError {
     /// payload exceed payload len limit
     #[error("payload too large, max payload size {0}")]
     PayloadTooLarge(usize),
+
     #[cfg(feature = "deflate")]
-    #[error("enable deflate but rsv1 not set")]
-    NotDeflateDataWhileEnabled,
+    /// compressed control frame
+    #[error("compressed control frame")]
+    CompressedControlFrame,
 }

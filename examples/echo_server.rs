@@ -1,6 +1,6 @@
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::codec::WsStringCodec;
+use ws_tool::codec::StringCodec;
 use ws_tool::{codec::default_handshake_handler, ServerBuilder};
 
 /// websocket client connect to binance futures websocket
@@ -38,7 +38,7 @@ async fn main() -> Result<(), ()> {
         stream,
         default_handshake_handler,
         // AsyncWsStringCodec::factory,
-        WsStringCodec::factory,
+        StringCodec::factory,
     )
     .unwrap();
 

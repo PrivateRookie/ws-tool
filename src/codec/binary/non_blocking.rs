@@ -3,7 +3,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
     codec::{
-        AsyncWsFrameCodec, AsyncWsFrameRecv, AsyncWsFrameSend, FrameConfig, FrameReadState,
+        AsyncFrameCodec, AsyncFrameRecv, AsyncFrameSend, FrameConfig, FrameReadState,
         FrameWriteState, Split,
     },
     errors::WsError,
@@ -17,11 +17,8 @@ macro_rules! impl_recv {
         /// receive a message
         pub async fn receive(&mut self) -> Result<Message<BytesMut>, WsError> {
             let frame = self.frame_codec.receive().await?;
-            let header = frame.header();
-            let header_len = header.payload_idx().0;
+            let (header, mut data) = frame.parts();
             let code = header.opcode();
-            let mut data = frame.0;
-            data.advance(header_len);
             let close_code = if code == OpCode::Close {
                 Some(data.get_u16())
             } else {
@@ -39,25 +36,21 @@ macro_rules! impl_recv {
 macro_rules! impl_send {
     () => {
         /// send a message
-        pub async fn send<'a, T: Into<Message<&'a mut [u8]>>>(
+        pub async fn send<'a, T: Into<Message<&'a [u8]>>>(
             &mut self,
             msg: T,
         ) -> Result<(), WsError> {
-            let msg: Message<&'a mut [u8]> = msg.into();
+            let msg: Message<&'a [u8]> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {
-                    self.frame_codec
-                        .send_mut(
-                            msg.code,
-                            vec![&mut close_code.to_be_bytes()[..], msg.data],
-                            true,
-                        )
-                        .await
+                    let mut data = close_code.to_be_bytes().to_vec();
+                    data.extend_from_slice(msg.data);
+                    self.frame_codec.send(msg.code, &data).await
                 } else {
-                    self.frame_codec.send_mut(msg.code, msg.data, true).await
+                    self.frame_codec.send(msg.code, msg.data).await
                 }
             } else {
-                self.frame_codec.send_mut(msg.code, msg.data, true).await
+                self.frame_codec.send(msg.code, msg.data).await
             }
         }
 
@@ -69,15 +62,15 @@ macro_rules! impl_send {
 }
 
 /// recv part of bytes message
-pub struct AsyncWsBytesRecv<S: AsyncRead> {
-    frame_codec: AsyncWsFrameRecv<S>,
+pub struct AsyncBytesRecv<S: AsyncRead> {
+    frame_codec: AsyncFrameRecv<S>,
 }
 
-impl<S: AsyncRead + Unpin> AsyncWsBytesRecv<S> {
+impl<S: AsyncRead + Unpin> AsyncBytesRecv<S> {
     /// construct method
     pub fn new(stream: S, state: FrameReadState) -> Self {
         Self {
-            frame_codec: AsyncWsFrameRecv::new(stream, state),
+            frame_codec: AsyncFrameRecv::new(stream, state),
         }
     }
 
@@ -85,15 +78,15 @@ impl<S: AsyncRead + Unpin> AsyncWsBytesRecv<S> {
 }
 
 /// send part of bytes message
-pub struct AsyncWsBytesSend<S: AsyncWrite> {
-    frame_codec: AsyncWsFrameSend<S>,
+pub struct AsyncBytesSend<S: AsyncWrite> {
+    frame_codec: AsyncFrameSend<S>,
 }
 
-impl<S: AsyncWrite + Unpin> AsyncWsBytesSend<S> {
+impl<S: AsyncWrite + Unpin> AsyncBytesSend<S> {
     /// construct method
     pub fn new(stream: S, state: FrameWriteState) -> Self {
         Self {
-            frame_codec: AsyncWsFrameSend::new(stream, state),
+            frame_codec: AsyncFrameSend::new(stream, state),
         }
     }
 
@@ -101,22 +94,22 @@ impl<S: AsyncWrite + Unpin> AsyncWsBytesSend<S> {
 }
 
 /// recv/send bytes message
-pub struct AsyncWsBytesCodec<S: AsyncRead + AsyncWrite> {
-    frame_codec: AsyncWsFrameCodec<S>,
+pub struct AsyncBytesCodec<S: AsyncRead + AsyncWrite> {
+    frame_codec: AsyncFrameCodec<S>,
 }
 
-impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsBytesCodec<S> {
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncBytesCodec<S> {
     /// construct method
     pub fn new(stream: S) -> Self {
         Self {
-            frame_codec: AsyncWsFrameCodec::new(stream),
+            frame_codec: AsyncFrameCodec::new(stream),
         }
     }
 
     /// construct with stream & config
     pub fn new_with(stream: S, config: FrameConfig, read_bytes: BytesMut) -> Self {
         Self {
-            frame_codec: AsyncWsFrameCodec::new_with(stream, config, read_bytes),
+            frame_codec: AsyncFrameCodec::new_with(stream, config, read_bytes),
         }
     }
 
@@ -150,23 +143,23 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWsBytesCodec<S> {
     impl_send! {}
 }
 
-impl<R, W, S> AsyncWsBytesCodec<S>
+impl<R, W, S> AsyncBytesCodec<S>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
     S: AsyncRead + AsyncWrite + Unpin + Split<R = R, W = W>,
 {
     /// split codec to recv and send parts
-    pub fn split(self) -> (AsyncWsBytesRecv<R>, AsyncWsBytesSend<W>) {
-        let AsyncWsFrameCodec {
+    pub fn split(self) -> (AsyncBytesRecv<R>, AsyncBytesSend<W>) {
+        let AsyncFrameCodec {
             stream,
             read_state,
             write_state,
         } = self.frame_codec;
         let (read, write) = stream.split();
         (
-            AsyncWsBytesRecv::new(read, read_state),
-            AsyncWsBytesSend::new(write, write_state),
+            AsyncBytesRecv::new(read, read_state),
+            AsyncBytesSend::new(write, write_state),
         )
     }
 }

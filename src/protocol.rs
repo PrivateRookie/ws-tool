@@ -193,8 +193,8 @@ mod blocking {
     pub fn req_handshake<S: Read + Write>(
         stream: &mut S,
         uri: &http::Uri,
-        protocols: String,
-        extensions: String,
+        protocols: &[String],
+        extensions: &[String],
         version: u8,
         extra_headers: HashMap<String, String>,
     ) -> Result<(String, http::Response<()>), WsError> {
@@ -241,7 +241,7 @@ mod non_blocking {
     use bytes::BytesMut;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-    use crate::{errors::WsError, protocol::prepare_handshake, stream::WsAsyncStream};
+    use crate::{errors::WsError, protocol::prepare_handshake, stream::AsyncStream};
 
     use super::{handle_parse_handshake, perform_parse_req};
 
@@ -319,8 +319,8 @@ mod non_blocking {
     pub async fn async_req_handshake<S: AsyncRead + AsyncWrite + Unpin>(
         stream: &mut S,
         uri: &http::Uri,
-        protocols: String,
-        extensions: String,
+        protocols: &[String],
+        extensions: &[String],
         version: u8,
         extra_headers: HashMap<String, String>,
     ) -> Result<(String, http::Response<()>, BytesMut), WsError> {
@@ -348,7 +348,7 @@ mod non_blocking {
 
     /// async version of handling protocol handshake
     pub async fn async_handle_handshake<S: AsyncRead + AsyncWrite + Unpin>(
-        stream: &mut WsAsyncStream<S>,
+        stream: &mut AsyncStream<S>,
     ) -> Result<(http::Request<()>, BytesMut), WsError> {
         let mut read_bytes = BytesMut::with_capacity(1024);
         let mut buf: [u8; 1024] = [0; 1024];
@@ -444,8 +444,8 @@ pub fn standard_handshake_req_check(req: &http::Request<()>) -> Result<(), WsErr
 ///
 /// return (key, request_str)
 pub fn prepare_handshake(
-    protocols: String,
-    extensions: String,
+    protocols: &[String],
+    extensions: &[String],
     extra_headers: HashMap<String, String>,
     uri: &http::Uri,
     version: u8,
@@ -467,11 +467,11 @@ pub fn prepare_handshake(
         format!("Sec-Websocket-Key: {key}"),
         format!("Sec-WebSocket-Version: {version}"),
     ];
-    if !protocols.is_empty() {
-        headers.push(format!("Sec-WebSocket-Protocol: {protocols}"))
+    for pro in protocols {
+        headers.push(format!("Sec-WebSocket-Protocol: {pro}"))
     }
-    if !extensions.is_empty() {
-        headers.push(format!("Sec-WebSocket-Extensions: {extensions}"))
+    for ext in extensions {
+        headers.push(format!("Sec-WebSocket-Extensions: {ext}"))
     }
     for (k, v) in extra_headers.iter() {
         headers.push(format!("{k}: {v}"));
