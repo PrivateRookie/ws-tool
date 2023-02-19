@@ -25,12 +25,18 @@ pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking;
+use bytes::BytesMut;
 #[cfg(feature = "async")]
 pub use non_blocking::*;
 
-use crate::errors::WsError;
+use crate::{
+    errors::WsError,
+    frame::{OpCode, OwnedFrame},
+};
 
-use super::default_handshake_handler;
+use super::{
+    default_handshake_handler, FrameConfig, FrameReadState, FrameWriteState, ValidateUtf8Policy,
+};
 
 /// permessage-deflate window bit
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -88,12 +94,29 @@ pub fn deflate_handshake_handler(
     Ok((req, resp))
 }
 
-/// helper struct to handle com/de stream
-pub struct StreamHandler {
+fn gen_low_level_config(conf: &FrameConfig) -> FrameConfig {
+    FrameConfig {
+        mask_send_frame: conf.mask_send_frame,
+        check_rsv: false,
+        auto_fragment_size: conf.auto_fragment_size,
+        merge_frame: false,
+        validate_utf8: ValidateUtf8Policy::Off,
+        ..Default::default()
+    }
+}
+
+/// helper struct to handler com stream
+pub struct WriteStreamHandler {
     /// permessage deflate config
     pub config: PMDConfig,
     /// compressor
     pub com: Compressor,
+}
+
+/// helper struct to handle de stream
+pub struct ReadStreamHandler {
+    /// permessage deflate config
+    pub config: PMDConfig,
     /// decompressor
     pub de: DeCompressor,
 }
@@ -457,6 +480,117 @@ impl DeCompressor {
         match unsafe { libz_sys::inflateReset(self.stream.as_mut()) } {
             libz_sys::Z_OK => Ok(()),
             code => Err(format!("Failed to reset compression context: {}", code)),
+        }
+    }
+}
+
+/// deflate frame write state
+pub struct DeflateWriteState {
+    write_state: FrameWriteState,
+    com: Option<WriteStreamHandler>,
+    config: FrameConfig,
+    is_server: bool,
+}
+
+impl DeflateWriteState {
+    /// construct with config
+    pub fn with_config(
+        frame_config: FrameConfig,
+        pmd_config: Option<PMDConfig>,
+        is_server: bool,
+    ) -> Self {
+        let low_level_config = gen_low_level_config(&frame_config);
+        let write_state = FrameWriteState::with_config(low_level_config);
+        let com = if let Some(config) = pmd_config {
+            let com_size = if is_server {
+                config.client_max_window_bits
+            } else {
+                config.server_max_window_bits
+            };
+            let com = Compressor::new(com_size);
+            Some(WriteStreamHandler { config, com })
+        } else {
+            None
+        };
+        Self {
+            write_state,
+            com,
+            config: frame_config,
+            is_server,
+        }
+    }
+}
+
+/// deflate frame read state
+pub struct DeflateReadState {
+    read_state: FrameReadState,
+    de: Option<ReadStreamHandler>,
+    config: FrameConfig,
+    fragmented: bool,
+    fragmented_data: OwnedFrame,
+    fragmented_type: OpCode,
+    is_server: bool,
+}
+
+impl DeflateReadState {
+    /// construct with config
+    pub fn with_config(
+        frame_config: FrameConfig,
+        pmd_config: Option<PMDConfig>,
+        is_server: bool,
+    ) -> Self {
+        let low_level_config = gen_low_level_config(&frame_config);
+        let read_state = FrameReadState::with_config(low_level_config);
+        let de = if let Some(config) = pmd_config {
+            let de_size = if is_server {
+                config.client_max_window_bits
+            } else {
+                config.server_max_window_bits
+            };
+            let de = DeCompressor::new(de_size);
+            Some(ReadStreamHandler { config, de })
+        } else {
+            None
+        };
+        Self {
+            read_state,
+            de,
+            config: frame_config,
+            fragmented: false,
+            fragmented_data: OwnedFrame::binary_frame(None, &[]),
+            fragmented_type: OpCode::Binary,
+            is_server,
+        }
+    }
+
+    /// construct with config and bytes remaining in handshake
+    pub fn with_remain(
+        frame_config: FrameConfig,
+        pmd_config: Option<PMDConfig>,
+        is_server: bool,
+        remain: BytesMut,
+    ) -> Self {
+        let low_level_config = gen_low_level_config(&frame_config);
+        let read_state = FrameReadState::with_remain(low_level_config, remain);
+        let de = if let Some(config) = pmd_config {
+            let de_size = if is_server {
+                config.client_max_window_bits
+            } else {
+                config.server_max_window_bits
+            };
+            let de = DeCompressor::new(de_size);
+            Some(ReadStreamHandler { config, de })
+        } else {
+            None
+        };
+        Self {
+            read_state,
+            de,
+            config: frame_config,
+            fragmented: false,
+            fragmented_data: OwnedFrame::binary_frame(None, &[]),
+            fragmented_type: OpCode::Binary,
+            is_server,
         }
     }
 }

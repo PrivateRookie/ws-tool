@@ -62,8 +62,15 @@ impl FrameReadState {
     ) -> Result<OwnedFrame, WsError> {
         loop {
             let frame = self.async_read_one_frame(stream).await?;
-            if let Some(frame) = self.check_frame(frame)? {
-                break Ok(frame);
+            if self.config.merge_frame {
+                if let Some(frame) = self
+                    .check_frame(frame)
+                    .and_then(|frame| self.merge_frame(frame))?
+                {
+                    break Ok(frame);
+                }
+            } else {
+                break self.check_frame(frame);
             }
         }
     }
@@ -127,7 +134,7 @@ impl FrameWriteState {
         Ok(())
     }
 
-    async fn async_send_owned_frame<S: AsyncWrite + Unpin>(
+    pub(crate) async fn async_send_owned_frame<S: AsyncWrite + Unpin>(
         &mut self,
         stream: &mut S,
         frame: OwnedFrame,

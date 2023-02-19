@@ -57,23 +57,14 @@ fn run_test(case: usize) -> Result<(), WsError> {
             Ok(frame) => {
                 let code = frame.header().opcode();
                 match &code {
-                    OpCode::Text | OpCode::Binary => {
-                        client.send_owned_frame(OwnedFrame::new(
-                            code,
-                            mask_key(),
-                            frame.payload(),
-                        ))?;
-                    }
+                    OpCode::Text | OpCode::Binary => client.send(code, frame.payload())?,
                     OpCode::Close => {
                         client.send_owned_frame(OwnedFrame::close_frame(mask_key(), 1000, &[]))?;
                         tracing::info!("case {case} elapsed {:?}", now.elapsed());
                         break;
                     }
                     OpCode::Ping => {
-                        client.send_owned_frame(OwnedFrame::pong_frame(
-                            mask_key(),
-                            frame.payload(),
-                        ))?;
+                        client.send(OpCode::Pong, frame.payload())?;
                     }
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
@@ -121,7 +112,7 @@ fn update_report() -> Result<(), WsError> {
 
 fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::INFO)
+        .with_max_level(Level::DEBUG)
         .with_file(true)
         .with_line_number(true)
         .finish()

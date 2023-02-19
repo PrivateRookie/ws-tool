@@ -58,11 +58,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
             Ok(frame) => {
                 let code = frame.header().opcode();
                 match &code {
-                    OpCode::Text | OpCode::Binary => {
-                        client
-                            .send_owned_frame(OwnedFrame::new(code, mask_key(), frame.payload()))
-                            .await?;
-                    }
+                    OpCode::Text | OpCode::Binary => client.send(code, frame.payload()).await?,
                     OpCode::Close => {
                         client
                             .send_owned_frame(OwnedFrame::close_frame(mask_key(), 1000, &[]))
@@ -70,11 +66,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                         tracing::info!("case {case} elapsed {:?}", now.elapsed());
                         break;
                     }
-                    OpCode::Ping => {
-                        client
-                            .send_owned_frame(OwnedFrame::pong_frame(mask_key(), frame.payload()))
-                            .await?;
-                    }
+                    OpCode::Ping => client.send(OpCode::Pong, frame.payload()).await?,
                     OpCode::Pong => {}
                     OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
                         unreachable!()

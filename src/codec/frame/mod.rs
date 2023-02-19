@@ -251,24 +251,15 @@ impl FrameReadState {
         frame
     }
 
-    /// perform protocol checking after receiving a frame
-    pub fn check_frame(
-        &mut self,
-        unmasked_frame: OwnedFrame,
-    ) -> Result<Option<OwnedFrame>, WsError> {
-        let header = unmasked_frame.header();
+    fn merge_frame(&mut self, checked_frame: OwnedFrame) -> Result<Option<OwnedFrame>, WsError> {
+        let header = checked_frame.header();
         let opcode = header.opcode();
+
         match opcode {
             OpCode::Continue => {
-                if !self.fragmented {
-                    return Err(WsError::ProtocolError {
-                        close_code: 1002,
-                        error: ProtocolError::MissInitialFragmentedFrame,
-                    });
-                }
                 let fin = header.fin();
                 self.fragmented_data
-                    .extend_from_slice(unmasked_frame.payload());
+                    .extend_from_slice(checked_frame.payload());
                 if fin {
                     let completed_frame = std::mem::replace(
                         &mut self.fragmented_data,
@@ -281,6 +272,40 @@ impl FrameReadState {
                 }
             }
             OpCode::Text | OpCode::Binary => {
+                if !header.fin() {
+                    self.fragmented = true;
+                    self.fragmented_type = opcode.clone();
+                    self.fragmented_data.header_mut().set_opcode(opcode);
+                    self.fragmented_data
+                        .extend_from_slice(checked_frame.payload());
+                    Ok(None)
+                } else {
+                    Ok(Some(checked_frame))
+                }
+            }
+            OpCode::Close | OpCode::Ping | OpCode::Pong => Ok(Some(checked_frame)),
+            _ => unreachable!(),
+        }
+    }
+
+    /// perform protocol checking after receiving a frame
+    fn check_frame(&mut self, unmasked_frame: OwnedFrame) -> Result<OwnedFrame, WsError> {
+        let header = unmasked_frame.header();
+        let opcode = header.opcode();
+        match opcode {
+            OpCode::Continue => {
+                if !self.fragmented {
+                    return Err(WsError::ProtocolError {
+                        close_code: 1002,
+                        error: ProtocolError::MissInitialFragmentedFrame,
+                    });
+                }
+                if header.fin() {
+                    self.fragmented = false;
+                }
+                Ok(unmasked_frame)
+            }
+            OpCode::Text | OpCode::Binary => {
                 if self.fragmented {
                     return Err(WsError::ProtocolError {
                         close_code: 1002,
@@ -289,7 +314,6 @@ impl FrameReadState {
                 }
                 if !header.fin() {
                     self.fragmented = true;
-                    self.fragmented_type = opcode.clone();
                     if opcode == OpCode::Text
                         && self.config.validate_utf8.is_fast_fail()
                         && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
@@ -299,10 +323,8 @@ impl FrameReadState {
                             error: ProtocolError::InvalidUtf8,
                         });
                     }
-                    self.fragmented_data.header_mut().set_opcode(opcode);
-                    self.fragmented_data
-                        .extend_from_slice(unmasked_frame.payload());
-                    Ok(None)
+
+                    Ok(unmasked_frame)
                 } else {
                     if opcode == OpCode::Text
                         && self.config.validate_utf8.should_check()
@@ -313,7 +335,7 @@ impl FrameReadState {
                             error: ProtocolError::InvalidUtf8,
                         });
                     }
-                    Ok(Some(unmasked_frame))
+                    Ok(unmasked_frame)
                 }
             }
             OpCode::Close | OpCode::Ping | OpCode::Pong => {
@@ -368,7 +390,7 @@ impl FrameReadState {
                         }
                     }
                 }
-                Ok(Some(unmasked_frame))
+                Ok(unmasked_frame)
             }
             OpCode::ReservedNonControl | OpCode::ReservedControl => {
                 Err(WsError::UnsupportedFrame(opcode))

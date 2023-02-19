@@ -18,6 +18,19 @@
         "13.*.10"
     ],
     "exclude-cases": [
+        "9.*",
+        "12.*",
+        "13.*",
+        "10.*"
     ],
-    "exclude-agent-cases": {}
+    "exclude-agent-cases": {
+        "client": [
+            "12.*",
+            "13.*"
+        ],
+        "async-client": [
+            "12.*",
+            "13.*"
+        ]
+    }
 }

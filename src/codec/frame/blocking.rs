@@ -50,14 +50,22 @@ impl FrameReadState {
     pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
         loop {
             let frame = self.read_one_frame(stream)?;
-            if let Some(frame) = self.check_frame(frame)? {
-                break Ok(frame);
+            if self.config.merge_frame {
+                if let Some(frame) = self
+                    .check_frame(frame)
+                    .and_then(|frame| self.merge_frame(frame))?
+                {
+                    break Ok(frame);
+                }
+            } else {
+                break self.check_frame(frame);
             }
         }
     }
 }
 
 impl FrameWriteState {
+    // DOUBT return error if payload len data >= 126 ?
     /// send immutable payload
     ///
     /// if need to mask, copy data to inner buffer and then apply mask
@@ -115,7 +123,11 @@ impl FrameWriteState {
         Ok(())
     }
 
-    fn send_owned_frame<S: Write>(&mut self, stream: &mut S, frame: OwnedFrame) -> IOResult<()> {
+    pub(crate) fn send_owned_frame<S: Write>(
+        &mut self,
+        stream: &mut S,
+        frame: OwnedFrame,
+    ) -> IOResult<()> {
         stream.write_all(&frame.header().0)?;
         stream.write_all(frame.payload())
     }

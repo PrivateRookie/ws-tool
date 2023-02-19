@@ -1,9 +1,7 @@
 ## connection flow
 
-<details>
-<summary>expand to show flow code</summary>
 
-```text
+```mermaid
 sequenceDiagram
     autonumber
     participant C as Client
@@ -28,6 +26,3 @@ sequenceDiagram
     Note over C,S: close tcp connection
   
 ```
-</details>
-
-![connection-flow](assets/connection-flow.png)
