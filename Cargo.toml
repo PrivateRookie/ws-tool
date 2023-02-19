@@ -60,6 +60,7 @@ async_tls_rustls = [
     "rustls-connector",
 ]
 deflate = ["libz-sys"]
+deflate_static = ["libz-sys/static"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
