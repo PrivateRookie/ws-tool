@@ -40,7 +40,6 @@ async fn main() -> Result<(), ()> {
         .unwrap();
     loop {
         let (stream, addr) = listener.accept().await.unwrap();
-        stream.set_nodelay(true).unwrap();
         tokio::spawn(async move {
             tracing::info!("got connect from {:?}", addr);
             let mut server =

@@ -1,7 +1,7 @@
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, BytesCodec},
+    codec::{deflate_handshake_handler, DeflateCodec},
     stream::BufStream,
     ServerBuilder,
 };
@@ -34,46 +34,44 @@ fn main() -> Result<(), ()> {
         .expect("failed to init log");
     tracing::info!("binding on {}:{}", args.host, args.port);
     let listener = std::net::TcpListener::bind(format!("{}:{}", args.host, args.port)).unwrap();
-    // loop {
+    loop {
         let (stream, addr) = listener.accept().unwrap();
         std::thread::spawn(move || {
             tracing::info!("got connect from {:?}", addr);
             match args.buffer {
                 Some(buf) => {
                     let mut server =
-                        ServerBuilder::accept(stream, default_handshake_handler, |req, stream| {
+                        ServerBuilder::accept(stream, deflate_handshake_handler, |req, stream| {
                             let stream = BufStream::with_capacity(buf, buf, stream);
-                            BytesCodec::factory(req, stream)
+                            DeflateCodec::factory(req, stream)
                         })
                         .unwrap();
                     loop {
-                        let msg = server.receive().unwrap();
-                        if msg.code.is_close() {
+                        let frame = server.receive().unwrap();
+                        if frame.header().opcode().is_close() {
                             break;
                         }
-
-                        server.send(&msg.data[..]).unwrap();
+                        server.send_owned_frame(frame).unwrap();
                     }
                 }
                 None => {
                     let mut server = ServerBuilder::accept(
                         stream,
-                        default_handshake_handler,
-                        BytesCodec::factory,
+                        deflate_handshake_handler,
+                        DeflateCodec::factory,
                     )
                     .unwrap();
                     loop {
-                        let msg = server.receive().unwrap();
-                        if msg.code.is_close() {
+                        let frame = server.receive().unwrap();
+                        if frame.header().opcode().is_close() {
                             break;
                         }
-
-                        server.send(&msg.data[..]).unwrap();
+                        server.send_owned_frame(frame).unwrap();
                     }
                 }
             }
+
             tracing::info!("one conn down");
-        }).join().unwrap();
-        Ok(())
-    // }
+        });
+    }
 }

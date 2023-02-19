@@ -336,6 +336,8 @@ pub struct Compressor {
     stream: Box<libz_sys::z_stream>,
 }
 
+unsafe impl Send for Compressor {}
+
 impl Context for Compressor {
     fn stream(&mut self) -> &mut libz_sys::z_stream {
         &mut self.stream
@@ -419,6 +421,8 @@ impl Context for DeCompressor {
         &mut self.stream
     }
 }
+
+unsafe impl Send for DeCompressor {}
 
 impl Drop for DeCompressor {
     fn drop(&mut self) {

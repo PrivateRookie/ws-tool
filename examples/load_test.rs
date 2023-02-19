@@ -1,10 +1,19 @@
-use std::{net::TcpStream, process::exit, sync::Arc, thread::JoinHandle};
+use std::{
+    collections::HashMap,
+    net::TcpStream,
+    num::ParseIntError,
+    time::{Duration, Instant},
+};
 
 use clap::Parser;
-use dashmap::DashMap;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::BytesCodec, stream::BufStream, ClientBuilder};
+use ws_tool::{
+    codec::{DeflateCodec, PMDConfig, WindowBit},
+    frame::OpCode::{Binary, Close},
+    stream::BufStream,
+    ClientBuilder,
+};
 
 /// websocket client demo with raw frame
 #[derive(Parser)]
@@ -12,20 +21,23 @@ struct Args {
     uri: http::Uri,
 
     // client size
-    #[arg(short, long, default_value = "1")]
+    #[arg(long, default_value = "1")]
     conn: usize,
 
     /// payload size (unit: bytes)
     #[arg(short, long, default_value = "1")]
     payload: usize,
 
-    /// sample rate (unit: second)
-    #[arg(short, long, default_value = "10")]
-    interval: u64,
+    /// message count, unit (1k)
+    #[arg(long, default_value = "10")]
+    count: u64,
 
     /// total sample times
     #[arg(short, long, default_value = "6")]
     total: usize,
+
+    #[arg(short, long, value_parser=parse_window, default_value="15")]
+    window: WindowBit,
 
     /// buffer size of stream
     #[arg(long)]
@@ -41,92 +53,100 @@ fn main() -> Result<(), ()> {
     let args = Args::parse();
 
     let size = args.payload;
-    let counter: Arc<DashMap<usize, (usize, usize)>> = Default::default();
-    let interval = args.interval;
-    let counter_c = counter.clone();
-    std::thread::spawn(move || {
-        for idx in 0..args.total {
-            std::thread::sleep(std::time::Duration::from_secs(interval));
-            let mut stat: Vec<Statistic> = counter_c
-                .iter()
-                .map(|item| {
-                    let conn_idx = *item.key();
-                    let (send, recv) = *item.value();
-                    let send = send as f64 / (interval as f64 * (idx + 1) as f64);
-                    let recv = recv as f64 / (interval as f64 * (idx + 1) as f64);
-                    Statistic {
-                        sample_idx: idx,
-                        conn_idx,
-                        send,
-                        recv,
-                    }
+    let count = args.count * 1000;
+    let pmd_conf = PMDConfig {
+        server_max_window_bits: args.window,
+        client_max_window_bits: args.window,
+        ..Default::default()
+    };
+    let handlers = (0..args.conn).map(|conn_idx| {
+        let uri = args.uri.clone();
+        let pmd_conf = pmd_conf.clone();
+        std::thread::spawn(move || {
+            let builder = ClientBuilder::new().extension(pmd_conf.ext_string());
+            let stat: HashMap<usize, Duration> = (0..args.total)
+                .map(|idx| {
+                    // println!("CONN: {conn_idx:>03} ITER: {idx:>03} ...");
+                    let now = Instant::now();
+                    let uri = uri.clone();
+                    let stream =
+                        TcpStream::connect((uri.host().unwrap(), uri.port_u16().unwrap())).unwrap();
+                    let client = builder
+                        .connect(uri, stream, |key, resp, stream| {
+                            let stream = if let Some(buffer) = args.buffer {
+                                BufStream::with_capacity(buffer, buffer, stream)
+                            } else {
+                                BufStream::new(stream)
+                            };
+                            DeflateCodec::check_fn(key, resp, stream)
+                        })
+                        .unwrap();
+                    let (mut r, mut w) = client.split();
+
+                    let w = std::thread::spawn(move || {
+                        let payload = vec![0].repeat(size);
+                        for _ in 0..count {
+                            w.send(Binary, &payload[..]).unwrap();
+                        }
+                        w.send(Close, 1000u16.to_be_bytes().as_slice()).unwrap();
+                        w.flush().unwrap();
+                    });
+                    let r = std::thread::spawn(move || {
+                        for _ in 0..count {
+                            r.receive().unwrap();
+                        }
+                    });
+                    r.join().and_then(|_| w.join()).ok();
+                    let elapse = now.elapsed();
+                    (idx, elapse)
                 })
                 .collect();
-            // {
-            //     counter_c.clear();
-            // }
-            stat.sort_by(|a, b| a.conn_idx.cmp(&b.conn_idx));
-            for item in stat {
-                println!("{}", serde_json::to_string(&item).unwrap());
-            }
-        }
-        exit(0);
-    });
-    let handlers: Vec<JoinHandle<()>> = (0..args.conn)
-        .map(|idx| {
-            let counter = counter.clone();
-            let uri = args.uri.clone();
-            std::thread::spawn(move || {
-                let builder = ClientBuilder::new();
-                let stream =
-                    TcpStream::connect((uri.host().unwrap(), uri.port_u16().unwrap())).unwrap();
-                let mut client = builder
-                    .connect(uri, stream, |key, resp, stream| {
-                        let stream = if let Some(buffer) = args.buffer {
-                            BufStream::with_capacity(buffer, buffer, stream)
-                        } else {
-                            BufStream::new(stream)
-                        };
-                        BytesCodec::check_fn(key, resp, stream)
-                    })
-                    .unwrap();
-                client
-                    .stream_mut()
-                    .get_mut()
-                    .stream_mut()
-                    .set_nodelay(true)
-                    .unwrap();
-                let (mut r, mut w) = client.split();
-
-                let counter_c = counter.clone();
-                let w = std::thread::spawn(move || {
-                    let payload = vec![0].repeat(size);
-                    loop {
-                        w.send(&payload[..]).unwrap();
-                        let mut ent = counter_c.entry(idx).or_default();
-                        ent.0 += 1;
-                    }
-                });
-                let r = std::thread::spawn(move || loop {
-                    r.receive().unwrap();
-                    let mut ent = counter.entry(idx).or_default();
-                    ent.1 += 1;
-                });
-                r.join().and_then(|_| w.join()).ok();
-            })
+            (conn_idx, stat)
         })
-        .collect();
-    for h in handlers {
-        h.join().ok();
+    });
+    let mut stat: Vec<Record> = vec![];
+    for (connection, data) in handlers.into_iter().filter_map(|h| h.join().ok()) {
+        for (iteration, v) in data {
+            let duration = v.as_millis();
+            let qps = count as f64 / duration as f64 * 1000.0;
+            let record = Record {
+                connection,
+                iteration,
+                count,
+                duration,
+                qps,
+            };
+            stat.push(record);
+        }
     }
+    stat.sort_by(|a, b| match a.connection.cmp(&b.connection) {
+        std::cmp::Ordering::Equal => match a.iteration.cmp(&b.iteration) {
+            std::cmp::Ordering::Equal => a.duration.cmp(&b.duration),
+            ord => ord,
+        },
+        ord => ord,
+    });
+
+    let table = Table::new(stat).with(Style::markdown()).to_string();
+    println!("\n{}", table);
 
     Ok(())
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-struct Statistic {
-    sample_idx: usize,
-    conn_idx: usize,
-    send: f64,
-    recv: f64,
+fn parse_window(s: &str) -> Result<WindowBit, String> {
+    let v: u8 = s.parse().map_err(|e: ParseIntError| e.to_string())?;
+    WindowBit::try_from(v).map_err(|e| e.to_string())
+}
+
+use tabled::{Style, Table, Tabled};
+
+#[derive(Tabled, PartialEq, PartialOrd)]
+struct Record {
+    connection: usize,
+    iteration: usize,
+    count: u64,
+    #[tabled(rename = "Duration(ms)")]
+    duration: u128,
+    #[tabled(rename = "Message/sec")]
+    qps: f64,
 }
