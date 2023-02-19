@@ -132,16 +132,6 @@ impl Default for FrameReadState {
 }
 
 impl FrameReadState {
-    /// construct with config and bytes remaining in handshake
-    pub fn with_remain(config: FrameConfig, read_data: BytesMut) -> Self {
-        Self {
-            config,
-            read_idx: read_data.len(),
-            read_data,
-            ..Self::default()
-        }
-    }
-
     /// construct with config
     pub fn with_config(config: FrameConfig) -> Self {
         Self {

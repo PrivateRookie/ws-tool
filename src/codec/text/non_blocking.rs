@@ -1,4 +1,4 @@
-use bytes::{Buf, BytesMut};
+use bytes::Buf;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
@@ -118,9 +118,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncStringCodec<S> {
     }
 
     /// construct with config
-    pub fn new_with(stream: S, config: FrameConfig, remain: BytesMut, validate_utf8: bool) -> Self {
+    pub fn new_with(stream: S, config: FrameConfig, validate_utf8: bool) -> Self {
         Self {
-            frame_codec: AsyncFrameCodec::new_with(stream, config, remain),
+            frame_codec: AsyncFrameCodec::new_with(stream, config),
             validate_utf8,
         }
     }
@@ -131,23 +131,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncStringCodec<S> {
     }
 
     /// used for server side to construct a new server
-    pub fn factory(_req: http::Request<()>, remain: BytesMut, stream: S) -> Result<Self, WsError> {
+    pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
         let config = FrameConfig {
             mask_send_frame: false,
             ..Default::default()
         };
-        Ok(Self::new_with(stream, config, remain, true))
+        Ok(Self::new_with(stream, config, true))
     }
 
     /// used to client side to construct a new client
-    pub fn check_fn(
-        key: String,
-        resp: http::Response<()>,
-        remain: BytesMut,
-        stream: S,
-    ) -> Result<Self, WsError> {
+    pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
         standard_handshake_resp_check(key.as_bytes(), &resp)?;
-        Ok(Self::new_with(stream, FrameConfig::default(), remain, true))
+        Ok(Self::new_with(stream, FrameConfig::default(), true))
     }
 
     impl_recv! {}

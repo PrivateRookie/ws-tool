@@ -107,30 +107,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncBytesCodec<S> {
     }
 
     /// construct with stream & config
-    pub fn new_with(stream: S, config: FrameConfig, read_bytes: BytesMut) -> Self {
+    pub fn new_with(stream: S, config: FrameConfig) -> Self {
         Self {
-            frame_codec: AsyncFrameCodec::new_with(stream, config, read_bytes),
+            frame_codec: AsyncFrameCodec::new_with(stream, config),
         }
     }
 
     /// used for server side to construct a new server
-    pub fn factory(_req: http::Request<()>, remain: BytesMut, stream: S) -> Result<Self, WsError> {
+    pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
         let config = FrameConfig {
             mask_send_frame: false,
             ..Default::default()
         };
-        Ok(Self::new_with(stream, config, remain))
+        Ok(Self::new_with(stream, config))
     }
 
     /// used to client side to construct a new client
-    pub fn check_fn(
-        key: String,
-        resp: http::Response<()>,
-        remain: BytesMut,
-        stream: S,
-    ) -> Result<Self, WsError> {
+    pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
         standard_handshake_resp_check(key.as_bytes(), &resp)?;
-        Ok(Self::new_with(stream, FrameConfig::default(), remain))
+        Ok(Self::new_with(stream, FrameConfig::default()))
     }
 
     /// get mutable underlying stream

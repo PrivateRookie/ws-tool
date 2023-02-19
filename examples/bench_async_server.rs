@@ -43,20 +43,17 @@ async fn main() -> Result<(), ()> {
         stream.set_nodelay(true).unwrap();
         tokio::spawn(async move {
             tracing::info!("got connect from {:?}", addr);
-            let mut server = ServerBuilder::async_accept(
-                stream,
-                default_handshake_handler,
-                |req, remain, stream| {
+            let mut server =
+                ServerBuilder::async_accept(stream, default_handshake_handler, |req, stream| {
                     let stream = if let Some(buf) = args.buffer {
                         BufStream::with_capacity(buf, buf, stream)
                     } else {
                         BufStream::new(stream)
                     };
-                    AsyncBytesCodec::factory(req, remain, stream)
-                },
-            )
-            .await
-            .unwrap();
+                    AsyncBytesCodec::factory(req, stream)
+                })
+                .await
+                .unwrap();
             loop {
                 let msg = server.receive().await.unwrap();
                 if msg.code == OpCode::Close {

@@ -204,10 +204,10 @@ mod blocking {
         let mut read_bytes = BytesMut::with_capacity(1024);
         let mut buf: [u8; 1] = [0; 1];
         loop {
-            let num = stream.read(&mut buf)?;
-            read_bytes.extend_from_slice(&buf[..num]);
+            stream.read_exact(&mut buf)?;
+            read_bytes.put_u8(buf[0]);
             let header_complete = read_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']);
-            if header_complete || num == 0 {
+            if header_complete {
                 break;
             }
         }
@@ -238,7 +238,7 @@ pub use blocking::*;
 mod non_blocking {
     use std::collections::HashMap;
 
-    use bytes::BytesMut;
+    use bytes::{BufMut, BytesMut};
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
     use crate::{errors::WsError, protocol::prepare_handshake, stream::AsyncStream};
@@ -323,50 +323,36 @@ mod non_blocking {
         extensions: &[String],
         version: u8,
         extra_headers: HashMap<String, String>,
-    ) -> Result<(String, http::Response<()>, BytesMut), WsError> {
+    ) -> Result<(String, http::Response<()>), WsError> {
         let (key, req_str) = prepare_handshake(protocols, extensions, extra_headers, uri, version);
         stream.write_all(req_str.as_bytes()).await?;
         let mut read_bytes = BytesMut::with_capacity(1024);
-        let mut buf: [u8; 1024] = [0; 1024];
-        let (headers, remain) = loop {
-            let num = stream.read(&mut buf).await?;
-            read_bytes.extend_from_slice(&buf[..num]);
-            let idx = read_bytes
-                .windows(4)
-                .position(|sep| sep == [b'\r', b'\n', b'\r', b'\n']);
-            if num == 0 {
-                break (read_bytes, BytesMut::new());
+        let mut buf = [0u8];
+        loop {
+            stream.read_exact(&mut buf).await?;
+            read_bytes.put_u8(buf[0]);
+            let header_complete = read_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']);
+            if header_complete {
+                break;
             }
-
-            if let Some(idx) = idx {
-                let header_bytes = read_bytes.split_to(idx + 4);
-                break (header_bytes, read_bytes);
-            }
-        };
-        perform_parse_req(headers, key).map(|(key, resp)| (key, resp, remain))
+        }
+        perform_parse_req(read_bytes, key)
     }
 
     /// async version of handling protocol handshake
     pub async fn async_handle_handshake<S: AsyncRead + AsyncWrite + Unpin>(
         stream: &mut AsyncStream<S>,
-    ) -> Result<(http::Request<()>, BytesMut), WsError> {
-        let mut read_bytes = BytesMut::with_capacity(1024);
-        let mut buf: [u8; 1024] = [0; 1024];
-        let (req, remain) = loop {
-            let num = stream.read(&mut buf).await?;
-            read_bytes.extend_from_slice(&buf[..num]);
-            let idx = read_bytes
-                .windows(4)
-                .position(|sep| sep == [b'\r', b'\n', b'\r', b'\n']);
-            if num == 0 {
-                break (read_bytes, BytesMut::new());
+    ) -> Result<http::Request<()>, WsError> {
+        let mut req_bytes = BytesMut::with_capacity(1024);
+        let mut buf = [0u8];
+        loop {
+            stream.read_exact(&mut buf).await?;
+            req_bytes.put_u8(buf[0]);
+            if req_bytes.ends_with(&[b'\r', b'\n', b'\r', b'\n']) {
+                break;
             }
-            if let Some(idx) = idx {
-                let req_bytes = read_bytes.split_to(idx + 4);
-                break (req_bytes, read_bytes);
-            }
-        };
-        handle_parse_handshake(req).map(|req| (req, remain))
+        }
+        handle_parse_handshake(req_bytes)
     }
 }
 

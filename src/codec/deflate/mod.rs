@@ -25,7 +25,6 @@ pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking;
-use bytes::BytesMut;
 #[cfg(feature = "async")]
 pub use non_blocking::*;
 
@@ -541,37 +540,6 @@ impl DeflateReadState {
     ) -> Self {
         let low_level_config = gen_low_level_config(&frame_config);
         let read_state = FrameReadState::with_config(low_level_config);
-        let de = if let Some(config) = pmd_config {
-            let de_size = if is_server {
-                config.client_max_window_bits
-            } else {
-                config.server_max_window_bits
-            };
-            let de = DeCompressor::new(de_size);
-            Some(ReadStreamHandler { config, de })
-        } else {
-            None
-        };
-        Self {
-            read_state,
-            de,
-            config: frame_config,
-            fragmented: false,
-            fragmented_data: OwnedFrame::binary_frame(None, &[]),
-            fragmented_type: OpCode::Binary,
-            is_server,
-        }
-    }
-
-    /// construct with config and bytes remaining in handshake
-    pub fn with_remain(
-        frame_config: FrameConfig,
-        pmd_config: Option<PMDConfig>,
-        is_server: bool,
-        remain: BytesMut,
-    ) -> Self {
-        let low_level_config = gen_low_level_config(&frame_config);
-        let read_state = FrameReadState::with_remain(low_level_config, remain);
         let de = if let Some(config) = pmd_config {
             let de_size = if is_server {
                 config.client_max_window_bits

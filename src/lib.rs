@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use bytes::{Bytes, BytesMut};
 use errors::WsError;
-use frame::{OpCode, OwnedFrame, BorrowedFrame};
+use frame::{BorrowedFrame, OpCode, OwnedFrame};
 
 pub use http;
 
@@ -179,7 +179,6 @@ mod blocking {
 mod non_blocking {
     use std::fmt::Debug;
 
-    use bytes::BytesMut;
     use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
     use crate::{
@@ -204,10 +203,10 @@ mod non_blocking {
         ) -> Result<C, WsError>
         where
             S: AsyncRead + AsyncWrite + Unpin,
-            F: FnMut(String, http::Response<()>, BytesMut, AsyncStream<S>) -> Result<C, WsError>,
+            F: FnMut(String, http::Response<()>, AsyncStream<S>) -> Result<C, WsError>,
         {
             check_uri(&uri)?;
-            let (key, resp, remain) = async_req_handshake(
+            let (key, resp) = async_req_handshake(
                 &mut stream,
                 &uri,
                 &self.protocols,
@@ -216,7 +215,7 @@ mod non_blocking {
                 self.headers.clone(),
             )
             .await?;
-            check_fn(key, resp, remain, AsyncStream::new(stream))
+            check_fn(key, resp, AsyncStream::new(stream))
         }
     }
 
@@ -233,11 +232,11 @@ mod non_blocking {
         where
             S: AsyncRead + AsyncWrite + Unpin,
             F1: FnMut(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: FnMut(http::Request<()>, BytesMut, AsyncStream<S>) -> Result<C, WsError>,
+            F2: FnMut(http::Request<()>, AsyncStream<S>) -> Result<C, WsError>,
             T: ToString + Debug,
         {
             let mut stream = AsyncStream::new(stream);
-            let (req, remain) = async_handle_handshake(&mut stream).await?;
+            let req = async_handle_handshake(&mut stream).await?;
             let (req, resp) = handshake_handler(req)?;
             let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
             resp.headers().iter().for_each(|(k, v)| {
@@ -249,7 +248,7 @@ mod non_blocking {
             if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
                 return Err(WsError::HandShakeFailed(resp.body().to_string()));
             }
-            codec_factory(req, remain, stream)
+            codec_factory(req, stream)
         }
     }
 }

@@ -300,30 +300,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
         }
     }
 
-    /// construct with stream and config
-    pub fn new_with(
-        stream: S,
-        frame_config: FrameConfig,
-        pmd_config: Option<PMDConfig>,
-        is_server: bool,
-        remain: BytesMut,
-    ) -> Self {
-        let read_state = DeflateReadState::with_remain(
-            frame_config.clone(),
-            pmd_config.clone(),
-            is_server,
-            remain,
-        );
-        let write_state = DeflateWriteState::with_config(frame_config, pmd_config, is_server);
-        Self {
-            read_state,
-            write_state,
-            stream,
-        }
-    }
-
     /// used for server side to construct a new server
-    pub fn factory(req: http::Request<()>, remain: BytesMut, stream: S) -> Result<Self, WsError> {
+    pub fn factory(req: http::Request<()>, stream: S) -> Result<Self, WsError> {
         let mut pmd_configs: Vec<PMDConfig> = vec![];
         for (k, v) in req.headers() {
             if k.as_str().to_lowercase() == "sec-websocket-extensions" {
@@ -348,17 +326,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
             mask_send_frame: false,
             ..Default::default()
         };
-        let codec = AsyncDeflateCodec::new_with(stream, frame_conf, pmd_config, true, remain);
+        let codec = AsyncDeflateCodec::new(stream, frame_conf, pmd_config, true);
         Ok(codec)
     }
 
     /// used for client side to construct a new client
-    pub fn check_fn(
-        key: String,
-        resp: http::Response<()>,
-        remain: BytesMut,
-        stream: S,
-    ) -> Result<Self, WsError> {
+    pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
         standard_handshake_resp_check(key.as_bytes(), &resp)?;
         let mut pmd_confs: Vec<PMDConfig> = vec![];
         for (k, v) in resp.headers() {
@@ -380,8 +353,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
             conf.server_max_window_bits = min;
         }
         tracing::debug!("use deflate config: {:?}", pmd_conf);
-        let codec =
-            AsyncDeflateCodec::new_with(stream, Default::default(), pmd_conf, false, remain);
+        let codec = AsyncDeflateCodec::new(stream, Default::default(), pmd_conf, false);
         Ok(codec)
     }
 
