@@ -34,7 +34,7 @@ fn main() -> Result<(), ()> {
         .expect("failed to init log");
     tracing::info!("binding on {}:{}", args.host, args.port);
     let listener = std::net::TcpListener::bind(format!("{}:{}", args.host, args.port)).unwrap();
-    // loop {
+    loop {
         let (stream, addr) = listener.accept().unwrap();
         std::thread::spawn(move || {
             tracing::info!("got connect from {:?}", addr);
@@ -73,7 +73,8 @@ fn main() -> Result<(), ()> {
                 }
             }
             tracing::info!("one conn down");
-        }).join().unwrap();
-        Ok(())
-    // }
+        })
+        .join()
+        .unwrap();
+    }
 }

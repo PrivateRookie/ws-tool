@@ -13,10 +13,11 @@ type IOResult<T> = std::io::Result<T>;
 
 impl FrameReadState {
     fn poll<S: Read>(&mut self, stream: &mut S) -> IOResult<usize> {
-        self.read_data.resize(self.read_idx + 1024, 0);
+        if self.read_idx + 1024 >= self.read_data.len() {
+            self.read_data.resize(4096 + self.read_data.len(), 0)
+        }
         let count = stream.read(&mut self.read_data[self.read_idx..])?;
         self.read_idx += count;
-        self.read_data.resize(self.read_idx, 0);
         if count == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
@@ -27,18 +28,16 @@ impl FrameReadState {
     }
 
     fn poll_one_frame<S: Read>(&mut self, stream: &mut S, size: usize) -> IOResult<usize> {
-        let buf_len = self.read_data.len();
-        if buf_len < size {
-            self.read_data.resize(size, 0);
-            stream.read_exact(&mut self.read_data[buf_len..size])?;
-            Ok(size - buf_len)
-        } else {
-            Ok(0)
+        let start = self.read_idx;
+        while self.read_idx == 0 || self.read_idx < size {
+            self.poll(stream)?;
         }
+        let num = self.read_idx - start;
+        Ok(num)
     }
 
     fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
-        while !self.is_header_ok() {
+        while self.read_idx == 0 || !self.is_header_ok() {
             self.poll(stream)?;
         }
         let len = self.parse_frame_header()?;

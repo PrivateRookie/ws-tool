@@ -142,7 +142,7 @@ impl FrameReadState {
 
     /// check if data in buffer is enough to parse frame header
     pub fn is_header_ok(&self) -> bool {
-        let buf_len = self.read_data.len();
+        let buf_len = self.read_idx;
         if buf_len < 2 {
             false
         } else {
@@ -232,8 +232,11 @@ impl FrameReadState {
         let mut data = self.read_data.split_to(len);
         let view = HeaderView(&data);
         let payload_len = view.payload_len();
+        if data.len() < payload_len as usize {
+            dbg!((len, data.len(), payload_len, self.read_data.len()));
+        }
         let header = data.split_to(data.len() - payload_len as usize);
-        self.read_idx = self.read_data.len();
+        self.read_idx -= len;
         let mut frame = OwnedFrame::with_raw(Header::raw(header), data);
         if self.config.auto_unmask {
             frame.unmask();
