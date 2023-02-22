@@ -13,24 +13,41 @@ use std::fmt::Debug;
 /// - x9 denotes a ping
 /// - xA denotes a pong
 /// - xB-F are reserved for further control frames
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+#[repr(u8)]
 pub enum OpCode {
     /// - x0 denotes a continuation frame
-    Continue,
+    Continue = 0,
     /// - x1 denotes a text frame
-    Text,
+    Text = 1,
     /// - x2 denotes a binary frame
-    Binary,
+    Binary = 2,
     /// - x3-7 are reserved for further non-control frames
-    ReservedNonControl,
+    RNC3 = 3,
+    /// - x3-7 are reserved for further non-control frames
+    RNC4 = 4,
+    /// - x3-7 are reserved for further non-control frames
+    RNC5 = 5,
+    /// - x3-7 are reserved for further non-control frames
+    RNC6 = 6,
+    /// - x3-7 are reserved for further non-control frames
+    RNC7 = 7,
     /// - x8 denotes a connection close
-    Close,
+    Close = 8,
     /// - x9 denotes a ping
-    Ping,
+    Ping = 9,
     /// - xA denotes a pong
-    Pong,
+    Pong = 10,
     /// - xB-F are reserved for further control frames
-    ReservedControl,
+    RC11 = 11,
+    /// - xB-F are reserved for further control frames
+    RC12 = 12,
+    /// - xB-F are reserved for further control frames
+    RC13 = 13,
+    /// - xB-F are reserved for further control frames
+    RC14 = 14,
+    /// - xB-F are reserved for further control frames
+    RC15 = 15,
 }
 
 impl Default for OpCode {
@@ -42,16 +59,7 @@ impl Default for OpCode {
 impl OpCode {
     /// get corresponding u8 value
     pub fn as_u8(&self) -> u8 {
-        match self {
-            OpCode::Continue => 0,
-            OpCode::Text => 1,
-            OpCode::Binary => 2,
-            OpCode::ReservedNonControl => 3,
-            OpCode::Close => 8,
-            OpCode::Ping => 9,
-            OpCode::Pong => 10,
-            OpCode::ReservedControl => 11,
-        }
+        *self as u8
     }
 
     /// check is close type frame
@@ -63,22 +71,15 @@ impl OpCode {
     pub fn is_data(&self) -> bool {
         matches!(self, Self::Text | Self::Binary | Self::Continue)
     }
+
+    /// check is reserved
+    pub fn is_reserved(&self) -> bool {
+        matches!(self.as_u8(), 3..=5 | 11..=15)
+    }
 }
 
-#[inline]
-pub(crate) fn parse_opcode(val: u8) -> Result<OpCode, u8> {
-    let val = val << 4;
-    match val {
-        0 => Ok(OpCode::Continue),
-        16 => Ok(OpCode::Text),
-        32 => Ok(OpCode::Binary),
-        48 | 64 | 80 | 96 | 112 => Ok(OpCode::ReservedNonControl),
-        128 => Ok(OpCode::Close),
-        144 => Ok(OpCode::Ping),
-        160 => Ok(OpCode::Pong),
-        176 | 192 | 208 | 224 | 240 => Ok(OpCode::ReservedControl),
-        _ => Err(val >> 4),
-    }
+pub(crate) fn parse_opcode(val: u8) -> OpCode {
+    unsafe { std::mem::transmute(val & 0b00001111) }
 }
 
 #[inline]
@@ -132,8 +133,6 @@ macro_rules! impl_get {
         #[inline]
         pub fn opcode(&self) -> OpCode {
             parse_opcode(self.0[0])
-                .map_err(|code| format!("unexpected opcode {}", code))
-                .unwrap()
         }
 
         /// get mask bit value

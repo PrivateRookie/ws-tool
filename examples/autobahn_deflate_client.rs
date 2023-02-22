@@ -67,7 +67,7 @@ fn run_test(case: usize) -> Result<(), WsError> {
                         client.send(OpCode::Pong, frame.payload())?;
                     }
                     OpCode::Pong => {}
-                    OpCode::Continue | OpCode::ReservedNonControl | OpCode::ReservedControl => {
+                    _ => {
                         unreachable!()
                     }
                 }

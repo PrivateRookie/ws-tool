@@ -88,15 +88,15 @@ fn main() -> Result<(), ()> {
                         for _ in 0..count {
                             w.send(Binary, &payload[..]).unwrap();
                         }
-                        w.send(Close, 1000u16.to_be_bytes().as_slice()).unwrap();
                         w.flush().unwrap();
+                        w.send(Close, 1000u16.to_be_bytes().as_slice()).unwrap();
                     });
                     let r = std::thread::spawn(move || {
                         for _ in 0..count {
                             r.receive().unwrap();
                         }
                     });
-                    r.join().and_then(|_| w.join()).ok();
+                    r.join().and_then(|_| w.join()).unwrap();
                     let elapse = now.elapsed();
                     (idx, elapse)
                 })

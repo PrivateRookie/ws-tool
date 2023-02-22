@@ -13,10 +13,12 @@ type IOResult<T> = std::io::Result<T>;
 
 impl FrameReadState {
     async fn async_poll<S: AsyncRead + Unpin>(&mut self, stream: &mut S) -> IOResult<usize> {
-        self.read_data.resize(self.read_idx + 1024, 0);
+        if self.read_idx + self.config.resize_thresh >= self.read_data.len() {
+            self.read_data
+                .resize(self.config.resize_size + self.read_data.len(), 0)
+        }
         let count = stream.read(&mut self.read_data[self.read_idx..]).await?;
         self.read_idx += count;
-        self.read_data.resize(self.read_idx, 0);
         if count == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
@@ -31,16 +33,12 @@ impl FrameReadState {
         stream: &mut S,
         size: usize,
     ) -> IOResult<usize> {
-        let buf_len = self.read_data.len();
-        if buf_len < size {
-            self.read_data.resize(size, 0);
-            stream
-                .read_exact(&mut self.read_data[buf_len..size])
-                .await?;
-            Ok(size - buf_len)
-        } else {
-            Ok(0)
+        let start = self.read_idx;
+        while self.read_idx < size {
+            self.async_poll(stream).await?;
         }
+        let num = self.read_idx - start;
+        Ok(num)
     }
 
     async fn async_read_one_frame<S: AsyncRead + Unpin>(
@@ -113,15 +111,7 @@ impl FrameWriteState {
         for (idx, chunk) in parts.into_iter().enumerate() {
             let fin = idx + 1 == total;
             let mask = mask_fn();
-            let header = Header::new(
-                fin,
-                false,
-                false,
-                false,
-                mask,
-                opcode.clone(),
-                chunk.len() as u64,
-            );
+            let header = Header::new(fin, false, false, false, mask, opcode, chunk.len() as u64);
             stream.write_all(&header.0).await?;
             if let Some(mask) = mask {
                 let mut data = BytesMut::from_iter(chunk);

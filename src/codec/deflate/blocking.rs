@@ -102,15 +102,7 @@ impl DeflateWriteState {
                     .compress(chunk, &mut output)
                     .map_err(WsError::CompressFailed)?;
                 output.truncate(output.len() - 4);
-                let header = Header::new(
-                    fin,
-                    true,
-                    false,
-                    false,
-                    mask,
-                    code.clone(),
-                    output.len() as u64,
-                );
+                let header = Header::new(fin, true, false, false, mask, code, output.len() as u64);
                 stream.write_all(&header.0)?;
                 if let Some(mask) = mask {
                     apply_mask_fast32(&mut output, mask)
@@ -123,15 +115,7 @@ impl DeflateWriteState {
                     tracing::trace!("reset compressor");
                 }
             } else {
-                let header = Header::new(
-                    fin,
-                    false,
-                    false,
-                    false,
-                    mask,
-                    code.clone(),
-                    chunk.len() as u64,
-                );
+                let header = Header::new(fin, false, false, false, mask, code, chunk.len() as u64);
                 stream.write_all(&header.0)?;
                 if let Some(mask) = mask {
                     let mut data = BytesMut::from_iter(chunk);
@@ -232,7 +216,7 @@ impl DeflateReadState {
                     }
                     if !header.fin() {
                         self.fragmented = true;
-                        self.fragmented_type = opcode.clone();
+                        self.fragmented_type = opcode;
                         if opcode == OpCode::Text
                             && self.config.validate_utf8.is_fast_fail()
                             && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
@@ -260,9 +244,7 @@ impl DeflateReadState {
                     }
                 }
                 OpCode::Close | OpCode::Ping | OpCode::Pong => break Ok(unmasked_frame),
-                OpCode::ReservedNonControl | OpCode::ReservedControl => {
-                    break Err(WsError::UnsupportedFrame(opcode))
-                }
+                _ => break Err(WsError::UnsupportedFrame(opcode)),
             }
         }
     }

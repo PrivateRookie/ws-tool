@@ -1,5 +1,5 @@
 use crate::errors::{ProtocolError, WsError};
-use crate::frame::{get_bit, parse_opcode, Header, HeaderView, OpCode, OwnedFrame};
+use crate::frame::{get_bit, Header, HeaderView, OpCode, OwnedFrame};
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
 use bytes::BytesMut;
 use std::fmt::Debug;
@@ -55,6 +55,10 @@ pub struct FrameConfig {
     pub merge_frame: bool,
     /// utf8 check policy
     pub validate_utf8: ValidateUtf8Policy,
+    /// resize size of read buf, default 4K
+    pub resize_size: usize,
+    /// if avalible len < resize, resize read buf, default 1K
+    pub resize_thresh: usize,
 }
 
 impl Default for FrameConfig {
@@ -67,6 +71,8 @@ impl Default for FrameConfig {
             auto_fragment_size: 0,
             merge_frame: true,
             validate_utf8: ValidateUtf8Policy::FastFail,
+            resize_size: 4096,
+            resize_thresh: 1024,
         }
     }
 }
@@ -203,10 +209,6 @@ impl FrameReadState {
                 error: ProtocolError::InvalidLeadingBits(leading_bits),
             });
         }
-        parse_opcode(self.read_data[0]).map_err(|e| WsError::ProtocolError {
-            error: ProtocolError::InvalidOpcode(e),
-            close_code: 1008,
-        })?;
         let (len_occ_bytes, payload_len) =
             parse_payload_len(&self.read_data).map_err(|e| WsError::ProtocolError {
                 close_code: 1008,
@@ -232,9 +234,6 @@ impl FrameReadState {
         let mut data = self.read_data.split_to(len);
         let view = HeaderView(&data);
         let payload_len = view.payload_len();
-        if data.len() < payload_len as usize {
-            dbg!((len, data.len(), payload_len, self.read_data.len()));
-        }
         let header = data.split_to(data.len() - payload_len as usize);
         self.read_idx -= len;
         let mut frame = OwnedFrame::with_raw(Header::raw(header), data);
@@ -267,7 +266,7 @@ impl FrameReadState {
             OpCode::Text | OpCode::Binary => {
                 if !header.fin() {
                     self.fragmented = true;
-                    self.fragmented_type = opcode.clone();
+                    self.fragmented_type = opcode;
                     self.fragmented_data.header_mut().set_opcode(opcode);
                     self.fragmented_data
                         .extend_from_slice(checked_frame.payload());
@@ -385,9 +384,7 @@ impl FrameReadState {
                 }
                 Ok(unmasked_frame)
             }
-            OpCode::ReservedNonControl | OpCode::ReservedControl => {
-                Err(WsError::UnsupportedFrame(opcode))
-            }
+            _ => Err(WsError::UnsupportedFrame(opcode)),
         }
     }
 }

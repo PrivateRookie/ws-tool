@@ -13,8 +13,9 @@ type IOResult<T> = std::io::Result<T>;
 
 impl FrameReadState {
     fn poll<S: Read>(&mut self, stream: &mut S) -> IOResult<usize> {
-        if self.read_idx + 1024 >= self.read_data.len() {
-            self.read_data.resize(4096 + self.read_data.len(), 0)
+        if self.read_idx + self.config.resize_thresh >= self.read_data.len() {
+            self.read_data
+                .resize(self.config.resize_size + self.read_data.len(), 0)
         }
         let count = stream.read(&mut self.read_data[self.read_idx..])?;
         self.read_idx += count;
@@ -29,7 +30,7 @@ impl FrameReadState {
 
     fn poll_one_frame<S: Read>(&mut self, stream: &mut S, size: usize) -> IOResult<usize> {
         let start = self.read_idx;
-        while self.read_idx == 0 || self.read_idx < size {
+        while self.read_idx < size {
             self.poll(stream)?;
         }
         let num = self.read_idx - start;
@@ -37,7 +38,7 @@ impl FrameReadState {
     }
 
     fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
-        while self.read_idx == 0 || !self.is_header_ok() {
+        while !self.is_header_ok() {
             self.poll(stream)?;
         }
         let len = self.parse_frame_header()?;
@@ -101,15 +102,7 @@ impl FrameWriteState {
         for (idx, chunk) in parts.into_iter().enumerate() {
             let fin = idx + 1 == total;
             let mask = mask_fn();
-            let header = Header::new(
-                fin,
-                false,
-                false,
-                false,
-                mask,
-                opcode.clone(),
-                chunk.len() as u64,
-            );
+            let header = Header::new(fin, false, false, false, mask, opcode, chunk.len() as u64);
             stream.write_all(&header.0)?;
             if let Some(mask) = mask {
                 let mut data = BytesMut::from_iter(chunk);

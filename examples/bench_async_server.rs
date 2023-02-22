@@ -3,7 +3,6 @@ use tokio::io::BufStream;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{default_handshake_handler, AsyncBytesCodec},
-    frame::OpCode,
     ServerBuilder,
 };
 
@@ -42,23 +41,44 @@ async fn main() -> Result<(), ()> {
         let (stream, addr) = listener.accept().await.unwrap();
         tokio::spawn(async move {
             tracing::info!("got connect from {:?}", addr);
-            let mut server =
-                ServerBuilder::async_accept(stream, default_handshake_handler, |req, stream| {
-                    let stream = if let Some(buf) = args.buffer {
-                        BufStream::with_capacity(buf, buf, stream)
-                    } else {
-                        BufStream::new(stream)
-                    };
-                    AsyncBytesCodec::factory(req, stream)
-                })
-                .await
-                .unwrap();
-            loop {
-                let msg = server.receive().await.unwrap();
-                if msg.code == OpCode::Close {
-                    break;
+            match args.buffer {
+                Some(buf) => {
+                    let mut server = ServerBuilder::async_accept(
+                        stream,
+                        default_handshake_handler,
+                        |req, stream| {
+                            let stream = BufStream::with_capacity(buf, buf, stream);
+                            AsyncBytesCodec::factory(req, stream)
+                        },
+                    )
+                    .await
+                    .unwrap();
+                    loop {
+                        let msg = server.receive().await.unwrap();
+                        if msg.code.is_close() {
+                            break;
+                        }
+
+                        server.send(&msg.data[..]).await.unwrap();
+                    }
                 }
-                server.send(&msg.data[..]).await.unwrap();
+                None => {
+                    let mut server = ServerBuilder::async_accept(
+                        stream,
+                        default_handshake_handler,
+                        AsyncBytesCodec::factory,
+                    )
+                    .await
+                    .unwrap();
+                    loop {
+                        let msg = server.receive().await.unwrap();
+                        if msg.code.is_close() {
+                            break;
+                        }
+
+                        server.send(&msg.data[..]).await.unwrap();
+                    }
+                }
             }
             tracing::info!("one conn down");
         });
