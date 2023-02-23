@@ -40,7 +40,7 @@ struct Args {
     window: WindowBit,
 
     /// buffer size of stream
-    #[arg(long)]
+    #[arg(short, long)]
     buffer: Option<usize>,
 }
 
@@ -147,6 +147,10 @@ struct Record {
     count: u64,
     #[tabled(rename = "Duration(ms)")]
     duration: u128,
-    #[tabled(rename = "Message/sec")]
+    #[tabled(rename = "Message/sec", display_with = "fmt_qps")]
     qps: f64,
+}
+
+fn fmt_qps(qps: &f64) -> String {
+    format!("{qps:.2}")
 }

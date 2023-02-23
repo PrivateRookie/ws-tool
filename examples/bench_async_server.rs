@@ -61,6 +61,7 @@ async fn main() -> Result<(), ()> {
 
                         server.send(&msg.data[..]).await.unwrap();
                     }
+                    server.flush().await.unwrap();
                 }
                 None => {
                     let mut server = ServerBuilder::async_accept(
