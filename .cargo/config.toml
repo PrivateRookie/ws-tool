@@ -1,0 +1,8 @@
+[alias]
+bs = "run --example bench_server"
+bas = "run --example bench_async_server --features async "
+bt = "run --example bench_tungstenite"
+fs = "flamegraph -o bench_data/bench_server.svg --example bench_server"
+fas = "flamegraph -o bench_data/bench_async_server.svg --example bench_async_server --features async "
+ft = "flamegraph -o bench_data/bench_tungstenite.svg --example bench_tungstenite"
+lt = "run --example load_test --all-features --release"
