@@ -39,11 +39,19 @@ pub enum WsError {
     #[error("unsupported frame {0:?}")]
     UnsupportedFrame(OpCode),
 
-    #[cfg(feature = "deflate")]
+    #[cfg(any(
+        feature = "deflate",
+        feature = "deflate_ng",
+        feature = "deflate_static"
+    ))]
     /// compress failed
     #[error("compress failed {0}")]
     CompressFailed(String),
-    #[cfg(feature = "deflate")]
+    #[cfg(any(
+        feature = "deflate",
+        feature = "deflate_ng",
+        feature = "deflate_static"
+    ))]
     /// decompress failed
     #[error("decompress failed {0}")]
     DeCompressFailed(String),
@@ -104,7 +112,11 @@ pub enum ProtocolError {
     #[error("payload too large, max payload size {0}")]
     PayloadTooLarge(usize),
 
-    #[cfg(feature = "deflate")]
+    #[cfg(any(
+        feature = "deflate",
+        feature = "deflate_ng",
+        feature = "deflate_static"
+    ))]
     /// compressed control frame
     #[error("compressed control frame")]
     CompressedControlFrame,

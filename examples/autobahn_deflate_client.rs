@@ -112,7 +112,7 @@ fn update_report() -> Result<(), WsError> {
 
 fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::INFO)
         .with_file(true)
         .with_line_number(true)
         .finish()

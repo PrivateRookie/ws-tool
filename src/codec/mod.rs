@@ -1,15 +1,22 @@
 mod binary;
-#[cfg(feature = "deflate")]
+#[cfg(any(
+    feature = "deflate",
+    feature = "deflate_ng",
+    feature = "deflate_static"
+))]
 mod deflate;
 mod frame;
 mod text;
 
 pub use binary::*;
-#[cfg(feature = "deflate")]
+#[cfg(any(
+    feature = "deflate",
+    feature = "deflate_ng",
+    feature = "deflate_static"
+))]
 pub use deflate::*;
 pub use frame::*;
 pub use text::*;
-
 
 /// split something into two parts
 pub trait Split {
