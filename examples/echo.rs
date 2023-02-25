@@ -2,10 +2,15 @@ use std::{io::Write, path::PathBuf};
 
 use clap::Parser;
 use http::Uri;
-use tokio::net::TcpStream;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::AsyncStringCodec, ClientBuilder};
+use ws_tool::{
+    codec::AsyncStringCodec,
+    connector::{async_tcp_connect, async_wrap_tls, get_host, get_scheme},
+    protocol::Mode,
+    stream::AsyncRW,
+    ClientBuilder,
+};
 
 /// websocket client demo with raw frame
 #[derive(Parser)]
@@ -18,19 +23,30 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {
+    run().await
+}
+
+async fn run() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
         .with_max_level(Level::DEBUG)
         .finish()
         .try_init()
         .expect("failed to init log");
     let args = Args::parse();
-
+    let mode = get_scheme(&args.uri).unwrap();
+    let stream = async_tcp_connect(&args.uri).await.unwrap();
+    let stream: Box<dyn AsyncRW> = match mode {
+        Mode::WS => Box::new(stream),
+        Mode::WSS => {
+            let stream = async_wrap_tls(stream, get_host(&args.uri).unwrap(), vec![])
+                .await
+                .unwrap();
+            Box::new(stream)
+        }
+    };
     let builder = ClientBuilder::new();
-    let stream = TcpStream::connect((args.uri.host().unwrap(), args.uri.port_u16().unwrap()))
-        .await
-        .unwrap();
     let mut client = builder
-        .async_connect(
+        .async_with_stream(
             args.uri.to_string().try_into().unwrap(),
             stream,
             AsyncStringCodec::check_fn,

@@ -1,5 +1,4 @@
 use bytes::BytesMut;
-use std::net::TcpStream;
 use tracing::*;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
@@ -12,13 +11,9 @@ use ws_tool::{
 const AGENT: &str = "client";
 
 fn get_case_count() -> Result<usize, WsError> {
-    let stream = TcpStream::connect("localhost:9002").unwrap();
+    let uri = "ws://localhost:9002/getCaseCount";
     let mut client = ClientBuilder::new()
-        .connect(
-            "ws://localhost:9002/getCaseCount".parse().unwrap(),
-            stream,
-            StringCodec::check_fn,
-        )
+        .connect(uri.parse().unwrap(), StringCodec::check_fn)
         .unwrap();
     let msg = client.receive().unwrap();
     client.receive().unwrap();
@@ -30,9 +25,8 @@ fn run_test(case: usize) -> Result<(), WsError> {
     let url: http::Uri = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT)
         .parse()
         .unwrap();
-    let stream = TcpStream::connect("localhost:9002").unwrap();
     let mut client = ClientBuilder::new()
-        .connect(url, stream, FrameCodec::check_fn)
+        .connect(url, FrameCodec::check_fn)
         .unwrap();
     loop {
         match client.receive() {
@@ -84,9 +78,8 @@ fn update_report() -> Result<(), WsError> {
     let url: http::Uri = format!("ws://localhost:9002/updateReports?agent={}", AGENT)
         .parse()
         .unwrap();
-    let stream = TcpStream::connect("localhost:9002").unwrap();
     let mut client = ClientBuilder::new()
-        .connect(url, stream, StringCodec::check_fn)
+        .connect(url, StringCodec::check_fn)
         .unwrap();
     client.send((1000u16, String::new())).map(|_| ())
 }

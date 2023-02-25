@@ -1,8 +1,8 @@
 use clap::Parser;
-use tokio::io::BufStream;
+use tokio::io::BufWriter;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, AsyncBytesCodec},
+    codec::{default_handshake_handler, AsyncBytesCodec, FrameConfig},
     ServerBuilder,
 };
 
@@ -46,9 +46,15 @@ async fn main() -> Result<(), ()> {
                     let mut server = ServerBuilder::async_accept(
                         stream,
                         default_handshake_handler,
-                        |req, stream| {
-                            let stream = BufStream::with_capacity(buf, buf, stream);
-                            AsyncBytesCodec::factory(req, stream)
+                        |_req, stream| {
+                            let stream = BufWriter::with_capacity(buf, stream);
+                            let config = FrameConfig {
+                                mask_send_frame: false,
+                                resize_size: buf,
+                                resize_thresh: buf / 3,
+                                ..Default::default()
+                            };
+                            Ok(AsyncBytesCodec::new_with(stream, config))
                         },
                     )
                     .await

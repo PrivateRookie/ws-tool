@@ -139,53 +139,9 @@ mod blocking {
 
     use bytes::{BufMut, BytesMut};
 
-    use crate::{errors::WsError, stream::WsStream};
+    use crate::errors::WsError;
 
     use super::{handle_parse_handshake, perform_parse_req, prepare_handshake};
-
-    #[cfg(feature = "sync_tls_rustls")]
-    mod tls {
-        use std::{collections::HashSet, io::Read, net::TcpStream, path::PathBuf};
-
-        use rustls_connector::{RustlsConnectorConfig, TlsStream};
-
-        use crate::errors::WsError;
-
-        /// start tls session
-        pub fn wrap_tls(
-            stream: TcpStream,
-            host: &str,
-            certs: &HashSet<PathBuf>,
-        ) -> Result<TlsStream<TcpStream>, WsError> {
-            let mut config = RustlsConnectorConfig::new_with_webpki_roots_certs();
-            let mut cert_data = vec![];
-            for cert_path in certs {
-                let mut pem = std::fs::File::open(cert_path).map_err(|_| {
-                    WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-                })?;
-                let mut data = vec![];
-                if let Err(e) = pem.read_to_end(&mut data) {
-                    tracing::error!(
-                        "failed to read cert file {} {}",
-                        cert_path.display(),
-                        e.to_string()
-                    );
-                    continue;
-                }
-                cert_data.push(data);
-            }
-            config.add_parsable_certificates(&cert_data);
-            let connector = config.connector_with_no_client_auth();
-            let tls_stream = connector
-                .connect(host, stream)
-                .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
-            tracing::debug!("tls connection established");
-            Ok(tls_stream)
-        }
-    }
-
-    #[cfg(feature = "sync_tls_rustls")]
-    pub use tls::wrap_tls;
 
     /// perform http upgrade
     ///
@@ -215,9 +171,7 @@ mod blocking {
     }
 
     /// handle protocol handshake
-    pub fn handle_handshake<S: Read + Write>(
-        stream: &mut WsStream<S>,
-    ) -> Result<http::Request<()>, WsError> {
+    pub fn handle_handshake<S: Read + Write>(stream: &mut S) -> Result<http::Request<()>, WsError> {
         let mut req_bytes = BytesMut::with_capacity(1024);
         let mut buf = [0u8];
         loop {
@@ -241,77 +195,9 @@ mod non_blocking {
     use bytes::{BufMut, BytesMut};
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-    use crate::{errors::WsError, protocol::prepare_handshake, stream::AsyncStream};
+    use crate::{errors::WsError, protocol::prepare_handshake};
 
     use super::{handle_parse_handshake, perform_parse_req};
-
-    #[cfg(feature = "async_tls_rustls")]
-    mod tls {
-        use std::convert::TryFrom;
-        use std::io::BufReader;
-        use std::{collections::HashSet, path::PathBuf};
-        // use std::path::PathBuf;
-        use crate::errors::WsError;
-        use rustls_connector::rustls::OwnedTrustAnchor;
-        use std::sync::Arc;
-        use tokio::net::TcpStream;
-        use tokio_rustls::rustls::RootCertStore;
-        use tokio_rustls::{client::TlsStream, rustls::ClientConfig, TlsConnector};
-
-        /// async version of startting tls session
-        pub async fn async_wrap_tls(
-            stream: TcpStream,
-            host: &str,
-            certs: &HashSet<PathBuf>,
-        ) -> Result<TlsStream<TcpStream>, WsError> {
-            let mut root_store = RootCertStore::empty();
-            root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(
-                |ta| {
-                    OwnedTrustAnchor::from_subject_spki_name_constraints(
-                        ta.subject,
-                        ta.spki,
-                        ta.name_constraints,
-                    )
-                },
-            ));
-            let mut trust_anchors = vec![];
-            for cert_path in certs {
-                let mut pem = std::fs::File::open(cert_path).map_err(|_| {
-                    WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
-                })?;
-                let mut cert = BufReader::new(&mut pem);
-                let certs = rustls_pemfile::certs(&mut cert)
-                    .map_err(|e| WsError::LoadCertFailed(e.to_string()))?;
-                for item in certs {
-                    let ta = webpki::TrustAnchor::try_from_cert_der(&item[..])
-                        .map_err(|e| WsError::LoadCertFailed(e.to_string()))?;
-                    let anchor = OwnedTrustAnchor::from_subject_spki_name_constraints(
-                        ta.subject,
-                        ta.spki,
-                        ta.name_constraints,
-                    );
-                    trust_anchors.push(anchor);
-                }
-            }
-            root_store.add_server_trust_anchors(trust_anchors.into_iter());
-            let config = ClientConfig::builder()
-                .with_safe_defaults()
-                .with_root_certificates(root_store)
-                .with_no_client_auth();
-            let domain = tokio_rustls::rustls::ServerName::try_from(host)
-                .map_err(|e| WsError::TlsDnsFailed(e.to_string()))?;
-            let connector = TlsConnector::from(Arc::new(config));
-            let tls_stream = connector
-                .connect(domain, stream)
-                .await
-                .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
-            tracing::debug!("tls connection established");
-            Ok(tls_stream)
-        }
-    }
-
-    #[cfg(feature = "async_tls_rustls")]
-    pub use tls::async_wrap_tls;
 
     /// perform http upgrade
     ///
@@ -341,7 +227,7 @@ mod non_blocking {
 
     /// async version of handling protocol handshake
     pub async fn async_handle_handshake<S: AsyncRead + AsyncWrite + Unpin>(
-        stream: &mut AsyncStream<S>,
+        stream: &mut S,
     ) -> Result<http::Request<()>, WsError> {
         let mut req_bytes = BytesMut::with_capacity(1024);
         let mut buf = [0u8];

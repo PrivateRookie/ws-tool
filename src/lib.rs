@@ -6,7 +6,6 @@
 use std::collections::HashMap;
 
 use bytes::{Bytes, BytesMut};
-use errors::WsError;
 use frame::{BorrowedFrame, OpCode, OwnedFrame};
 
 pub use http;
@@ -18,22 +17,13 @@ pub mod frame;
 /// build connection & read/write frame utils
 pub mod protocol;
 
-/// stream definition
-pub mod stream;
-
 /// frame codec impl
 pub mod codec;
+/// connection helper function
+pub mod connector;
 
-fn check_uri(uri: &http::Uri) -> Result<(), WsError> {
-    if let Some(scheme) = uri.scheme_str() {
-        match scheme.to_lowercase().as_str() {
-            "ws" | "wss" => Ok(()),
-            s => Err(WsError::InvalidUri(format!("unknown scheme {s}"))),
-        }
-    } else {
-        Err(WsError::InvalidUri("missing scheme".into()))
-    }
-}
+/// helpler stream definition
+pub mod stream;
 
 /// helper builder to construct websocket client
 #[derive(Debug, Clone)]
@@ -108,19 +98,31 @@ impl ClientBuilder {
 
 #[cfg(feature = "sync")]
 mod blocking {
-    use std::io::{Read, Write};
+    use std::{
+        io::{Read, Write},
+        net::TcpStream,
+    };
 
     use crate::{
-        check_uri,
+        connector::{get_scheme, tcp_connect},
         errors::WsError,
         protocol::{handle_handshake, req_handshake},
-        stream::WsStream,
         ClientBuilder, ServerBuilder,
     };
 
     impl ClientBuilder {
         /// perform protocol handshake & check server response
-        pub fn connect<C, F, S>(
+        pub fn connect<C, F>(&self, uri: http::Uri, check_fn: F) -> Result<C, WsError>
+        where
+            F: FnMut(String, http::Response<()>, TcpStream) -> Result<C, WsError>,
+        {
+            let stream = tcp_connect(&uri)?;
+            self.with_stream(uri, stream, check_fn)
+        }
+
+        /// ## Low level api
+        /// perform protocol handshake & check server response
+        pub fn with_stream<C, F, S>(
             &self,
             uri: http::Uri,
             mut stream: S,
@@ -128,9 +130,9 @@ mod blocking {
         ) -> Result<C, WsError>
         where
             S: Read + Write,
-            F: FnMut(String, http::Response<()>, WsStream<S>) -> Result<C, WsError>,
+            F: FnMut(String, http::Response<()>, S) -> Result<C, WsError>,
         {
-            check_uri(&uri)?;
+            get_scheme(&uri)?;
             let (key, resp) = req_handshake(
                 &mut stream,
                 &uri,
@@ -139,7 +141,7 @@ mod blocking {
                 self.version,
                 self.headers.clone(),
             )?;
-            check_fn(key, resp, WsStream::new(stream))
+            check_fn(key, resp, stream)
         }
     }
 
@@ -147,17 +149,16 @@ mod blocking {
         /// wait for protocol handshake from client
         /// checking handshake & construct server
         pub fn accept<F1, F2, T, C, S>(
-            stream: S,
+            mut stream: S,
             mut handshake_handler: F1,
             mut codec_factory: F2,
         ) -> Result<C, WsError>
         where
             S: Read + Write,
             F1: FnMut(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: FnMut(http::Request<()>, WsStream<S>) -> Result<C, WsError>,
+            F2: FnMut(http::Request<()>, S) -> Result<C, WsError>,
             T: ToString + std::fmt::Debug,
         {
-            let mut stream = WsStream::new(stream);
             let req = handle_handshake(&mut stream)?;
             let (req, resp) = handshake_handler(req)?;
             let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
@@ -179,23 +180,34 @@ mod blocking {
 mod non_blocking {
     use std::fmt::Debug;
 
-    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+    use tokio::{
+        io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+        net::TcpStream,
+    };
 
     use crate::{
-        check_uri,
+        connector::async_tcp_connect,
         errors::WsError,
         protocol::{async_handle_handshake, async_req_handshake},
-        stream::AsyncStream,
         ServerBuilder,
     };
 
     use super::ClientBuilder;
 
     impl ClientBuilder {
+        /// perform protocol handshake & check server response
+        pub async fn async_connect<C, F>(&self, uri: http::Uri, check_fn: F) -> Result<C, WsError>
+        where
+            F: FnMut(String, http::Response<()>, TcpStream) -> Result<C, WsError>,
+        {
+            let stream = async_tcp_connect(&uri).await?;
+            self.async_with_stream(uri, stream, check_fn).await
+        }
+
         /// async version of connect
         ///
         /// perform protocol handshake & check server response
-        pub async fn async_connect<C, F, S>(
+        pub async fn async_with_stream<C, F, S>(
             &self,
             uri: http::Uri,
             mut stream: S,
@@ -203,9 +215,8 @@ mod non_blocking {
         ) -> Result<C, WsError>
         where
             S: AsyncRead + AsyncWrite + Unpin,
-            F: FnMut(String, http::Response<()>, AsyncStream<S>) -> Result<C, WsError>,
+            F: FnMut(String, http::Response<()>, S) -> Result<C, WsError>,
         {
-            check_uri(&uri)?;
             let (key, resp) = async_req_handshake(
                 &mut stream,
                 &uri,
@@ -215,7 +226,7 @@ mod non_blocking {
                 self.headers.clone(),
             )
             .await?;
-            check_fn(key, resp, AsyncStream::new(stream))
+            check_fn(key, resp, stream)
         }
     }
 
@@ -225,17 +236,16 @@ mod non_blocking {
         /// wait for protocol handshake from client
         /// checking handshake & construct server
         pub async fn async_accept<F1, F2, T, C, S>(
-            stream: S,
+            mut stream: S,
             mut handshake_handler: F1,
             mut codec_factory: F2,
         ) -> Result<C, WsError>
         where
             S: AsyncRead + AsyncWrite + Unpin,
             F1: FnMut(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
-            F2: FnMut(http::Request<()>, AsyncStream<S>) -> Result<C, WsError>,
+            F2: FnMut(http::Request<()>, S) -> Result<C, WsError>,
             T: ToString + Debug,
         {
-            let mut stream = AsyncStream::new(stream);
             let req = async_handle_handshake(&mut stream).await?;
             let (req, resp) = handshake_handler(req)?;
             let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];

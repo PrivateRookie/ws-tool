@@ -122,7 +122,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncBytesCodec<S> {
         Ok(Self::new_with(stream, config))
     }
 
-    /// used to client side to construct a new client
+    /// used for client side to construct a new client
     pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
         standard_handshake_resp_check(key.as_bytes(), &resp)?;
         Ok(Self::new_with(stream, FrameConfig::default()))

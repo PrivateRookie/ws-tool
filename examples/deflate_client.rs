@@ -1,4 +1,4 @@
-use std::{io::Write, net::TcpStream};
+use std::io::Write;
 
 use clap::Parser;
 use http::Uri;
@@ -26,8 +26,6 @@ fn main() {
         .expect("failed to init log");
     let arg = Args::parse();
     let uri: Uri = arg.uri.parse().unwrap();
-    let stream =
-        TcpStream::connect(format!("{}:{}", uri.host().unwrap(), uri.port().unwrap())).unwrap();
     let config = PMDConfig {
         server_max_window_bits: WindowBit::Nine,
         client_max_window_bits: WindowBit::Nine,
@@ -35,7 +33,7 @@ fn main() {
     };
     let mut client = ClientBuilder::new()
         .extension(config.ext_string())
-        .connect(uri, stream, DeflateCodec::check_fn)
+        .connect(uri, DeflateCodec::check_fn)
         .unwrap();
     let mut input = String::new();
     loop {

@@ -72,7 +72,7 @@ fn main() -> Result<(), ()> {
                     let stream =
                         TcpStream::connect((uri.host().unwrap(), uri.port_u16().unwrap())).unwrap();
                     let client = builder
-                        .connect(uri, stream, |key, resp, stream| {
+                        .with_stream(uri, stream, |key, resp, stream| {
                             let stream = if let Some(buffer) = args.buffer {
                                 BufStream::with_capacity(buffer, buffer, stream)
                             } else {

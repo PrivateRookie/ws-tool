@@ -1,8 +1,11 @@
 use clap::Parser;
-use tokio::net::TcpStream;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{codec::AsyncStringCodec, ClientBuilder};
+use ws_tool::{
+    codec::AsyncStringCodec,
+    connector::{async_tcp_connect, async_wrap_tls, get_host},
+    ClientBuilder,
+};
 
 /// websocket client connect to binance futures websocket
 #[derive(Parser)]
@@ -37,7 +40,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::ERROR)
         .finish()
         .try_init()
         .expect("failed to init log");
@@ -64,7 +67,6 @@ async fn main() -> Result<(), ()> {
             auth,
             keep_alive: true,
         };
-
         hproxy::async_create_conn(&config, "fstream.binance.com")
             .await
             .unwrap()
@@ -89,11 +91,13 @@ async fn main() -> Result<(), ()> {
             .unwrap();
         stream
     } else {
-        TcpStream::connect("fstream.binance.com:443").await.unwrap()
+        async_tcp_connect(&uri).await.unwrap()
     };
-
+    let stream = async_wrap_tls(stream, get_host(&uri).unwrap(), vec![])
+        .await
+        .unwrap();
     let mut client = builder
-        .async_connect(uri, stream, AsyncStringCodec::check_fn)
+        .async_with_stream(uri, stream, AsyncStringCodec::check_fn)
         .await
         .unwrap();
 

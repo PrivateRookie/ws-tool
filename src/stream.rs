@@ -1,93 +1,14 @@
 #[cfg(feature = "sync")]
 mod blocking {
-
-    mod stream {
-        use std::io::{Read, Write};
-
-        use crate::codec::Split;
-
-        /// websocket stream
-        pub struct WsStream<S: Read + Write>(pub(crate) S);
-
-        impl<S: Read + Write> std::fmt::Debug for WsStream<S> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.debug_struct("WsStream").finish()
-            }
-        }
-
-        impl<S: Read + Write> WsStream<S> {
-            /// create new ws stream
-            pub fn new(stream: S) -> Self {
-                Self(stream)
-            }
-
-            /// return mutable reference underlying stream
-            pub fn stream_mut(&mut self) -> &mut S {
-                &mut self.0
-            }
-
-            /// get immutable ref of underlying stream
-            pub fn stream(&self) -> &S {
-                &self.0
-            }
-        }
-
-        impl<S: Read + Write> Read for WsStream<S> {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                self.0.read(buf)
-            }
-        }
-
-        impl<S: Read + Write> Write for WsStream<S> {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.write(buf)
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                self.0.flush()
-            }
-        }
-
-        /// websocket readonly stream
-        pub struct ReadStream<S: Read>(pub(crate) S);
-
-        impl<S: Read> Read for ReadStream<S> {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                self.0.read(buf)
-            }
-        }
-
-        /// websocket writeable stream
-        pub struct WsWriteStream<S: Write>(pub(crate) S);
-
-        impl<S: Write> Write for WsWriteStream<S> {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.write(buf)
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                self.0.flush()
-            }
-        }
-
-        impl<R, W, S> Split for WsStream<S>
-        where
-            R: Read,
-            W: Write,
-            S: Read + Write + Split<R = R, W = W>,
-        {
-            type R = ReadStream<R>;
-
-            type W = WsWriteStream<W>;
-
-            fn split(self) -> (Self::R, Self::W) {
-                let (read, write) = self.0.split();
-                (ReadStream(read), WsWriteStream(write))
-            }
-        }
-    }
-
     use std::io::{BufReader, BufWriter, Read, Write};
+
+    #[allow(missing_docs)]
+    pub trait RW: Read + Write {}
+
+    impl<S: Read + Write> RW for S {}
+
+    #[allow(missing_docs)]
+    pub type AnyStream = Box<dyn RW>;
 
     /// a buffered stream
     pub struct BufStream<S: Read + Write>(pub BufReader<WrappedWriter<S>>);
@@ -172,8 +93,6 @@ mod blocking {
             )
         }
     }
-
-    pub use stream::*;
 }
 
 #[cfg(feature = "sync")]
@@ -181,125 +100,15 @@ pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking {
-    mod ws_stream {
-        use std::pin::Pin;
+    use tokio::io::{AsyncRead, AsyncWrite};
 
-        use tokio::io::{AsyncRead, AsyncWrite};
+    #[allow(missing_docs)]
+    pub trait AsyncRW: AsyncRead + AsyncWrite + Unpin {}
 
-        use crate::codec::Split;
+    impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRW for S {}
 
-        /// websocket readonly async stream
-        pub struct AsyncReadStream<S: AsyncRead>(pub(crate) S);
-
-        impl<S: AsyncRead + Unpin> AsyncRead for AsyncReadStream<S> {
-            fn poll_read(
-                self: Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &mut tokio::io::ReadBuf<'_>,
-            ) -> std::task::Poll<std::io::Result<()>> {
-                Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
-            }
-        }
-
-        /// websocket readonly async stream
-        pub struct AsyncWriteStream<S: AsyncWrite>(pub(crate) S);
-
-        impl<S: AsyncWrite + Unpin> AsyncWrite for AsyncWriteStream<S> {
-            fn poll_write(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &[u8],
-            ) -> std::task::Poll<Result<usize, std::io::Error>> {
-                Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
-            }
-
-            fn poll_flush(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Result<(), std::io::Error>> {
-                Pin::new(&mut self.get_mut().0).poll_flush(cx)
-            }
-
-            fn poll_shutdown(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Result<(), std::io::Error>> {
-                Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
-            }
-        }
-
-        impl<R, W, S> Split for AsyncStream<S>
-        where
-            R: AsyncRead,
-            W: AsyncWrite,
-            S: AsyncRead + AsyncWrite + Split<R = R, W = W>,
-        {
-            type R = AsyncReadStream<R>;
-
-            type W = AsyncWriteStream<W>;
-
-            fn split(self) -> (Self::R, Self::W) {
-                let (read, write) = self.0.split();
-                (AsyncReadStream(read), AsyncWriteStream(write))
-            }
-        }
-
-        /// async version of websocket stream
-        #[derive(Debug)]
-        pub struct AsyncStream<S: AsyncRead + AsyncWrite>(pub(crate) S);
-        impl<S: AsyncWrite + AsyncRead> AsyncStream<S> {
-            /// create new ws async stream
-            pub fn new(stream: S) -> Self {
-                Self(stream)
-            }
-
-            /// return mutable reference of underlying stream
-            pub fn stream_mut(&mut self) -> &mut S {
-                &mut self.0
-            }
-
-            /// get immutable ref of underlying stream
-            pub fn stream(&self) -> &S {
-                &self.0
-            }
-        }
-
-        impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for AsyncStream<S> {
-            fn poll_read(
-                self: Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &mut tokio::io::ReadBuf<'_>,
-            ) -> std::task::Poll<std::io::Result<()>> {
-                Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
-            }
-        }
-
-        impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for AsyncStream<S> {
-            fn poll_write(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &[u8],
-            ) -> std::task::Poll<Result<usize, std::io::Error>> {
-                Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
-            }
-
-            fn poll_flush(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Result<(), std::io::Error>> {
-                Pin::new(&mut self.get_mut().0).poll_flush(cx)
-            }
-
-            fn poll_shutdown(
-                self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Result<(), std::io::Error>> {
-                Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
-            }
-        }
-    }
-
-    pub use ws_stream::*;
+    #[allow(missing_docs)]
+    pub type AsyncAnyStream = Box<dyn AsyncRW>;
 }
 
 #[cfg(feature = "async")]
