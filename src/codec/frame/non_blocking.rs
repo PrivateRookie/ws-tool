@@ -5,7 +5,7 @@ use super::{apply_mask_fast32, FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     codec::Split,
     errors::WsError,
-    frame::{Header, OpCode, OwnedFrame},
+    frame::{ctor_header, OpCode, OwnedFrame},
     protocol::standard_handshake_resp_check,
 };
 
@@ -97,8 +97,17 @@ impl FrameWriteState {
 
         if payload.is_empty() {
             let mask = mask_fn();
-            let header = Header::new(true, false, false, false, mask, opcode, 0);
-            stream.write_all(&header.0).await?;
+            let header = ctor_header(
+                &mut self.header_buf,
+                true,
+                false,
+                false,
+                false,
+                mask,
+                opcode,
+                0,
+            );
+            stream.write_all(header).await?;
             return Ok(());
         }
         let chunk_size = if self.config.auto_fragment_size > 0 {
@@ -111,8 +120,17 @@ impl FrameWriteState {
         for (idx, chunk) in parts.into_iter().enumerate() {
             let fin = idx + 1 == total;
             let mask = mask_fn();
-            let header = Header::new(fin, false, false, false, mask, opcode, chunk.len() as u64);
-            stream.write_all(&header.0).await?;
+            let header = ctor_header(
+                &mut self.header_buf,
+                fin,
+                false,
+                false,
+                false,
+                mask,
+                opcode,
+                chunk.len() as u64,
+            );
+            stream.write_all(header).await?;
             if let Some(mask) = mask {
                 let mut data = BytesMut::from_iter(chunk);
                 apply_mask_fast32(&mut data, mask);

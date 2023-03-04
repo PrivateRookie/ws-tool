@@ -5,7 +5,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use crate::{
     codec::{apply_mask_fast32, FrameConfig},
     errors::{ProtocolError, WsError},
-    frame::{Header, OpCode, OwnedFrame},
+    frame::{ctor_header, OpCode, OwnedFrame},
     protocol::standard_handshake_resp_check,
 };
 
@@ -103,8 +103,17 @@ impl DeflateWriteState {
                     .compress(chunk, &mut output)
                     .map_err(WsError::CompressFailed)?;
                 output.truncate(output.len() - 4);
-                let header = Header::new(fin, true, false, false, mask, code, output.len() as u64);
-                stream.write_all(&header.0).await?;
+                let header = ctor_header(
+                    &mut self.header_buf,
+                    fin,
+                    true,
+                    false,
+                    false,
+                    mask,
+                    code,
+                    output.len() as u64,
+                );
+                stream.write_all(header).await?;
                 if let Some(mask) = mask {
                     apply_mask_fast32(&mut output, mask)
                 };
@@ -116,8 +125,17 @@ impl DeflateWriteState {
                     tracing::trace!("reset compressor");
                 }
             } else {
-                let header = Header::new(fin, false, false, false, mask, code, chunk.len() as u64);
-                stream.write_all(&header.0).await?;
+                let header = ctor_header(
+                    &mut self.header_buf,
+                    fin,
+                    false,
+                    false,
+                    false,
+                    mask,
+                    code,
+                    chunk.len() as u64,
+                );
+                stream.write_all(header).await?;
                 if let Some(mask) = mask {
                     let mut data = BytesMut::from_iter(chunk);
                     apply_mask_fast32(&mut data, mask);

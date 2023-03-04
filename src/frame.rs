@@ -196,6 +196,86 @@ macro_rules! impl_get {
     };
 }
 
+/// write header without allocation
+#[allow(clippy::too_many_arguments)]
+pub fn ctor_header<M: Into<Option<[u8; 4]>>>(
+    buf: &mut [u8],
+    fin: bool,
+    rsv1: bool,
+    rsv2: bool,
+    rsv3: bool,
+    mask_key: M,
+    opcode: OpCode,
+    payload_len: u64,
+) -> &[u8] {
+    assert!(buf.len() >= 14);
+    let mask = mask_key.into();
+    let mut header_len = 1;
+    if mask.is_some() {
+        header_len += 4;
+    }
+    if payload_len <= 125 {
+        buf[1] = payload_len as u8;
+        header_len += 1;
+    } else if payload_len <= 65535 {
+        buf[1] = 126;
+        buf[2..4].copy_from_slice(&(payload_len as u16).to_be_bytes());
+        header_len += 3;
+    } else {
+        buf[1] = 127;
+        buf[2..10].copy_from_slice(&payload_len.to_be_bytes());
+        header_len += 9;
+    }
+    buf[0] = 0;
+    buf[0] |= opcode as u8;
+    set_bit(buf, 0, 0, fin);
+    set_bit(buf, 0, 1, rsv1);
+    set_bit(buf, 0, 2, rsv2);
+    set_bit(buf, 0, 3, rsv3);
+    if let Some(key) = mask {
+        set_bit(buf, 1, 0, true);
+        buf[(header_len - 4)..header_len].copy_from_slice(&key);
+    } else {
+        set_bit(buf, 1, 0, false);
+    }
+    &buf[..header_len]
+}
+
+#[test]
+fn test_header() {
+    fn rand_mask() -> Option<[u8; 4]> {
+        fastrand::bool().then(|| fastrand::u32(0..u32::MAX).to_be_bytes())
+    }
+
+    fn rand_code() -> OpCode {
+        unsafe { std::mem::transmute(fastrand::u8(0..16)) }
+    }
+
+    let mut buf = [0u8; 14];
+    for _ in 0..1000 {
+        let fin = fastrand::bool();
+        let rsv1 = fastrand::bool();
+        let rsv2 = fastrand::bool();
+        let rsv3 = fastrand::bool();
+        let mask_key = rand_mask();
+        let opcode = rand_code();
+        let payload_len = fastrand::u64(0..u64::MAX);
+
+        let slice = ctor_header(
+            &mut buf,
+            fin,
+            rsv1,
+            rsv2,
+            rsv3,
+            mask_key,
+            opcode,
+            payload_len,
+        );
+        let header = Header::new(fin, rsv1, rsv2, rsv3, mask_key, opcode, payload_len);
+        assert_eq!(slice, &header.0.to_vec());
+    }
+}
+
 /// frame header
 #[derive(Debug, Clone, Copy)]
 pub struct HeaderView<'a>(pub(crate) &'a BytesMut);

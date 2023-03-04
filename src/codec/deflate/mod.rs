@@ -492,6 +492,7 @@ pub struct DeflateWriteState {
     write_state: FrameWriteState,
     com: Option<WriteStreamHandler>,
     config: FrameConfig,
+    header_buf: [u8; 14],
     is_server: bool,
 }
 
@@ -519,6 +520,7 @@ impl DeflateWriteState {
             write_state,
             com,
             config: frame_config,
+            header_buf: [0; 14],
             is_server,
         }
     }

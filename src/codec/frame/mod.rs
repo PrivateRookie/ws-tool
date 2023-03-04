@@ -393,14 +393,17 @@ impl FrameReadState {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct FrameWriteState {
-    /// config
     config: FrameConfig,
+    header_buf: [u8; 14],
 }
 
 impl FrameWriteState {
     /// construct with config
     pub fn with_config(config: FrameConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            header_buf: [0; 14],
+        }
     }
 }
 

@@ -71,47 +71,14 @@ The following are the benchmark(1 connection only) results
 cargo lt -- -p 300 --count 50000 -t 1 <url>
 ```
 
-uWebSocket
-
-| connection | iteration | count    | Duration(ms) | Message/sec |
-|------------|-----------|----------|--------------|-------------|
-| 0          | 0         | 50000000 | 10785        | 4636068.61  |
-
-
-tungstenite
-
-
-| connection | iteration | count    | Duration(ms) | Message/sec |
-|------------|-----------|----------|--------------|-------------|
-| 0          | 0         | 50000000 | 22045        | 2268088.00  |
-
-
-blocking api(bench_server example) without buffer
-
-| connection | iteration | count    | Duration(ms) | Message/sec |
-|------------|-----------|----------|--------------|-------------|
-| 0          | 0         | 50000000 | 28473        | 1756049.59  |
-
-
-blocking api(bench_server example) **8k** buffer
-
-| connection | iteration | count    | Duration(ms) | Message/sec |
-|------------|-----------|----------|--------------|-------------|
-| 0          | 0         | 50000000 | 10791        | 4633490.87  |
-
-
-async api(bench_async_server) without buffer
-
-| connection | iteration | count    | Duration(ms) | Message/sec |
-|------------|-----------|----------|--------------|-------------|
-| 0          | 0         | 50000000 | 41068        | 1217492.94  |
-
-
-async api(bench_async_server) with  **8k** buffer
-
-| connection | iteration | count    | Duration(ms) | Message/sec |
-|------------|-----------|----------|--------------|-------------|
-| 0          | 0         | 50000000 | 14892        | 3357507.39  |
+| server                        | count    | Duration(ms) | Message/sec |
+| ----------------------------- | -------- | ------------ | ----------- |
+| uWebSocket                    | 50000000 | 10785        | 4636068.61  |
+| tungstenite                   | 50000000 | 22045        | 2268088.00  |
+| bench_server(no buffer)       | 50000000 | 28473        | 1756049.59  |
+| bench_server(8k)              | 50000000 | 10791        | 4633490.87  |
+| bench_async_server(no buffer) | 50000000 | 41068        | 1217492.94  |
+| bench_async_server(8k)        | 50000000 | 14892        | 3357507.39  |
 
 
 ### 1M bytes payload size, 100000 messages
@@ -120,44 +87,15 @@ async api(bench_async_server) with  **8k** buffer
 cargo lt -- -p 1048576 --count 100 -t 1 <url>
 ```
 
-uWebSocket
+| server                        | count  | Duration(ms) | Message/sec |
+| ----------------------------- | ------ | ------------ | ----------- |
+| uWebSocket                    | 100000 | 37545        | 2663.47     |
+| tungstenite                   | 100000 | 41413        | 2414.70     |
+| bench_server(no buffer)       | 100000 | 32689        | 3059.13     |
+| bench_server(8k)              | 100000 | 29949        | 3339.01     |
+| bench_async_server(no buffer) | 100000 | 38959        | 2566.80     |
+| bench_async_server(8k)        | 100000 | 31378        | 3186.95     |
 
-| connection | iteration | count  | Duration(ms) | Message/sec |
-|------------|-----------|--------|--------------|-------------|
-| 0          | 0         | 100000 | 37545        | 2663.47     |
-
-tungstenite
-
-| connection | iteration | count  | Duration(ms) | Message/sec |
-|------------|-----------|--------|--------------|-------------|
-| 0          | 0         | 100000 | 41413        | 2414.70     |
-
-
-blocking api(bench_server example) without buffer
-
-| connection | iteration | count  | Duration(ms) | Message/sec |
-|------------|-----------|--------|--------------|-------------|
-| 0          | 0         | 100000 | 32689        | 3059.13     |
-
-
-blocking api(bench_server example) **4M** buffer
-
-| connection | iteration | count  | Duration(ms) | Message/sec |
-|------------|-----------|--------|--------------|-------------|
-| 0          | 0         | 100000 | 29949        | 3339.01     |
-
-async api(bench_async_server) without buffer
-
-| connection | iteration | count  | Duration(ms) | Message/sec |
-|------------|-----------|--------|--------------|-------------|
-| 0          | 0         | 100000 | 38959        | 2566.80     |
-
-
-async api(bench_async_server) with  **4M** buffer
-
-| connection | iteration | count  | Duration(ms) | Message/sec |
-|------------|-----------|--------|--------------|-------------|
-| 0          | 0         | 100000 | 31378        | 3186.95     |
 
 
 you can try more combinations with [load_test](./examples/load_test.rs) tool
