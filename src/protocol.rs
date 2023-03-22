@@ -410,5 +410,7 @@ pub fn handle_parse_handshake(req_bytes: BytesMut) -> Result<http::Request<()>, 
     for header in req.headers.iter() {
         req_builder = req_builder.header(header.name, header.value);
     }
-    Ok(req_builder.body(()).unwrap())
+    req_builder
+        .body(())
+        .map_err(|e| WsError::HandShakeFailed(e.to_string()))
 }
