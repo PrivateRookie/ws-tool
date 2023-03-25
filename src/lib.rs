@@ -314,6 +314,7 @@ impl<'a> DefaultCode for BorrowedFrame<'a> {
 }
 
 /// generic message receive/send from websocket stream
+#[derive(Debug)]
 pub struct Message<T: AsRef<[u8]> + DefaultCode> {
     /// opcode of message
     ///
