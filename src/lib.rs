@@ -30,6 +30,7 @@ pub mod stream;
 pub struct ClientBuilder {
     protocols: Vec<String>,
     extensions: Vec<String>,
+    #[cfg_attr(not(any(feature = "sync", feature = "async")), allow(dead_code))]
     version: u8,
     headers: HashMap<String, String>,
 }

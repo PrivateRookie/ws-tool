@@ -243,7 +243,12 @@ impl FrameReadState {
         frame
     }
 
-    fn merge_frame(&mut self, checked_frame: OwnedFrame) -> Result<Option<OwnedFrame>, WsError> {
+    /// This method is technically private, but custom parsers are allowed to use it.
+    #[doc(hidden)]
+    pub fn merge_frame(
+        &mut self,
+        checked_frame: OwnedFrame,
+    ) -> Result<Option<OwnedFrame>, WsError> {
         let header = checked_frame.header();
         let opcode = header.opcode();
 
@@ -281,7 +286,10 @@ impl FrameReadState {
     }
 
     /// perform protocol checking after receiving a frame
-    fn check_frame(&mut self, unmasked_frame: OwnedFrame) -> Result<OwnedFrame, WsError> {
+    ///
+    /// This method is technically private, but custom parsers are allowed to use it.
+    #[doc(hidden)]
+    pub fn check_frame(&mut self, unmasked_frame: OwnedFrame) -> Result<OwnedFrame, WsError> {
         let header = unmasked_frame.header();
         let opcode = header.opcode();
         match opcode {
