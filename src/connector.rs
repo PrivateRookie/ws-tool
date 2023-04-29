@@ -25,6 +25,9 @@ mod blocking {
 
     use super::{get_host, get_scheme};
 
+    #[cfg(feature = "sync_tls_rustls")]
+    pub type TlsStream = rustls_connector::TlsStream<TcpStream>;
+
     /// performance tcp connection
     pub fn tcp_connect(uri: &http::Uri) -> Result<TcpStream, WsError> {
         let mode = get_scheme(uri)?;
@@ -42,7 +45,7 @@ mod blocking {
         stream: TcpStream,
         host: &str,
         certs: Vec<std::path::PathBuf>,
-    ) -> Result<rustls_connector::TlsStream<TcpStream>, WsError> {
+    ) -> Result<TlsStream, WsError> {
         let mut config = rustls_connector::RustlsConnectorConfig::new_with_webpki_roots_certs();
         let mut cert_data = vec![];
         for cert_path in certs.iter() {
@@ -74,9 +77,12 @@ mod blocking {
 pub use blocking::*;
 
 #[cfg(feature = "async")]
-mod non_blocing {
+mod non_blocking {
     use http::Uri;
     use tokio::net::TcpStream;
+
+    #[cfg(feature = "async_tls_rustls")]
+    pub type TlsStream = tokio_rustls::client::TlsStream<TcpStream>;
 
     use crate::errors::WsError;
 
@@ -93,13 +99,13 @@ mod non_blocing {
             .map_err(|e| WsError::ConnectionFailed(format!("failed to create tcp connection {e}")))
     }
 
-    #[cfg(feature = "sync_tls_rustls")]
-    /// async version of startting tls session
+    #[cfg(feature = "async_tls_rustls")]
+    /// async version of starting tls session
     pub async fn async_wrap_tls(
         stream: TcpStream,
         host: &str,
         certs: Vec<std::path::PathBuf>,
-    ) -> Result<tokio_rustls::client::TlsStream<TcpStream>, WsError> {
+    ) -> Result<TlsStream, WsError> {
         use std::io::BufReader;
 
         let mut root_store = rustls_connector::rustls::RootCertStore::empty();
@@ -148,4 +154,4 @@ mod non_blocing {
 }
 
 #[cfg(feature = "async")]
-pub use non_blocing::*;
+pub use non_blocking::*;
