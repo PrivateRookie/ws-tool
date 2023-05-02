@@ -78,8 +78,10 @@ pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking {
+    use std::net::{SocketAddr};
+
     use http::Uri;
-    use tokio::net::TcpStream;
+    use tokio::net::{TcpSocket, TcpStream};
 
     #[cfg(feature = "async_tls_rustls")]
     pub type TlsStream = tokio_rustls::client::TlsStream<TcpStream>;
@@ -95,6 +97,32 @@ mod non_blocking {
         let port = uri.port_u16().unwrap_or_else(|| mode.default_port());
 
         TcpStream::connect((host, port))
+            .await
+            .map_err(|e| WsError::ConnectionFailed(format!("failed to create tcp connection {e}")))
+    }
+
+    /// performance tcp connection bound to a specific network interface
+    pub async fn async_tcp_connect_iface(
+        uri: &http::Uri,
+        iface: SocketAddr,
+    ) -> Result<TcpStream, WsError> {
+        let socket = TcpSocket::new_v4()?;
+        socket.bind(iface).map_err(|e| {
+            WsError::BindInterfaceFailed(format!(
+                "failed to bind socket to provided network iface {e}"
+            ))
+        })?;
+
+        let mode = get_scheme(uri)?;
+        let host = get_host(uri)?;
+        let port = uri.port_u16().unwrap_or_else(|| mode.default_port());
+
+        socket
+            .connect(SocketAddr::new(
+                host.parse()
+                    .map_err(|e| WsError::HostParseError(format!("failed to parse host ip {e}")))?,
+                port,
+            ))
             .await
             .map_err(|e| WsError::ConnectionFailed(format!("failed to create tcp connection {e}")))
     }

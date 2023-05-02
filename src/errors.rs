@@ -55,6 +55,14 @@ pub enum WsError {
     /// decompress failed
     #[error("decompress failed {0}")]
     DeCompressFailed(String),
+
+    /// when binding to a network interface ip fails
+    #[error("bind to interface failed {0}")]
+    BindInterfaceFailed(String),
+
+    /// when parsing host ip for stream
+    #[error("parse host ip failed {0}")]
+    HostParseError(String),
 }
 
 impl From<std::io::Error> for WsError {
