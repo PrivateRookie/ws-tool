@@ -323,16 +323,11 @@ pub fn prepare_handshake(
     version: u8,
 ) -> (String, String) {
     let key = gen_key();
-    let mode: Mode = match uri.scheme_str().unwrap().to_ascii_lowercase().as_str() {
-        "ws" => Mode::WS,
-        "wss" => Mode::WSS,
-        _ => unreachable!(),
-    };
     let mut headers = vec![
         format!(
-            "Host: {}:{}",
+            "Host: {}{}",
             uri.host().unwrap_or_default(),
-            uri.port_u16().unwrap_or_else(|| mode.default_port())
+            uri.port_u16().map(|p| format!(":{p}")).unwrap_or_default()
         ),
         "Upgrade: websocket".to_string(),
         "Connection: Upgrade".to_string(),
