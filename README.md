@@ -33,7 +33,7 @@ See [examples/server](examples/server.rs) for building a websocket echo server w
 - bench_xxx are benchmark server examples, showing how to control read/write buffer or other low level config
 
 
-### run autobaha testsuit
+### run autobahn testsuite
 
 start test server
 
