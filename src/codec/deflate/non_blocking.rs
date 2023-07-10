@@ -23,7 +23,7 @@ impl DeflateWriteState {
                 .write_state
                 .async_send_owned_frame(stream, frame)
                 .await
-                .map_err(|e| WsError::IOError(Box::new(e)));
+                .map_err(WsError::IOError);
         }
         let prev_mask = frame.unmask();
         let header = frame.header();
@@ -59,7 +59,7 @@ impl DeflateWriteState {
         self.write_state
             .async_send_owned_frame(stream, frame?)
             .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// send payload
@@ -388,6 +388,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
         self.stream
             .flush()
             .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 }

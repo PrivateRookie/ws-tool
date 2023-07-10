@@ -23,7 +23,7 @@ impl DeflateWriteState {
             return self
                 .write_state
                 .send_owned_frame(stream, frame)
-                .map_err(|e| WsError::IOError(Box::new(e)));
+                .map_err(WsError::IOError);
         }
         let prev_mask = frame.unmask();
         let header = frame.header();
@@ -58,7 +58,7 @@ impl DeflateWriteState {
             });
         self.write_state
             .send_owned_frame(stream, frame?)
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// send payload
@@ -375,9 +375,7 @@ impl<S: Read + Write> DeflateCodec<S> {
 
     /// flush stream to ensure all data are send
     pub fn flush(&mut self) -> Result<(), WsError> {
-        self.stream
-            .flush()
-            .map_err(|e| WsError::IOError(Box::new(e)))
+        self.stream.flush().map_err(WsError::IOError)
     }
 }
 
@@ -438,9 +436,7 @@ impl<S: Write> DeflateSend<S> {
 
     /// flush stream to ensure all data are send
     pub fn flush(&mut self) -> Result<(), WsError> {
-        self.stream
-            .flush()
-            .map_err(|e| WsError::IOError(Box::new(e)))
+        self.stream.flush().map_err(WsError::IOError)
     }
 }
 

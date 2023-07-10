@@ -192,7 +192,7 @@ impl<S: AsyncWrite + Unpin> AsyncFrameSend<S> {
         self.write_state
             .async_send(&mut self.stream, opcode, payload)
             .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
@@ -200,7 +200,7 @@ impl<S: AsyncWrite + Unpin> AsyncFrameSend<S> {
         self.write_state
             .async_send_owned_frame(&mut self.stream, frame)
             .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// flush to ensure all data are send
@@ -208,7 +208,7 @@ impl<S: AsyncWrite + Unpin> AsyncFrameSend<S> {
         self.stream
             .flush()
             .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 }
 
@@ -273,7 +273,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncFrameCodec<S> {
         self.write_state
             .async_send(&mut self.stream, opcode, payload)
             .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
@@ -281,7 +281,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncFrameCodec<S> {
         self.write_state
             .async_send_owned_frame(&mut self.stream, frame)
             .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// flush to ensure all data are send
@@ -289,7 +289,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncFrameCodec<S> {
         self.stream
             .flush()
             .await
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 }
 

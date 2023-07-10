@@ -23,7 +23,7 @@ pub enum WsError {
     TlsDnsFailed(String),
     #[error("io error {0:?}")]
     /// raised by underlying stream
-    IOError(Box<dyn std::error::Error + Send + Sync>),
+    IOError(std::io::Error),
     #[error("{0}")]
     /// invalid protocol handshake
     HandShakeFailed(String),
@@ -59,7 +59,7 @@ pub enum WsError {
 
 impl From<std::io::Error> for WsError {
     fn from(e: std::io::Error) -> Self {
-        WsError::IOError(Box::new(e))
+        WsError::IOError(e)
     }
 }
 

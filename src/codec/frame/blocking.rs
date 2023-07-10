@@ -182,21 +182,21 @@ impl<S: Write> FrameSend<S> {
     pub fn send(&mut self, code: OpCode, payload: &[u8]) -> Result<(), WsError> {
         self.write_state
             .send(&mut self.stream, code, payload)
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
     pub fn send_owned_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
         self.write_state
             .send_owned_frame(&mut self.stream, frame)
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// flush stream to ensure all data are send
     pub fn flush(&mut self) -> Result<(), WsError> {
         self.stream
             .flush()
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 }
 
@@ -258,21 +258,21 @@ impl<S: Read + Write> FrameCodec<S> {
     pub fn send(&mut self, code: OpCode, payload: &[u8]) -> Result<(), WsError> {
         self.write_state
             .send(&mut self.stream, code, payload)
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// send a read frame, **this method will not check validation of frame and do not fragment**
     pub fn send_owned_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
         self.write_state
             .send_owned_frame(&mut self.stream, frame)
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 
     /// flush stream to ensure all data are send
     pub fn flush(&mut self) -> Result<(), WsError> {
         self.stream
             .flush()
-            .map_err(|e| WsError::IOError(Box::new(e)))
+            .map_err(WsError::IOError)
     }
 }
 
