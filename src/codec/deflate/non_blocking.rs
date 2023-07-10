@@ -3,7 +3,7 @@ use rand::random;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use crate::{
-    codec::{apply_mask_fast32, FrameConfig},
+    codec::{apply_mask_fast32, FrameConfig, Split},
     errors::{ProtocolError, WsError},
     frame::{ctor_header, OpCode, OwnedFrame},
     protocol::standard_handshake_resp_check,
@@ -385,9 +385,92 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
 
     /// flush stream to ensure all data are send
     pub async fn flush(&mut self) -> Result<(), WsError> {
-        self.stream
-            .flush()
+        self.stream.flush().await.map_err(WsError::IOError)
+    }
+}
+
+/// recv part of async deflate message
+pub struct AsyncDeflateRecv<S: AsyncRead> {
+    stream: S,
+    read_state: DeflateReadState,
+}
+
+impl<S: AsyncRead + Unpin> AsyncDeflateRecv<S> {
+    /// construct method
+    pub fn new(stream: S, read_state: DeflateReadState) -> Self {
+        Self { stream, read_state }
+    }
+
+    /// get mutable underlying stream
+    pub fn stream_mut(&mut self) -> &mut S {
+        &mut self.stream
+    }
+
+    /// receive a frame
+    pub async fn receive(&mut self) -> Result<OwnedFrame, WsError> {
+        self.read_state.async_receive(&mut self.stream).await
+    }
+}
+
+/// send part of deflate message
+pub struct AsyncDeflateSend<S: AsyncWrite> {
+    stream: S,
+    write_state: DeflateWriteState,
+}
+
+impl<S: AsyncWrite + Unpin> AsyncDeflateSend<S> {
+    /// construct method
+    pub fn new(stream: S, write_state: DeflateWriteState) -> Self {
+        Self {
+            stream,
+            write_state,
+        }
+    }
+
+    /// get mutable underlying stream
+    pub fn stream_mut(&mut self) -> &mut S {
+        &mut self.stream
+    }
+
+    /// send a read frame, **this method will not check validation of frame and do not fragment**
+    pub async fn send_owned_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
+        self.write_state
+            .async_send_owned_frame(&mut self.stream, frame)
             .await
-            .map_err(WsError::IOError)
+    }
+
+    /// send payload
+    ///
+    /// will auto fragment **before compression** if auto_fragment_size > 0
+    pub async fn send(&mut self, code: OpCode, payload: &[u8]) -> Result<(), WsError> {
+        self.write_state
+            .async_send(&mut self.stream, code, payload)
+            .await
+    }
+
+    /// flush stream to ensure all data are send
+    pub async fn flush(&mut self) -> Result<(), WsError> {
+        self.stream.flush().await.map_err(WsError::IOError)
+    }
+}
+
+impl<R, W, S> AsyncDeflateCodec<S>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin + Split<R = R, W = W>,
+{
+    /// split codec to recv and send parts
+    pub fn split(self) -> (AsyncDeflateRecv<R>, AsyncDeflateSend<W>) {
+        let AsyncDeflateCodec {
+            stream,
+            read_state,
+            write_state,
+        } = self;
+        let (read, write) = stream.split();
+        (
+            AsyncDeflateRecv::new(read, read_state),
+            AsyncDeflateSend::new(write, write_state),
+        )
     }
 }
