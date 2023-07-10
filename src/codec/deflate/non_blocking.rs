@@ -1,6 +1,6 @@
 use bytes::BytesMut;
 use rand::random;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::{
     codec::{apply_mask_fast32, FrameConfig, Split},
@@ -472,5 +472,41 @@ where
             AsyncDeflateRecv::new(read, read_state),
             AsyncDeflateSend::new(write, write_state),
         )
+    }
+}
+
+// TODO use constructed cap
+impl<R, W, S> Split for BufReader<S>
+where
+    R: AsyncRead,
+    W: AsyncWrite,
+    S: AsyncRead + AsyncWrite + Split<R = R, W = W>,
+{
+    type R = BufReader<R>;
+
+    type W = BufWriter<W>;
+
+    fn split(self) -> (Self::R, Self::W) {
+        let s = self.into_inner();
+        let (r, w) = s.split();
+        (BufReader::new(r), BufWriter::new(w))
+    }
+}
+
+// TODO use constructed cap
+impl<R, W, S> Split for BufWriter<S>
+where
+    R: AsyncRead,
+    W: AsyncWrite,
+    S: AsyncRead + AsyncWrite + Split<R = R, W = W>,
+{
+    type R = BufReader<R>;
+
+    type W = BufWriter<W>;
+
+    fn split(self) -> (Self::R, Self::W) {
+        let s = self.into_inner();
+        let (r, w) = s.split();
+        (BufReader::new(r), BufWriter::new(w))
     }
 }
