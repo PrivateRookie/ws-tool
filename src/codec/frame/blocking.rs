@@ -4,10 +4,10 @@ use super::{apply_mask_fast32, FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     codec::Split,
     errors::WsError,
-    frame::{ctor_header, OpCode, OwnedFrame},
+    frame::{ctor_header, Header, OpCode, OwnedFrame},
     protocol::standard_handshake_resp_check,
 };
-use std::io::{Read, Write};
+use std::io::{IoSlice, Read, Write};
 
 type IOResult<T> = std::io::Result<T>;
 
@@ -77,17 +77,12 @@ impl FrameWriteState {
         opcode: OpCode,
         payload: &[u8],
     ) -> IOResult<()> {
-        let mask_send = self.config.mask_send_frame;
-        let mask_fn = || {
-            if mask_send {
+        if payload.is_empty() {
+            let mask = if self.config.mask_send_frame {
                 Some(rand::random())
             } else {
                 None
-            }
-        };
-
-        if payload.is_empty() {
-            let mask = mask_fn();
+            };
             let header = ctor_header(
                 &mut self.header_buf,
                 true,
@@ -108,26 +103,70 @@ impl FrameWriteState {
         };
         let parts: Vec<&[u8]> = payload.chunks(chunk_size).collect();
         let total = parts.len();
-        for (idx, chunk) in parts.into_iter().enumerate() {
-            let fin = idx + 1 == total;
-            let mask = mask_fn();
-            let header = ctor_header(
-                &mut self.header_buf,
-                fin,
-                false,
-                false,
-                false,
-                mask,
-                opcode,
-                chunk.len() as u64,
-            );
-            stream.write_all(header)?;
-            if let Some(mask) = mask {
-                let mut data = BytesMut::from_iter(chunk);
-                apply_mask_fast32(&mut data, mask);
-                stream.write_all(&data)?;
-            } else {
-                stream.write_all(chunk)?;
+        if self.config.mask_send_frame {
+            let mut total_bytes = payload.len();
+            let slice_parts: Vec<BytesMut> = parts
+                .iter()
+                .enumerate()
+                .map(|(idx, chunk)| {
+                    let fin = idx + 1 == total;
+                    let mask = rand::random();
+                    let header = crate::frame::Header::new(
+                        fin,
+                        false,
+                        false,
+                        false,
+                        mask,
+                        opcode,
+                        chunk.len() as u64,
+                    );
+                    let mut buf = header.0;
+                    let header_len = buf.len();
+                    total_bytes += header_len;
+                    buf.resize(buf.len() + chunk.len(), 0);
+                    apply_mask_fast32(&mut buf[header_len..], mask);
+                    buf
+                })
+                .collect();
+            let slices: Vec<IoSlice> = slice_parts.iter().map(|buf| IoSlice::new(&buf)).collect();
+            let num = stream.write_vectored(&slices)?;
+            let remain = total_bytes - num;
+            if remain > 0 {
+                if let Some(buf) = slices.last() {
+                    stream.write_all(&buf[(buf.len() - remain)..])?;
+                }
+            }
+        } else {
+            let slice_parts: Vec<(Header, &[u8])> = parts
+                .iter()
+                .enumerate()
+                .map(|(idx, chunk)| {
+                    let fin = idx + 1 == total;
+                    let header = crate::frame::Header::new(
+                        fin,
+                        false,
+                        false,
+                        false,
+                        None,
+                        opcode,
+                        chunk.len() as u64,
+                    );
+                    (header, *chunk)
+                })
+                .collect();
+            let mut slices = Vec::with_capacity(total * 2);
+            let mut total_bytes = payload.len();
+            for (h, chunk) in slice_parts.iter() {
+                total_bytes += h.0.len();
+                slices.push(IoSlice::new(&h.0));
+                slices.push(IoSlice::new(chunk));
+            }
+            let num = stream.write_vectored(&slices)?;
+            let remain = total_bytes - num;
+            if remain > 0 {
+                if let Some(buf) = slices.last() {
+                    stream.write_all(&buf[(buf.len() - remain)..])?;
+                }
             }
         }
         Ok(())
@@ -138,8 +177,15 @@ impl FrameWriteState {
         stream: &mut S,
         frame: OwnedFrame,
     ) -> IOResult<()> {
-        stream.write_all(&frame.header().0)?;
-        stream.write_all(frame.payload())
+        let header = IoSlice::new(&frame.header().0);
+        let body = IoSlice::new(frame.payload());
+        let total = header.len() + body.len();
+        let num = stream.write_vectored(&[header, body])?;
+        let remain = total - num;
+        if remain > 0 {
+            stream.write_all(&body[(body.len() - remain)..])?
+        }
+        Ok(())
     }
 }
 
@@ -194,9 +240,7 @@ impl<S: Write> FrameSend<S> {
 
     /// flush stream to ensure all data are send
     pub fn flush(&mut self) -> Result<(), WsError> {
-        self.stream
-            .flush()
-            .map_err(WsError::IOError)
+        self.stream.flush().map_err(WsError::IOError)
     }
 }
 
@@ -270,9 +314,7 @@ impl<S: Read + Write> FrameCodec<S> {
 
     /// flush stream to ensure all data are send
     pub fn flush(&mut self) -> Result<(), WsError> {
-        self.stream
-            .flush()
-            .map_err(WsError::IOError)
+        self.stream.flush().map_err(WsError::IOError)
     }
 }
 
