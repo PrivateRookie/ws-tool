@@ -45,6 +45,8 @@ pub struct FrameConfig {
     pub check_rsv: bool,
     /// auto mask send frame payload, for client, it must be true
     pub mask_send_frame: bool,
+    /// allocate new buf for every frame
+    pub renew_buf_on_write: bool,
     /// auto unmask a masked frame payload
     pub auto_unmask: bool,
     /// limit max payload size
@@ -66,6 +68,7 @@ impl Default for FrameConfig {
         Self {
             check_rsv: true,
             mask_send_frame: true,
+            renew_buf_on_write: false,
             auto_unmask: true,
             max_frame_payload_size: 0,
             auto_fragment_size: 0,
@@ -403,6 +406,7 @@ impl FrameReadState {
 pub struct FrameWriteState {
     config: FrameConfig,
     header_buf: [u8; 14],
+    buf: BytesMut,
 }
 
 impl FrameWriteState {
@@ -411,6 +415,7 @@ impl FrameWriteState {
         Self {
             config,
             header_buf: [0; 14],
+            buf: BytesMut::new()
         }
     }
 }

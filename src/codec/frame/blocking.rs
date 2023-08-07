@@ -4,7 +4,7 @@ use super::{apply_mask_fast32, FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     codec::Split,
     errors::WsError,
-    frame::{ctor_header, Header, OpCode, OwnedFrame},
+    frame::{ctor_header, header_len, OpCode, OwnedFrame},
     protocol::standard_handshake_resp_check,
 };
 use std::io::{IoSlice, Read, Write};
@@ -103,64 +103,65 @@ impl FrameWriteState {
         };
         let parts: Vec<&[u8]> = payload.chunks(chunk_size).collect();
         let total = parts.len();
+        let single_header_len = header_len(self.config.mask_send_frame, chunk_size as u64);
+        let mut header_buf_len = single_header_len * parts.len();
+        let left = payload.len() % chunk_size;
+        if left != 0 {
+            header_buf_len += header_len(self.config.mask_send_frame, left as u64);
+        }
+        let total_bytes = payload.len() + header_buf_len;
         if self.config.mask_send_frame {
-            let mut total_bytes = payload.len();
-            let slice_parts: Vec<BytesMut> = parts
-                .iter()
-                .enumerate()
-                .map(|(idx, chunk)| {
-                    let fin = idx + 1 == total;
-                    let mask = rand::random();
-                    let header = crate::frame::Header::new(
-                        fin,
-                        false,
-                        false,
-                        false,
-                        mask,
-                        opcode,
-                        chunk.len() as u64,
-                    );
-                    let mut buf = header.0;
-                    let header_len = buf.len();
-                    total_bytes += header_len;
-                    buf.resize(buf.len() + chunk.len(), 0);
-                    apply_mask_fast32(&mut buf[header_len..], mask);
-                    buf
-                })
-                .collect();
-            let slices: Vec<IoSlice> = slice_parts.iter().map(|buf| IoSlice::new(&buf)).collect();
-            let num = stream.write_vectored(&slices)?;
-            let remain = total_bytes - num;
-            if remain > 0 {
-                if let Some(buf) = slices.last() {
-                    stream.write_all(&buf[(buf.len() - remain)..])?;
-                }
+            if self.buf.len() < total_bytes {
+                self.buf.resize(total_bytes, 0);
             }
+            parts.iter().enumerate().for_each(|(idx, chunk)| {
+                let fin = idx + 1 == total;
+                let s_idx = idx * single_header_len;
+                let mask = rand::random();
+                let header_len = ctor_header(
+                    &mut self.buf[s_idx..],
+                    fin,
+                    false,
+                    false,
+                    false,
+                    mask,
+                    opcode,
+                    chunk.len() as u64,
+                )
+                .len();
+                apply_mask_fast32(&mut self.buf[(s_idx + header_len)..], mask);
+            });
+            stream.write_all(&self.buf[..total_bytes])?;
         } else {
-            let slice_parts: Vec<(Header, &[u8])> = parts
-                .iter()
-                .enumerate()
-                .map(|(idx, chunk)| {
-                    let fin = idx + 1 == total;
-                    let header = crate::frame::Header::new(
-                        fin,
-                        false,
-                        false,
-                        false,
-                        None,
-                        opcode,
-                        chunk.len() as u64,
-                    );
-                    (header, *chunk)
-                })
-                .collect();
-            let mut slices = Vec::with_capacity(total * 2);
-            let mut total_bytes = payload.len();
-            for (h, chunk) in slice_parts.iter() {
-                total_bytes += h.0.len();
-                slices.push(IoSlice::new(&h.0));
-                slices.push(IoSlice::new(chunk));
+            if self.buf.len() < header_buf_len {
+                self.buf.resize(header_buf_len, 0);
             }
+            let mut slices = Vec::with_capacity(total * 2);
+            parts.iter().enumerate().for_each(|(idx, chunk)| {
+                let fin = idx + 1 == total;
+                let s_idx = idx * chunk_size;
+                ctor_header(
+                    &mut self.buf[s_idx..],
+                    fin,
+                    false,
+                    false,
+                    false,
+                    None,
+                    opcode,
+                    chunk.len() as u64,
+                );
+            });
+            parts.iter().enumerate().for_each(|(idx, chunk)| {
+                let fin = idx + 1 == total;
+                if fin {
+                    slices.push(IoSlice::new(&self.buf[(idx * single_header_len)..]))
+                } else {
+                    slices.push(IoSlice::new(
+                        &self.buf[(idx * single_header_len)..(idx + 1) * single_header_len],
+                    ))
+                }
+                slices.push(IoSlice::new(chunk));
+            });
             let num = stream.write_vectored(&slices)?;
             let remain = total_bytes - num;
             if remain > 0 {
@@ -168,6 +169,9 @@ impl FrameWriteState {
                     stream.write_all(&buf[(buf.len() - remain)..])?;
                 }
             }
+        }
+        if self.config.renew_buf_on_write {
+            self.buf = BytesMut::new()
         }
         Ok(())
     }

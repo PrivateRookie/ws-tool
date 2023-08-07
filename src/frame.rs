@@ -196,6 +196,23 @@ macro_rules! impl_get {
     };
 }
 
+/// get expected header len
+#[allow(clippy::too_many_arguments)]
+pub fn header_len(mask: bool, payload_len: u64) -> usize {
+    let mut header_len = 1;
+    if mask {
+        header_len += 4;
+    }
+    if payload_len <= 125 {
+        header_len += 1;
+    } else if payload_len <= 65535 {
+        header_len += 3;
+    } else {
+        header_len += 9;
+    }
+    header_len
+}
+
 /// write header without allocation
 #[allow(clippy::too_many_arguments)]
 pub fn ctor_header<M: Into<Option<[u8; 4]>>>(
@@ -208,7 +225,7 @@ pub fn ctor_header<M: Into<Option<[u8; 4]>>>(
     opcode: OpCode,
     payload_len: u64,
 ) -> &[u8] {
-    assert!(buf.len() >= 14);
+    // assert!(buf.len() >= 14);
     let mask = mask_key.into();
     let mut header_len = 1;
     if mask.is_some() {
