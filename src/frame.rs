@@ -83,25 +83,56 @@ pub(crate) fn parse_opcode(val: u8) -> OpCode {
 }
 
 #[inline]
-pub(crate) fn get_bit(source: &[u8], byte_idx: usize, bit_idx: usize) -> bool {
-    let b: u8 = source[byte_idx];
-    1 & (b >> (7 - bit_idx)) != 0
+pub(crate) const fn get_bit(source: &[u8], byte_idx: usize, bit_idx: u8) -> bool {
+    let mask = match bit_idx {
+        0 => 128,
+        1 => 64,
+        2 => 32,
+        3 => 16,
+        4 => 8,
+        5 => 4,
+        6 => 2,
+        7 => 1,
+        _ => unreachable!(),
+    };
+    source[byte_idx] & mask == mask
 }
 
 #[inline]
-pub(crate) fn set_bit(source: &mut [u8], byte_idx: usize, bit_idx: usize, val: bool) {
-    let b = source[byte_idx];
+pub(crate) fn set_bit(source: &mut [u8], byte_idx: usize, bit_idx: u8, val: bool) {
     if val {
-        source[byte_idx] = b | 1 << (7 - bit_idx)
+        let mask = match bit_idx {
+            0 => 128,
+            1 => 64,
+            2 => 32,
+            3 => 16,
+            4 => 8,
+            5 => 4,
+            6 => 2,
+            7 => 1,
+            _ => unreachable!(),
+        };
+        source[byte_idx] |= mask;
     } else {
-        source[byte_idx] = b & !(1 << (7 - bit_idx))
+        let mask = match bit_idx {
+            0 => 0b01111111,
+            1 => 0b10111111,
+            2 => 0b11011111,
+            3 => 0b11101111,
+            4 => 0b11110111,
+            5 => 0b11111011,
+            6 => 0b11111101,
+            7 => 0b11111110,
+            _ => unreachable!(),
+        };
+        source[byte_idx] &= mask;
     }
 }
 
 macro_rules! impl_get {
     () => {
         #[inline]
-        fn get_bit(&self, byte_idx: usize, bit_idx: usize) -> bool {
+        fn get_bit(&self, byte_idx: usize, bit_idx: u8) -> bool {
             get_bit(&self.0, byte_idx, bit_idx)
         }
 
@@ -144,8 +175,7 @@ macro_rules! impl_get {
         #[inline]
         fn frame_sep(&self) -> (usize, u64) {
             let header = &self.0;
-            let mut len = header[1];
-            len = (len << 1) >> 1;
+            let  len = header[1] & 0b01111111;
             match len {
                 0..=125 => (1, len as u64),
                 126 => {
@@ -175,7 +205,7 @@ macro_rules! impl_get {
             if self.masked() {
                 let len_occupied = self.frame_sep().0;
                 let mut arr = [0u8; 4];
-                arr[..4].copy_from_slice(&self.0[(1 + len_occupied)..(4 + 1 + len_occupied)]);
+                arr.copy_from_slice(&self.0[(1 + len_occupied)..(5 + len_occupied)]);
                 Some(arr)
             } else {
                 None
@@ -308,7 +338,7 @@ pub struct Header(pub(crate) BytesMut);
 impl Header {
     impl_get! {}
     #[inline]
-    fn set_bit(&mut self, byte_idx: usize, bit_idx: usize, val: bool) {
+    fn set_bit(&mut self, byte_idx: usize, bit_idx: u8, val: bool) {
         set_bit(&mut self.0, byte_idx, bit_idx, val)
     }
 
@@ -413,19 +443,9 @@ impl Header {
         payload_len: u64,
     ) -> Self {
         let mask = mask_key.into();
+        let len = header_len(mask.is_some(), payload_len);
         let mut buf = BytesMut::new();
-        let mut header_len = 1;
-        if mask.is_some() {
-            header_len += 4;
-        }
-        if payload_len <= 125 {
-            header_len += 1;
-        } else if payload_len <= 65535 {
-            header_len += 3;
-        } else {
-            header_len += 9;
-        }
-        buf.resize(header_len, 0);
+        buf.resize(len, 0);
         let mut header = Self(buf);
         header.set_fin(fin);
         header.set_rsv1(rsv1);
@@ -437,7 +457,6 @@ impl Header {
             header.set_mask(true);
             header.0.extend_from_slice(&mask);
         }
-
         header
     }
 }
@@ -569,8 +588,7 @@ impl OwnedFrame {
     }
 
     /// consume frame return header and payload
-    pub fn parts(mut self) -> (Header, BytesMut) {
-        self.unmask();
+    pub fn parts(self) -> (Header, BytesMut) {
         (self.header, self.payload)
     }
 }

@@ -26,7 +26,7 @@ mod blocking {
     use super::{get_host, get_scheme};
 
     #[cfg(feature = "sync_tls_rustls")]
-    pub type TlsStream = rustls_connector::TlsStream<TcpStream>;
+    type TlsStream = rustls_connector::TlsStream<TcpStream>;
 
     /// performance tcp connection
     pub fn tcp_connect(uri: &http::Uri) -> Result<TcpStream, WsError> {
@@ -82,7 +82,7 @@ mod non_blocking {
     use tokio::net::TcpStream;
 
     #[cfg(feature = "async_tls_rustls")]
-    pub type TlsStream = tokio_rustls::client::TlsStream<TcpStream>;
+    type TlsStream = tokio_rustls::client::TlsStream<TcpStream>;
 
     use crate::errors::WsError;
 

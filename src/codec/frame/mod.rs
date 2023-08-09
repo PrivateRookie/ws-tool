@@ -155,8 +155,7 @@ impl FrameReadState {
         if buf_len < 2 {
             false
         } else {
-            let mut len = self.read_data[1];
-            len = (len << 1) >> 1;
+            let len = self.read_data[1] & 0b01111111;
             let mask = get_bit(&self.read_data, 1, 0);
 
             let mut min_len = match len {
@@ -180,8 +179,7 @@ impl FrameReadState {
     /// try to parse frame header in buffer, return expected payload
     pub fn parse_frame_header(&mut self) -> Result<usize, WsError> {
         fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
-            let mut len = source[1];
-            len = (len << 1) >> 1;
+            let len = source[1] & 0b01111111;
             match len {
                 0..=125 => Ok((1, len as usize)),
                 126 => {
@@ -415,7 +413,7 @@ impl FrameWriteState {
         Self {
             config,
             header_buf: [0; 14],
-            buf: BytesMut::new()
+            buf: BytesMut::new(),
         }
     }
 }

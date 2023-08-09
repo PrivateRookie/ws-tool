@@ -31,6 +31,13 @@ mod blocking {
     }
 
     impl<S: Read + Write> Read for BufStream<S> {
+        fn read_vectored(
+            &mut self,
+            bufs: &mut [std::io::IoSliceMut<'_>],
+        ) -> std::io::Result<usize> {
+            self.0.read_vectored(bufs)
+        }
+
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             self.0.read(buf)
         }
@@ -53,6 +60,13 @@ mod blocking {
     pub struct WrappedWriter<S: Write>(pub BufWriter<S>);
 
     impl<S: Read + Write> Read for WrappedWriter<S> {
+        fn read_vectored(
+            &mut self,
+            bufs: &mut [std::io::IoSliceMut<'_>],
+        ) -> std::io::Result<usize> {
+            self.0.get_mut().read_vectored(bufs)
+        }
+
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             self.0.get_mut().read(buf)
         }
