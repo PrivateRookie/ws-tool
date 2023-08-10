@@ -31,11 +31,11 @@ fn main() -> Result<(), ()> {
             tracing::info!("got connect from {:?}", addr);
             let mut ws = tungstenite::accept(stream).unwrap();
             loop {
-                let msg = ws.read_message().unwrap();
+                let msg = ws.read().unwrap();
                 if msg.is_close() {
                     break;
                 }
-                ws.write_message(msg).unwrap();
+                ws.write(msg).unwrap();
             }
             tracing::info!("one conn down");
         })

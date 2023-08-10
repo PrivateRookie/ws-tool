@@ -138,7 +138,7 @@ fn parse_window(s: &str) -> Result<WindowBit, String> {
     WindowBit::try_from(v).map_err(|e| e.to_string())
 }
 
-use tabled::{Style, Table, Tabled};
+use tabled::{Table, Tabled, settings::Style};
 
 #[derive(Tabled, PartialEq, PartialOrd)]
 struct Record {
