@@ -227,7 +227,6 @@ macro_rules! impl_get {
 }
 
 /// get expected header len
-#[allow(clippy::too_many_arguments)]
 pub fn header_len(mask: bool, payload_len: u64) -> usize {
     let mut header_len = 1;
     if mask {

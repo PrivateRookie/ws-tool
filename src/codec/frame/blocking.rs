@@ -1,15 +1,132 @@
 use bytes::BytesMut;
 
-use super::{apply_mask_fast32, FrameConfig, FrameReadState, FrameWriteState};
+use super::{apply_mask_fast32, FrameConfig, FrameNewReadState, FrameReadState, FrameWriteState};
 use crate::{
-    codec::Split,
-    errors::WsError,
-    frame::{ctor_header, header_len, OpCode, OwnedFrame},
+    codec::{apply_mask, Split},
+    errors::{ProtocolError, WsError},
+    frame::{ctor_header, get_bit, header_len, parse_opcode, OpCode, OwnedFrame},
     protocol::standard_handshake_resp_check,
 };
 use std::io::{IoSlice, Read, Write};
 
 type IOResult<T> = std::io::Result<T>;
+
+impl FrameNewReadState {
+    pub fn receive<S: Read, W: Write>(
+        &mut self,
+        stream: &mut S,
+        buf: &mut W,
+    ) -> Result<(usize, OpCode), WsError> {
+        let (_, len, code) = self.read_one_frame(stream, buf)?;
+        // TODO do merge
+        Ok((len, code))
+    }
+
+    fn read_one_frame<S: Read, W: Write>(
+        &mut self,
+        stream: &mut S,
+        buf: &mut W,
+    ) -> Result<(bool, usize, OpCode), WsError> {
+        fn read_mask<S: Read>(stream: &mut S) -> Result<[u8; 4], std::io::Error> {
+            let mut mask = [0u8; 4];
+            stream.read_exact(&mut mask)?;
+            Ok(mask)
+        }
+
+        stream.read_exact(&mut self.header_buf[..2])?;
+        let len = self.header_buf[1] & 0b01111111;
+        let masked = get_bit(&self.header_buf, 1, 0);
+        let fin = get_bit(&self.header_buf, 0, 0);
+        let code = parse_opcode(self.header_buf[0]);
+        let len = match len {
+            0..=125 => {
+                let len = len as u64;
+                if masked {
+                    let mask = read_mask(stream)?;
+                    if len > self.masked_buf.len() as u64 {
+                        self.masked_buf.resize(len as usize, 0);
+                    }
+                    let slice = &mut self.masked_buf[..len as usize];
+                    stream.read_exact(slice)?;
+                    apply_mask(slice, mask);
+                    buf.write_all(slice)?;
+                    Some(mask)
+                } else {
+                    let num = std::io::copy(&mut stream.take(len), buf)?;
+                    if num != len {
+                        return Err(WsError::IOError(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "writer cap is not enough",
+                        )));
+                    }
+                    None
+                };
+                len
+            }
+            126 => {
+                stream.read_exact(&mut self.header_buf[2..4])?;
+                let mut len_raw = [0u8; 2];
+                len_raw.copy_from_slice(&self.header_buf[2..4]);
+                let len = u16::from_be_bytes(len_raw) as u64;
+                if masked {
+                    let mask = read_mask(stream)?;
+                    if len > self.masked_buf.len() as u64 {
+                        self.masked_buf.resize(len as usize, 0);
+                    }
+                    let slice = &mut self.masked_buf[..len as usize];
+                    stream.read_exact(slice)?;
+                    apply_mask(slice, mask);
+                    buf.write_all(slice)?;
+                    Some(mask)
+                } else {
+                    let num = std::io::copy(&mut stream.take(len), buf)?;
+                    if num != len {
+                        return Err(WsError::IOError(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "writer cap is not enough",
+                        )));
+                    }
+                    None
+                };
+                len
+            }
+            127 => {
+                stream.read_exact(&mut self.header_buf[2..10])?;
+                let mut len_raw = [0u8; 8];
+                len_raw.copy_from_slice(&self.header_buf[2..10]);
+                let len = u64::from_be_bytes(len_raw);
+                if masked {
+                    let mask = read_mask(stream)?;
+                    if len > self.masked_buf.len() as u64 {
+                        self.masked_buf.resize(len as usize, 0);
+                    }
+                    let slice = &mut self.masked_buf[..len as usize];
+                    stream.read_exact(slice)?;
+                    apply_mask(slice, mask);
+                    buf.write_all(slice)?;
+                    Some(mask)
+                } else {
+                    let num = std::io::copy(&mut stream.take(len), buf)?;
+                    if num != len {
+                        return Err(WsError::IOError(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "writer cap is not enough",
+                        )));
+                    }
+                    None
+                };
+                len
+            }
+            _ => {
+                return Err(WsError::ProtocolError {
+                    close_code: 1008,
+                    error: ProtocolError::InvalidLeadingLen(len),
+                })
+            }
+        };
+        Ok((fin, len as usize, code))
+    }
+}
 
 impl FrameReadState {
     fn poll<S: Read>(&mut self, stream: &mut S) -> IOResult<usize> {
@@ -229,6 +346,80 @@ impl<S: Write> FrameSend<S> {
     /// send payload
     ///
     /// will auto fragment if auto_fragment_size > 0
+    pub fn send(&mut self, code: OpCode, payload: &[u8]) -> Result<(), WsError> {
+        self.write_state
+            .send(&mut self.stream, code, payload)
+            .map_err(WsError::IOError)
+    }
+
+    /// send a read frame, **this method will not check validation of frame and do not fragment**
+    pub fn send_owned_frame(&mut self, frame: OwnedFrame) -> Result<(), WsError> {
+        self.write_state
+            .send_owned_frame(&mut self.stream, frame)
+            .map_err(WsError::IOError)
+    }
+
+    /// flush stream to ensure all data are send
+    pub fn flush(&mut self) -> Result<(), WsError> {
+        self.stream.flush().map_err(WsError::IOError)
+    }
+}
+
+/// recv/send websocket frame
+pub struct FrameNewCodec<S: Read + Write> {
+    /// underlying transport stream
+    pub stream: S,
+    /// read state
+    pub read_state: FrameNewReadState,
+    /// write state
+    pub write_state: FrameWriteState,
+}
+
+impl<S: Read + Write> FrameNewCodec<S> {
+    /// construct method
+    pub fn new(stream: S) -> Self {
+        Self {
+            stream,
+            read_state: FrameNewReadState::default(),
+            write_state: FrameWriteState::default(),
+        }
+    }
+
+    /// construct with stream and config
+    pub fn new_with(stream: S, config: FrameConfig) -> Self {
+        Self {
+            stream,
+            read_state: FrameNewReadState::with_config(config.clone()),
+            write_state: FrameWriteState::with_config(config),
+        }
+    }
+
+    /// get mutable underlying stream
+    pub fn stream_mut(&mut self) -> &mut S {
+        &mut self.stream
+    }
+
+    /// used for server side to construct a new server
+    pub fn factory(_req: http::Request<()>, stream: S) -> Result<Self, WsError> {
+        let config = FrameConfig {
+            mask_send_frame: false,
+            ..Default::default()
+        };
+        Ok(Self::new_with(stream, config))
+    }
+
+    /// used to client side to construct a new client
+    pub fn check_fn(key: String, resp: http::Response<()>, stream: S) -> Result<Self, WsError> {
+        standard_handshake_resp_check(key.as_bytes(), &resp)?;
+        Ok(Self::new_with(stream, Default::default()))
+    }
+
+    /// receive a frame
+    pub fn receive<W: Write>(&mut self, buf: &mut W) -> Result<(usize, OpCode), WsError> {
+        self.read_state.receive(&mut self.stream, buf)
+    }
+
+    /// send data, **will copy data if need mask**
     pub fn send(&mut self, code: OpCode, payload: &[u8]) -> Result<(), WsError> {
         self.write_state
             .send(&mut self.stream, code, payload)

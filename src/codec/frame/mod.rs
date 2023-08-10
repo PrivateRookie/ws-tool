@@ -116,6 +116,15 @@ pub fn apply_mask_fast32(buf: &mut [u8], mask: [u8; 4]) {
     apply_mask_fallback(suffix, mask_u32.to_ne_bytes());
 }
 
+pub struct FrameNewReadState {
+    fragmented: bool,
+    config: FrameConfig,
+    header_buf: [u8; 14],
+    masked_buf: BytesMut,
+    fragmented_data: OwnedFrame,
+    fragmented_type: OpCode,
+}
+
 /// websocket read state
 #[derive(Debug, Clone)]
 pub struct FrameReadState {
@@ -125,6 +134,28 @@ pub struct FrameReadState {
     read_data: BytesMut,
     fragmented_data: OwnedFrame,
     fragmented_type: OpCode,
+}
+
+impl Default for FrameNewReadState {
+    fn default() -> Self {
+        Self {
+            fragmented: false,
+            config: Default::default(),
+            header_buf: Default::default(),
+            masked_buf: Default::default(),
+            fragmented_data: OwnedFrame::new(OpCode::Binary, None, &[]),
+            fragmented_type: Default::default(),
+        }
+    }
+}
+
+impl FrameNewReadState {
+    pub fn with_config(config: FrameConfig) -> Self {
+        Self {
+            config,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for FrameReadState {

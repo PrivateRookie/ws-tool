@@ -1,9 +1,10 @@
 use std::io::BufWriter;
 
+use bytes::BufMut;
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, BytesCodec, FrameConfig},
+    codec::{default_handshake_handler, BytesCodec, FrameCodec, FrameConfig, FrameNewCodec},
     stream::{BufStream, WrappedWriter},
     ServerBuilder,
 };
@@ -40,6 +41,7 @@ fn main() -> Result<(), ()> {
         let (stream, addr) = listener.accept().unwrap();
         std::thread::spawn(move || {
             tracing::info!("got connect from {:?}", addr);
+            let mut data = [0u8; 8192];
             match args.buffer {
                 Some(buf) => {
                     let mut server =
@@ -51,32 +53,32 @@ fn main() -> Result<(), ()> {
                                 resize_thresh: buf / 3,
                                 ..Default::default()
                             };
-                            Ok(BytesCodec::new_with(stream, config))
+                            Ok(FrameNewCodec::new_with(stream, config))
                         })
                         .unwrap();
                     loop {
-                        let msg = server.receive().unwrap();
-                        if msg.code.is_close() {
+                        let (count, code) = server.receive(&mut &mut data[..]).unwrap();
+                        if code.is_close() {
                             break;
                         }
 
-                        server.send(&msg.data[..]).unwrap();
+                        server.send(code, &data[..count]).unwrap();
                     }
                 }
                 None => {
                     let mut server = ServerBuilder::accept(
                         stream,
                         default_handshake_handler,
-                        BytesCodec::factory,
+                        FrameNewCodec::factory,
                     )
                     .unwrap();
                     loop {
-                        let msg = server.receive().unwrap();
-                        if msg.code.is_close() {
+                        let (count, code) = server.receive(&mut &mut data[..]).unwrap();
+                        if code.is_close() {
                             break;
                         }
 
-                        server.send(&msg.data[..]).unwrap();
+                        server.send(code, &data[..count]).unwrap();
                     }
                 }
             }
