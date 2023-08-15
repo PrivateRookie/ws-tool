@@ -83,7 +83,22 @@ impl Default for FrameConfig {
 /// apply websocket mask to buf by given key
 #[inline]
 pub fn apply_mask(buf: &mut [u8], mask: [u8; 4]) {
-    apply_mask_fast32(buf, mask)
+    // apply_mask_fast32(buf, mask)
+    apply_mask_simd(buf, mask)
+}
+
+fn apply_mask_simd(buf: &mut [u8], mask: [u8; 4]) {
+    use std::simd::*;
+    match buf.len() {
+        0..=3 => apply_mask_fallback(buf, mask),
+        4..=63 => apply_mask_fast32(buf, mask),
+        _ => {
+            let mask: [u8; 64] = std::array::from_fn(|idx| mask[idx % 3]);
+            let mut buf: Simd<u8, 64> = Simd::from_slice(buf);
+            let mask = Simd::from(mask);
+            buf ^= mask;
+        }
+    }
 }
 
 #[inline]
@@ -95,7 +110,7 @@ fn apply_mask_fallback(buf: &mut [u8], mask: [u8; 4]) {
 
 /// copy from tungstite
 #[inline]
-pub fn apply_mask_fast32(buf: &mut [u8], mask: [u8; 4]) {
+fn apply_mask_fast32(buf: &mut [u8], mask: [u8; 4]) {
     let mask_u32 = u32::from_ne_bytes(mask);
 
     let (prefix, words, suffix) = unsafe { buf.align_to_mut::<u32>() };

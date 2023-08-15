@@ -2,6 +2,7 @@
 
 #![warn(missing_docs)]
 #![cfg_attr(docrs, feature(doc_auto_cfg))]
+#![feature(portable_simd)]
 
 use std::collections::HashMap;
 

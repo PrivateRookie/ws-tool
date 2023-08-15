@@ -1,6 +1,6 @@
 use bytes::BytesMut;
 
-use super::{apply_mask_fast32, FrameConfig, FrameNewReadState, FrameReadState, FrameWriteState};
+use super::{FrameConfig, FrameNewReadState, FrameReadState, FrameWriteState};
 use crate::{
     codec::{apply_mask, Split},
     errors::{ProtocolError, WsError},
@@ -213,80 +213,129 @@ impl FrameWriteState {
             stream.write_all(header)?;
             return Ok(());
         }
-        let chunk_size = if self.config.auto_fragment_size > 0 {
-            self.config.auto_fragment_size
-        } else {
-            payload.len()
-        };
-        let parts: Vec<&[u8]> = payload.chunks(chunk_size).collect();
-        let total = parts.len();
-        let single_header_len = header_len(self.config.mask_send_frame, chunk_size as u64);
-        let mut header_buf_len = single_header_len * parts.len();
-        let left = payload.len() % chunk_size;
-        if left != 0 {
-            header_buf_len += header_len(self.config.mask_send_frame, left as u64);
-        }
-        let total_bytes = payload.len() + header_buf_len;
-        if self.config.mask_send_frame {
-            if self.buf.len() < total_bytes {
-                self.buf.resize(total_bytes, 0);
+        if self.config.auto_fragment_size > 0 && self.config.auto_fragment_size < payload.len() {
+            let chunk_size = self.config.auto_fragment_size;
+            let parts: Vec<&[u8]> = payload.chunks(chunk_size).collect();
+            let total = parts.len();
+            let single_header_len = header_len(self.config.mask_send_frame, chunk_size as u64);
+            let mut header_buf_len = single_header_len * parts.len();
+            let left = payload.len() % chunk_size;
+            if left != 0 {
+                header_buf_len += header_len(self.config.mask_send_frame, left as u64);
             }
-            parts.iter().enumerate().for_each(|(idx, chunk)| {
-                let fin = idx + 1 == total;
-                let s_idx = idx * single_header_len;
-                let mask = rand::random();
-                let header_len = ctor_header(
-                    &mut self.buf[s_idx..],
-                    fin,
+            let total_bytes = payload.len() + header_buf_len;
+            if self.config.mask_send_frame {
+                if self.buf.len() < total_bytes {
+                    self.buf.resize(total_bytes, 0);
+                }
+                parts.iter().enumerate().for_each(|(idx, chunk)| {
+                    let fin = idx + 1 == total;
+                    let s_idx = idx * single_header_len;
+                    let mask = rand::random();
+                    let header_len = ctor_header(
+                        &mut self.buf[s_idx..],
+                        fin,
+                        false,
+                        false,
+                        false,
+                        mask,
+                        opcode,
+                        chunk.len() as u64,
+                    )
+                    .len();
+                    apply_mask(&mut self.buf[(s_idx + header_len)..], mask);
+                });
+                stream.write_all(&self.buf[..total_bytes])?;
+            } else {
+                if self.buf.len() < header_buf_len {
+                    self.buf.resize(header_buf_len, 0);
+                }
+                let mut slices = Vec::with_capacity(total * 2);
+                parts.iter().enumerate().for_each(|(idx, chunk)| {
+                    let fin = idx + 1 == total;
+                    let s_idx = idx * chunk_size;
+                    ctor_header(
+                        &mut self.buf[s_idx..],
+                        fin,
+                        false,
+                        false,
+                        false,
+                        None,
+                        opcode,
+                        chunk.len() as u64,
+                    );
+                });
+                parts.iter().enumerate().for_each(|(idx, chunk)| {
+                    let fin = idx + 1 == total;
+                    if fin {
+                        slices.push(IoSlice::new(&self.buf[(idx * single_header_len)..]))
+                    } else {
+                        slices.push(IoSlice::new(
+                            &self.buf[(idx * single_header_len)..(idx + 1) * single_header_len],
+                        ))
+                    }
+                    slices.push(IoSlice::new(chunk));
+                });
+                let num = stream.write_vectored(&slices)?;
+                let remain = total_bytes - num;
+                if remain > 0 {
+                    if let Some(buf) = slices.last() {
+                        stream.write_all(&buf[(buf.len() - remain)..])?;
+                    }
+                }
+            }
+        } else {
+            if self.config.mask_send_frame {
+                let total_bytes = header_len(true, payload.len() as u64) + payload.len();
+                let mask: [u8; 4] = rand::random();
+                let header = ctor_header(
+                    &mut self.header_buf,
+                    true,
                     false,
                     false,
                     false,
                     mask,
                     opcode,
-                    chunk.len() as u64,
-                )
-                .len();
-                apply_mask_fast32(&mut self.buf[(s_idx + header_len)..], mask);
-            });
-            stream.write_all(&self.buf[..total_bytes])?;
-        } else {
-            if self.buf.len() < header_buf_len {
-                self.buf.resize(header_buf_len, 0);
-            }
-            let mut slices = Vec::with_capacity(total * 2);
-            parts.iter().enumerate().for_each(|(idx, chunk)| {
-                let fin = idx + 1 == total;
-                let s_idx = idx * chunk_size;
-                ctor_header(
-                    &mut self.buf[s_idx..],
-                    fin,
+                    payload.len() as u64,
+                );
+                if self.buf.len() < payload.len() {
+                    self.buf.resize(payload.len(), 0)
+                }
+                apply_mask(&mut self.buf, mask);
+                let num = stream.write_vectored(&[
+                    IoSlice::new(header),
+                    IoSlice::new(&self.buf[..(payload.len())]),
+                ])?;
+                let remain = total_bytes - num;
+                if remain > 0 {
+                    stream.write_all(&self.buf[(payload.len() - remain)..(payload.len())])?;
+                }
+            } else {
+                let total_bytes = header_len(false, payload.len() as u64) + payload.len();
+                let header = ctor_header(
+                    &mut self.header_buf,
+                    true,
                     false,
                     false,
                     false,
                     None,
                     opcode,
-                    chunk.len() as u64,
+                    payload.len() as u64,
                 );
-            });
-            parts.iter().enumerate().for_each(|(idx, chunk)| {
-                let fin = idx + 1 == total;
-                if fin {
-                    slices.push(IoSlice::new(&self.buf[(idx * single_header_len)..]))
-                } else {
-                    slices.push(IoSlice::new(
-                        &self.buf[(idx * single_header_len)..(idx + 1) * single_header_len],
-                    ))
+                if self.buf.len() < payload.len() {
+                    self.buf.resize(payload.len(), 0)
                 }
-                slices.push(IoSlice::new(chunk));
-            });
-            let num = stream.write_vectored(&slices)?;
-            let remain = total_bytes - num;
-            if remain > 0 {
-                if let Some(buf) = slices.last() {
-                    stream.write_all(&buf[(buf.len() - remain)..])?;
+                let num = stream.write_vectored(&[
+                    IoSlice::new(header),
+                    IoSlice::new(&self.buf[..(payload.len())]),
+                ])?;
+                let remain = total_bytes - num;
+                if remain > 0 {
+                    stream.write_all(&self.buf[(payload.len() - remain)..(payload.len())])?;
                 }
             }
-        }
+        };
+
         if self.config.renew_buf_on_write {
             self.buf = BytesMut::new()
         }

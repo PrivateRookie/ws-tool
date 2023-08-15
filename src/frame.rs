@@ -1,4 +1,4 @@
-use crate::codec::{apply_mask, apply_mask_fast32};
+use crate::codec::apply_mask;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::fmt::Debug;
 
@@ -175,7 +175,7 @@ macro_rules! impl_get {
         #[inline]
         fn frame_sep(&self) -> (usize, u64) {
             let header = &self.0;
-            let  len = header[1] & 0b01111111;
+            let len = header[1] & 0b01111111;
             match len {
                 0..=125 => (1, len as u64),
                 126 => {
@@ -537,7 +537,7 @@ impl OwnedFrame {
     /// unmask frame if masked
     pub fn unmask(&mut self) -> Option<[u8; 4]> {
         if let Some(mask) = self.header.masking_key() {
-            apply_mask_fast32(&mut self.payload, mask);
+            apply_mask(&mut self.payload, mask);
             self.header.set_mask(false);
             self.header.0.resize(self.header.0.len() - 4, 0);
             Some(mask)
@@ -553,7 +553,7 @@ impl OwnedFrame {
         self.unmask();
         self.header.set_mask(true);
         self.header.0.extend_from_slice(&mask);
-        apply_mask_fast32(&mut self.payload, mask);
+        apply_mask(&mut self.payload, mask);
     }
 
     /// extend frame payload

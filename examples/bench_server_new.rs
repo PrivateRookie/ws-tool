@@ -49,8 +49,6 @@ fn main() -> Result<(), ()> {
                             let stream = BufStream::with_capacity(buf, buf, stream);
                             let config = FrameConfig {
                                 mask_send_frame: false,
-                                resize_size: buf,
-                                resize_thresh: buf / 3,
                                 ..Default::default()
                             };
                             Ok(FrameNewCodec::new_with(stream, config))
