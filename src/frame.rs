@@ -78,12 +78,13 @@ impl OpCode {
     }
 }
 
+#[inline]
 pub(crate) fn parse_opcode(val: u8) -> OpCode {
     unsafe { std::mem::transmute(val & 0b00001111) }
 }
 
 #[inline]
-pub(crate) const fn get_bit(source: &[u8], byte_idx: usize, bit_idx: u8) -> bool {
+pub(crate) fn get_bit(source: &[u8], byte_idx: usize, bit_idx: u8) -> bool {
     let mask = match bit_idx {
         0 => 128,
         1 => 64,
@@ -95,7 +96,7 @@ pub(crate) const fn get_bit(source: &[u8], byte_idx: usize, bit_idx: u8) -> bool
         7 => 1,
         _ => unreachable!(),
     };
-    source[byte_idx] & mask == mask
+    unsafe { *source.get_unchecked(byte_idx) & mask == mask }
 }
 
 #[inline]
@@ -163,7 +164,7 @@ macro_rules! impl_get {
         /// return frame opcode
         #[inline]
         pub fn opcode(&self) -> OpCode {
-            parse_opcode(self.0[0])
+            parse_opcode(unsafe { *self.0.get_unchecked(0) })
         }
 
         /// get mask bit value
@@ -535,11 +536,12 @@ impl OwnedFrame {
     }
 
     /// unmask frame if masked
+    #[inline]
     pub fn unmask(&mut self) -> Option<[u8; 4]> {
         if let Some(mask) = self.header.masking_key() {
             apply_mask(&mut self.payload, mask);
             self.header.set_mask(false);
-            self.header.0.resize(self.header.0.len() - 4, 0);
+            self.header.0.truncate(self.header.0.len() - 4);
             Some(mask)
         } else {
             None
@@ -572,21 +574,25 @@ impl OwnedFrame {
     }
 
     /// get frame header
+    #[inline]
     pub fn header(&self) -> &Header {
         &self.header
     }
 
     /// get mutable frame header
+    #[inline]
     pub fn header_mut(&mut self) -> &mut Header {
         &mut self.header
     }
 
     /// get payload
+    #[inline]
     pub fn payload(&self) -> &BytesMut {
         &self.payload
     }
 
     /// consume frame return header and payload
+    #[inline]
     pub fn parts(self) -> (Header, BytesMut) {
         (self.header, self.payload)
     }

@@ -131,15 +131,6 @@ fn apply_mask_fast32(buf: &mut [u8], mask: [u8; 4]) {
     apply_mask_fallback(suffix, mask_u32.to_ne_bytes());
 }
 
-pub struct FrameNewReadState {
-    fragmented: bool,
-    config: FrameConfig,
-    header_buf: [u8; 14],
-    masked_buf: BytesMut,
-    fragmented_data: OwnedFrame,
-    fragmented_type: OpCode,
-}
-
 /// websocket read state
 #[derive(Debug, Clone)]
 pub struct FrameReadState {
@@ -149,28 +140,6 @@ pub struct FrameReadState {
     read_data: BytesMut,
     fragmented_data: OwnedFrame,
     fragmented_type: OpCode,
-}
-
-impl Default for FrameNewReadState {
-    fn default() -> Self {
-        Self {
-            fragmented: false,
-            config: Default::default(),
-            header_buf: Default::default(),
-            masked_buf: Default::default(),
-            fragmented_data: OwnedFrame::new(OpCode::Binary, None, &[]),
-            fragmented_type: Default::default(),
-        }
-    }
-}
-
-impl FrameNewReadState {
-    pub fn with_config(config: FrameConfig) -> Self {
-        Self {
-            config,
-            ..Default::default()
-        }
-    }
 }
 
 impl Default for FrameReadState {
@@ -196,6 +165,7 @@ impl FrameReadState {
     }
 
     /// check if data in buffer is enough to parse frame header
+    #[inline]
     pub fn is_header_ok(&self) -> bool {
         let buf_len = self.read_idx;
         if buf_len < 2 {
@@ -218,11 +188,13 @@ impl FrameReadState {
     }
 
     /// return current frame header bits of buffer
+    #[inline]
     pub fn get_leading_bits(&self) -> u8 {
         self.read_data[0] >> 4
     }
 
     /// try to parse frame header in buffer, return expected payload
+    #[inline]
     pub fn parse_frame_header(&mut self) -> Result<usize, WsError> {
         fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
             let len = source[1] & 0b01111111;
@@ -277,6 +249,7 @@ impl FrameReadState {
     }
 
     /// get a frame and reset state
+    #[inline]
     pub fn consume_frame(&mut self, len: usize) -> OwnedFrame {
         let mut data = self.read_data.split_to(len);
         let view = HeaderView(&data);
@@ -292,6 +265,7 @@ impl FrameReadState {
 
     /// This method is technically private, but custom parsers are allowed to use it.
     #[doc(hidden)]
+    #[inline]
     pub fn merge_frame(
         &mut self,
         checked_frame: OwnedFrame,
@@ -336,6 +310,7 @@ impl FrameReadState {
     ///
     /// This method is technically private, but custom parsers are allowed to use it.
     #[doc(hidden)]
+    #[inline]
     pub fn check_frame(&mut self, unmasked_frame: OwnedFrame) -> Result<OwnedFrame, WsError> {
         let header = unmasked_frame.header();
         let opcode = header.opcode();
