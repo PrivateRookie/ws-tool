@@ -174,55 +174,43 @@ macro_rules! impl_get {
         }
 
         #[inline]
-        fn frame_sep(&self) -> (usize, u64) {
+        fn len_bytes(&self) -> usize {
             let header = &self.0;
-            let len = header[1] & 0b01111111;
-            match len {
-                0..=125 => (1, len as u64),
-                126 => {
-                    let mut arr = [0u8; 2];
-                    arr[0] = header[2];
-                    arr[1] = header[3];
-                    (1 + 2, u16::from_be_bytes(arr) as u64)
-                }
-                127 => {
-                    let mut arr = [0u8; 8];
-                    arr[..8].copy_from_slice(&header[2..(8 + 2)]);
-                    (1 + 8, u64::from_be_bytes(arr))
-                }
-                _ => unreachable!(),
+            match header[1] {
+                0..=125 | 128..=253 => 1,
+                126 | 254 => 3,
+                127 | 255 => 9,
             }
         }
 
         /// return **payload** len
         #[inline]
         pub fn payload_len(&self) -> u64 {
-            self.frame_sep().1
+            let header = &self.0;
+            match header[1] {
+                len @ (0..=125 | 128..=253) => (len & 127) as u64,
+                126 | 254 => {
+                    assert!(header.len() >= 4);
+                    u16::from_be_bytes((&header[2..4]).try_into().unwrap()) as u64
+                }
+                127 | 255 => {
+                    assert!(header.len() >= 10);
+                    u64::from_be_bytes((&header[2..(8 + 2)]).try_into().unwrap())
+                }
+            }
         }
 
         /// get frame mask key
         #[inline]
         pub fn masking_key(&self) -> Option<[u8; 4]> {
             if self.masked() {
-                let len_occupied = self.frame_sep().0;
+                let len_occupied = self.len_bytes();
                 let mut arr = [0u8; 4];
                 arr.copy_from_slice(&self.0[(1 + len_occupied)..(5 + len_occupied)]);
                 Some(arr)
             } else {
                 None
             }
-        }
-
-        /// return (headerlen, the whole frame len)
-        #[inline]
-        pub fn payload_idx(&self) -> (usize, usize) {
-            let mut start_idx = 1;
-            let (len_occupied, len) = self.frame_sep();
-            start_idx += len_occupied;
-            if self.masked() {
-                start_idx += 4;
-            }
-            (start_idx, start_idx + (len as usize))
         }
     };
 }
