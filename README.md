@@ -4,10 +4,13 @@ An easy to use websocket client/server toolkit, supporting blocking/async IO.
 
 **feature matrix**
 
-| IO type  | split | proxy(auth) | tls | buffered  stream | deflate | use as client | use as server |
-| -------- | ----- | ----------- | --- | ---------------- | ------- | ------------- | ------------- |
-| blocking | ✅     | ✅           | ✅   | ✅                | ✅       | ✅             | ✅             |
-| async    | ✅     | ✅           | ✅   | ✅                | ✅       | ✅             | ✅             |
+| IO type  | split | proxy | tls | buffered  stream | deflate | use as client | use as server |
+| -------- | ----- | ----- | --- | ---------------- | ------- | ------------- | ------------- |
+| blocking | ✅     | ✅     | ✅   | ✅                | ✅       | ✅             | ✅             |
+| async    | ✅     | ✅     | ✅   | ✅                | ✅       | ✅             | ✅             |
+
+For tls connection, ws-tool support both native-tls and rustls,
+ws-tool also support simd unmask(need simd feature in nightly build) and simd utf checking for faster unmask & utf8 string checking.
 
 
 It's tested by autobaha test suit. see [test report](https://privaterookie.github.io/ws-tool-stat/clients/index.html) of 4 example
@@ -62,23 +65,23 @@ My test machine is i9-12900k and 32GB, 3200MHz ddr4, and load test client is [lo
 Roughly compare with [EchoSever example](https://github.com/uNetworking/uWebSockets/blob/master/examples/EchoServer.cpp),  [tungstenite](./examples/bench_tungstenite.rs)
 
 
-The following are the benchmark(1 connection only) results
+The following are the benchmark(1 connection only) results, there is no tungstenite with buffered stream test case, because there tungstenite does not work well with buffered stream. ws-tool test cases are all built with simd feature enabled, tokio runtime use current_thread flavor.
 
 
-### 300 bytes payload size, 50000000 messages
+### 300 bytes payload size, 100000000 messages
 
 ```rust
-cargo lt -- -p 300 --count 50000 -t 1 <url>
+cargo lt -- -p 300 --count 100000 -t 1 <url>
 ```
 
-| server                        | count    | Duration(ms) | Message/sec |
-| ----------------------------- | -------- | ------------ | ----------- |
-| uWebSocket                    | 50000000 | 10785        | 4636068.61  |
-| tungstenite                   | 50000000 | 22045        | 2268088.00  |
-| bench_server(no buffer)       | 50000000 | 28473        | 1756049.59  |
-| bench_server(8k)              | 50000000 | 10791        | 4633490.87  |
-| bench_async_server(no buffer) | 50000000 | 41068        | 1217492.94  |
-| bench_async_server(8k)        | 50000000 | 14892        | 3357507.39  |
+| server                        | count     | Duration(ms) | Message/sec    |
+| ----------------------------- | --------- | ------------ | -------------- |
+| uWebSocket                    | 100000000 | 16798        | 5953089.65     |
+| tungstenite                   | 100000000 | 19905        | 5023863.35     |
+| bench_server(no buffer)       | 100000000 | 42395        | 2358768.72     |
+| bench_server(8k)              | 100000000 | 16541        | **6045583.70** |
+| bench_async_server(no buffer) | 100000000 | 45774        | 2184646.31     |
+| bench_async_server(8k)        | 100000000 | 16360        | **6112469.44** |
 
 
 ### 1M bytes payload size, 100000 messages
@@ -89,12 +92,12 @@ cargo lt -- -p 1048576 --count 100 -t 1 <url>
 
 | server                        | count  | Duration(ms) | Message/sec |
 | ----------------------------- | ------ | ------------ | ----------- |
-| uWebSocket                    | 100000 | 37545        | 2663.47     |
-| tungstenite                   | 100000 | 41413        | 2414.70     |
-| bench_server(no buffer)       | 100000 | 32689        | 3059.13     |
-| bench_server(8k)              | 100000 | 29949        | 3339.01     |
-| bench_async_server(no buffer) | 100000 | 38959        | 2566.80     |
-| bench_async_server(8k)        | 100000 | 31378        | 3186.95     |
+| uWebSocket                    | 100000 | 34900        | 2865.33     |
+| tungstenite                   | 100000 | 38745        | 2580.98     |
+| bench_server(no buffer)       | 100000 | 29854        | 3349.63     |
+| bench_server(8k)              | 100000 | 28887        | **3461.76** |
+| bench_async_server(no buffer) | 100000 | 29280        | **3415.30** |
+| bench_async_server(8k)        | 100000 | 29384        | 3403.21     |
 
 
 

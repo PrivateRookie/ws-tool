@@ -38,6 +38,9 @@ impl FrameReadState {
         size: usize,
     ) -> IOResult<usize> {
         let start = self.read_idx;
+        if self.read_idx + size > self.read_data.len() {
+            self.read_data.resize(self.read_idx + size, 0)
+        }
         while self.read_idx < size {
             self.async_poll(stream).await?;
         }
