@@ -6,7 +6,7 @@ use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::AsyncStringCodec,
-    connector::{async_tcp_connect, async_wrap_tls, get_host, get_scheme},
+    connector::{async_tcp_connect, async_wrap_rustls, get_host, get_scheme},
     protocol::Mode,
     stream::AsyncRW,
     ClientBuilder,
@@ -38,7 +38,7 @@ async fn run() -> Result<(), ()> {
     let stream: Box<dyn AsyncRW> = match mode {
         Mode::WS => Box::new(stream),
         Mode::WSS => {
-            let stream = async_wrap_tls(stream, get_host(&args.uri).unwrap(), vec![])
+            let stream = async_wrap_rustls(stream, get_host(&args.uri).unwrap(), vec![])
                 .await
                 .unwrap();
             Box::new(stream)

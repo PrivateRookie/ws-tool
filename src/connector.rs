@@ -25,9 +25,6 @@ mod blocking {
 
     use super::{get_host, get_scheme};
 
-    #[cfg(feature = "sync_tls_rustls")]
-    type TlsStream = rustls_connector::TlsStream<TcpStream>;
-
     /// performance tcp connection
     pub fn tcp_connect(uri: &http::Uri) -> Result<TcpStream, WsError> {
         let mode = get_scheme(uri)?;
@@ -41,11 +38,13 @@ mod blocking {
 
     #[cfg(feature = "sync_tls_rustls")]
     /// start tls session
-    pub fn wrap_tls(
-        stream: TcpStream,
+    pub fn wrap_rustls<
+        S: std::io::Read + std::io::Write + Sync + Send + std::fmt::Debug + 'static,
+    >(
+        stream: S,
         host: &str,
         certs: Vec<std::path::PathBuf>,
-    ) -> Result<TlsStream, WsError> {
+    ) -> Result<rustls_connector::TlsStream<S>, WsError> {
         let mut config = rustls_connector::RustlsConnectorConfig::new_with_webpki_roots_certs();
         let mut cert_data = vec![];
         for cert_path in certs.iter() {
@@ -71,6 +70,49 @@ mod blocking {
         tracing::debug!("tls connection established");
         Ok(tls_stream)
     }
+
+    #[cfg(feature = "sync_tls_native")]
+    /// start tls session
+    pub fn wrap_native_tls<S: std::io::Read + std::io::Write>(
+        stream: S,
+        host: &str,
+        certs: Vec<std::path::PathBuf>,
+    ) -> Result<native_tls::TlsStream<S>, WsError> {
+        let mut builder = native_tls::TlsConnector::builder();
+        for cert_path in certs.iter() {
+            let mut pem = std::fs::File::open(cert_path).map_err(|_| {
+                WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
+            })?;
+            let mut data = vec![];
+            if let Err(e) = std::io::Read::read_to_end(&mut pem, &mut data) {
+                tracing::error!(
+                    "failed to read cert file {} {}",
+                    cert_path.display(),
+                    e.to_string()
+                );
+                continue;
+            }
+            match native_tls::Certificate::from_der(&data) {
+                Ok(cert) => {
+                    builder.add_root_certificate(cert);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "invalid cert file {} {}",
+                        cert_path.display(),
+                        e.to_string()
+                    );
+                    continue;
+                }
+            }
+        }
+        let connector = builder.build().unwrap();
+        let tls_stream = connector
+            .connect(host, stream)
+            .map_err(|_| WsError::ConnectionFailed("tls connect failed".into()))?;
+        tracing::debug!("tls connection established");
+        Ok(tls_stream)
+    }
 }
 
 #[cfg(feature = "sync")]
@@ -80,9 +122,6 @@ pub use blocking::*;
 mod non_blocking {
     use http::Uri;
     use tokio::net::TcpStream;
-
-    #[cfg(feature = "async_tls_rustls")]
-    type TlsStream = tokio_rustls::client::TlsStream<TcpStream>;
 
     use crate::errors::WsError;
 
@@ -101,11 +140,11 @@ mod non_blocking {
 
     #[cfg(feature = "async_tls_rustls")]
     /// async version of starting tls session
-    pub async fn async_wrap_tls(
-        stream: TcpStream,
+    pub async fn async_wrap_rustls<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+        stream: S,
         host: &str,
         certs: Vec<std::path::PathBuf>,
-    ) -> Result<TlsStream, WsError> {
+    ) -> Result<tokio_rustls::client::TlsStream<S>, WsError> {
         use std::io::BufReader;
 
         let mut root_store = rustls_connector::rustls::RootCertStore::empty();
@@ -146,6 +185,51 @@ mod non_blocking {
         let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
         let tls_stream = connector
             .connect(domain, stream)
+            .await
+            .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
+        tracing::debug!("tls connection established");
+        Ok(tls_stream)
+    }
+
+    #[cfg(feature = "async_tls_native")]
+    /// start tls session
+    pub async fn async_wrap_native_tls<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+        stream: S,
+        host: &str,
+        certs: Vec<std::path::PathBuf>,
+    ) -> Result<tokio_native_tls::TlsStream<S>, WsError> {
+        let mut builder = native_tls::TlsConnector::builder();
+        for cert_path in certs.iter() {
+            let mut pem = std::fs::File::open(cert_path).map_err(|_| {
+                WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
+            })?;
+            let mut data = vec![];
+            if let Err(e) = std::io::Read::read_to_end(&mut pem, &mut data) {
+                tracing::error!(
+                    "failed to read cert file {} {}",
+                    cert_path.display(),
+                    e.to_string()
+                );
+                continue;
+            }
+            match native_tls::Certificate::from_der(&data) {
+                Ok(cert) => {
+                    builder.add_root_certificate(cert);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "invalid cert file {} {}",
+                        cert_path.display(),
+                        e.to_string()
+                    );
+                    continue;
+                }
+            }
+        }
+        let connector = builder.build().unwrap();
+        let connector = tokio_native_tls::TlsConnector::from(connector);
+        let tls_stream = connector
+            .connect(host, stream)
             .await
             .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
         tracing::debug!("tls connection established");

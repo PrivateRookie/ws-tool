@@ -3,6 +3,8 @@ Cargo.lock
 .venv
 .DS_Store
 
+**/node_modules
+
 scripts/*.pem
 scripts/*.key
 certs

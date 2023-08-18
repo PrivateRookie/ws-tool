@@ -32,12 +32,14 @@ tokio = { version = "1", features = ["rt", "net", "io-util"], optional = true }
 
 # tls deps
 tokio-rustls = { version = "0.23", optional = true }
+tokio-native-tls = { version = "0.3.1", optional = true }
 rustls-pemfile = { version = "1.0.1", optional = true }
 webpki = { version = "0.22", optional = true }
 webpki-roots = { version = "0.22.5", optional = true }
 rustls-connector = { version = "0.16", optional = true, features = [
     "webpki-roots-certs",
 ] }
+native-tls = { version = "0.2", optional = true }
 
 # deflate deps
 libz-sys = { version = "1.1.8", optional = true }
@@ -49,6 +51,7 @@ libz-sys = { version = "1.1.8", optional = true }
 default = ["sync"]
 sync = []
 sync_tls_rustls = ["sync", "rustls-connector"]
+sync_tls_native = ["sync", "native-tls"]
 async = ["tokio"]
 async_tls_rustls = [
     "async",
@@ -57,6 +60,10 @@ async_tls_rustls = [
     "webpki-roots",
     "rustls-pemfile",
     "rustls-connector",
+]
+async_tls_native = [
+    "async",
+    "tokio-native-tls",
 ]
 deflate = ["libz-sys"]
 deflate_static = ["libz-sys/static"]

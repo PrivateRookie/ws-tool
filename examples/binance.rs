@@ -3,7 +3,7 @@ use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::AsyncStringCodec,
-    connector::{async_tcp_connect, async_wrap_tls, get_host},
+    connector::{async_tcp_connect, async_wrap_rustls, get_host},
     ClientBuilder,
 };
 
@@ -93,7 +93,7 @@ async fn main() -> Result<(), ()> {
     } else {
         async_tcp_connect(&uri).await.unwrap()
     };
-    let stream = async_wrap_tls(stream, get_host(&uri).unwrap(), vec![])
+    let stream = async_wrap_rustls(stream, get_host(&uri).unwrap(), vec![])
         .await
         .unwrap();
     let mut client = builder
