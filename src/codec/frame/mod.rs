@@ -250,9 +250,11 @@ impl FrameReadState {
 
     /// get a frame and reset state
     #[inline]
-    pub fn consume_frame(&mut self, len: usize) -> OwnedFrame {
+    pub fn consume_frame(&mut self, len: usize) -> (bool, OpCode, u64, OwnedFrame) {
         let mut data = self.read_data.split_to(len);
         let view = HeaderView(&data);
+        let fin = view.fin();
+        let code = view.opcode();
         let payload_len = view.payload_len();
         let header = data.split_to(data.len() - payload_len as usize);
         self.read_idx -= len;
@@ -260,7 +262,7 @@ impl FrameReadState {
         if self.config.auto_unmask {
             frame.unmask();
         }
-        frame
+        (fin, code, payload_len, frame)
     }
 
     /// This method is technically private, but custom parsers are allowed to use it.
@@ -268,14 +270,12 @@ impl FrameReadState {
     #[inline]
     pub fn merge_frame(
         &mut self,
+        fin: bool,
+        opcode: OpCode,
         checked_frame: OwnedFrame,
     ) -> Result<Option<OwnedFrame>, WsError> {
-        let header = checked_frame.header();
-        let opcode = header.opcode();
-
         match opcode {
             OpCode::Continue => {
-                let fin = header.fin();
                 self.fragmented_data
                     .extend_from_slice(checked_frame.payload());
                 if fin {
@@ -290,7 +290,7 @@ impl FrameReadState {
                 }
             }
             OpCode::Text | OpCode::Binary => {
-                if !header.fin() {
+                if !fin {
                     self.fragmented = true;
                     self.fragmented_type = opcode;
                     self.fragmented_data.header_mut().set_opcode(opcode);
@@ -311,9 +311,13 @@ impl FrameReadState {
     /// This method is technically private, but custom parsers are allowed to use it.
     #[doc(hidden)]
     #[inline]
-    pub fn check_frame(&mut self, unmasked_frame: OwnedFrame) -> Result<OwnedFrame, WsError> {
-        let header = unmasked_frame.header();
-        let opcode = header.opcode();
+    pub fn check_frame(
+        &mut self,
+        fin: bool,
+        opcode: OpCode,
+        payload_len: u64,
+        unmasked_frame: OwnedFrame,
+    ) -> Result<OwnedFrame, WsError> {
         match opcode {
             OpCode::Continue => {
                 if !self.fragmented {
@@ -322,7 +326,7 @@ impl FrameReadState {
                         error: ProtocolError::MissInitialFragmentedFrame,
                     });
                 }
-                if header.fin() {
+                if fin {
                     self.fragmented = false;
                 }
                 Ok(unmasked_frame)
@@ -334,7 +338,7 @@ impl FrameReadState {
                         error: ProtocolError::NotContinueFrameAfterFragmented,
                     });
                 }
-                if !header.fin() {
+                if !fin {
                     self.fragmented = true;
                     if opcode == OpCode::Text
                         && self.config.validate_utf8.is_fast_fail()
@@ -361,13 +365,12 @@ impl FrameReadState {
                 }
             }
             OpCode::Close | OpCode::Ping | OpCode::Pong => {
-                if !header.fin() {
+                if !fin {
                     return Err(WsError::ProtocolError {
                         close_code: 1002,
                         error: ProtocolError::FragmentedControlFrame,
                     });
                 }
-                let payload_len = header.payload_len();
                 if payload_len > 125 {
                     let error = ProtocolError::ControlFrameTooBig(payload_len as usize);
                     return Err(WsError::ProtocolError {

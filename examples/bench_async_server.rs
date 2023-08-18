@@ -23,10 +23,13 @@ struct Args {
     /// buffer size
     #[arg(short, long)]
     buffer: Option<usize>,
+
+    /// tokio runtime worker, if not not use current thread runtime, else
+    /// use multi thread runtime
+    jobs: Option<usize>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), ()> {
+fn main() {
     let args = Args::parse();
     tracing_subscriber::fmt::fmt()
         .with_max_level(args.level)
@@ -34,6 +37,21 @@ async fn main() -> Result<(), ()> {
         .try_init()
         .expect("failed to init log");
     tracing::info!("binding on {}:{}", args.host, args.port);
+    let rt = match args.jobs {
+        Some(jobs) => tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(jobs)
+            .build()
+            .unwrap(),
+        None => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap(),
+    };
+    rt.block_on(run(args))
+}
+
+async fn run(args: Args) {
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", args.host, args.port))
         .await
         .unwrap();
@@ -82,7 +100,6 @@ async fn main() -> Result<(), ()> {
                         if msg.code.is_close() {
                             break;
                         }
-
                         server.send(&msg.data[..]).await.unwrap();
                     }
                 }

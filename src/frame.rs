@@ -231,6 +231,29 @@ pub fn header_len(mask: bool, payload_len: u64) -> usize {
     header_len
 }
 
+#[inline]
+const fn first_byte(fin: bool, rsv1: bool, rsv2: bool, rsv3: bool, opcode: OpCode) -> u8 {
+    let leading = match (fin, rsv1, rsv2, rsv3) {
+        (true, true, true, true) => 0b1111_0000,
+        (true, true, true, false) => 0b1110_0000,
+        (true, true, false, true) => 0b1101_0000,
+        (true, true, false, false) => 0b1100_0000,
+        (true, false, true, true) => 0b1011_0000,
+        (true, false, true, false) => 0b1010_0000,
+        (true, false, false, true) => 0b1001_0000,
+        (true, false, false, false) => 0b1000_0000,
+        (false, true, true, true) => 0b0111_0000,
+        (false, true, true, false) => 0b0110_0000,
+        (false, true, false, true) => 0b0101_0000,
+        (false, true, false, false) => 0b0100_0000,
+        (false, false, true, true) => 0b0011_0000,
+        (false, false, true, false) => 0b0010_0000,
+        (false, false, false, true) => 0b0001_0000,
+        (false, false, false, false) => 0b0000_0000,
+    };
+    leading | opcode as u8
+}
+
 /// write header without allocation
 #[allow(clippy::too_many_arguments)]
 pub fn ctor_header<M: Into<Option<[u8; 4]>>>(
@@ -243,7 +266,6 @@ pub fn ctor_header<M: Into<Option<[u8; 4]>>>(
     opcode: OpCode,
     payload_len: u64,
 ) -> &[u8] {
-    // assert!(buf.len() >= 14);
     let mask = mask_key.into();
     let mut header_len = 1;
     if mask.is_some() {
@@ -261,12 +283,7 @@ pub fn ctor_header<M: Into<Option<[u8; 4]>>>(
         buf[2..10].copy_from_slice(&payload_len.to_be_bytes());
         header_len += 9;
     }
-    buf[0] = 0;
-    buf[0] |= opcode as u8;
-    set_bit(buf, 0, 0, fin);
-    set_bit(buf, 0, 1, rsv1);
-    set_bit(buf, 0, 2, rsv2);
-    set_bit(buf, 0, 3, rsv3);
+    buf[0] = first_byte(fin, rsv1, rsv2, rsv3, opcode);
     if let Some(key) = mask {
         set_bit(buf, 1, 0, true);
         buf[(header_len - 4)..header_len].copy_from_slice(&key);
@@ -432,18 +449,14 @@ impl Header {
     ) -> Self {
         let mask = mask_key.into();
         let len = header_len(mask.is_some(), payload_len);
-        let mut buf = BytesMut::new();
-        buf.resize(len, 0);
+        assert!(len >= 2);
+        let mut buf = BytesMut::zeroed(len);
+        buf[0] = first_byte(fin, rsv1, rsv2, rsv3, opcode);
         let mut header = Self(buf);
-        header.set_fin(fin);
-        header.set_rsv1(rsv1);
-        header.set_rsv2(rsv2);
-        header.set_rsv3(rsv3);
-        header.set_opcode(opcode);
         header.set_payload_len(payload_len);
         if let Some(mask) = mask {
             header.set_mask(true);
-            header.0.extend_from_slice(&mask);
+            header.0[(len - 4)..len].copy_from_slice(&mask);
         }
         header
     }

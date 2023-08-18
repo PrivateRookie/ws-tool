@@ -10,8 +10,8 @@ homepage = "https://github.com/PrivateRookie/ws-tool"
 repository = "https://github.com/PrivateRookie/ws-tool"
 keywords = ["websocket", "proxy", "network"]
 
-# [profile.release]
-# debug = true
+[profile.release]
+debug = true
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

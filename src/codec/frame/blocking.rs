@@ -40,7 +40,10 @@ impl FrameReadState {
     }
 
     #[inline]
-    fn read_one_frame<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
+    fn read_one_frame<S: Read>(
+        &mut self,
+        stream: &mut S,
+    ) -> Result<(bool, OpCode, u64, OwnedFrame), WsError> {
         while !self.is_header_ok() {
             self.poll(stream)?;
         }
@@ -52,16 +55,16 @@ impl FrameReadState {
     /// **NOTE** masked frame has already been unmasked
     pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
         loop {
-            let frame = self.read_one_frame(stream)?;
+            let (fin, code, payload_len, frame) = self.read_one_frame(stream)?;
             if self.config.merge_frame {
                 if let Some(frame) = self
-                    .check_frame(frame)
-                    .and_then(|frame| self.merge_frame(frame))?
+                    .check_frame(fin, code, payload_len, frame)
+                    .and_then(|frame| self.merge_frame(fin, code, frame))?
                 {
                     break Ok(frame);
                 }
             } else {
-                break self.check_frame(frame);
+                break self.check_frame(fin, code, payload_len, frame);
             }
         }
     }
@@ -170,55 +173,53 @@ impl FrameWriteState {
                     }
                 }
             }
+        } else if self.config.mask_send_frame {
+            let total_bytes = header_len(true, payload.len() as u64) + payload.len();
+            let mask: [u8; 4] = rand::random();
+            let header = ctor_header(
+                &mut self.header_buf,
+                true,
+                false,
+                false,
+                false,
+                mask,
+                opcode,
+                payload.len() as u64,
+            );
+            if self.buf.len() < payload.len() {
+                self.buf.resize(payload.len(), 0)
+            }
+            apply_mask(&mut self.buf, mask);
+            let num = stream.write_vectored(&[
+                IoSlice::new(header),
+                IoSlice::new(&self.buf[..(payload.len())]),
+            ])?;
+            let remain = total_bytes - num;
+            if remain > 0 {
+                stream.write_all(&self.buf[(payload.len() - remain)..(payload.len())])?;
+            }
         } else {
-            if self.config.mask_send_frame {
-                let total_bytes = header_len(true, payload.len() as u64) + payload.len();
-                let mask: [u8; 4] = rand::random();
-                let header = ctor_header(
-                    &mut self.header_buf,
-                    true,
-                    false,
-                    false,
-                    false,
-                    mask,
-                    opcode,
-                    payload.len() as u64,
-                );
-                if self.buf.len() < payload.len() {
-                    self.buf.resize(payload.len(), 0)
-                }
-                apply_mask(&mut self.buf, mask);
-                let num = stream.write_vectored(&[
-                    IoSlice::new(header),
-                    IoSlice::new(&self.buf[..(payload.len())]),
-                ])?;
-                let remain = total_bytes - num;
-                if remain > 0 {
-                    stream.write_all(&self.buf[(payload.len() - remain)..(payload.len())])?;
-                }
-            } else {
-                let total_bytes = header_len(false, payload.len() as u64) + payload.len();
-                let header = ctor_header(
-                    &mut self.header_buf,
-                    true,
-                    false,
-                    false,
-                    false,
-                    None,
-                    opcode,
-                    payload.len() as u64,
-                );
-                if self.buf.len() < payload.len() {
-                    self.buf.resize(payload.len(), 0)
-                }
-                let num = stream.write_vectored(&[
-                    IoSlice::new(header),
-                    IoSlice::new(&self.buf[..(payload.len())]),
-                ])?;
-                let remain = total_bytes - num;
-                if remain > 0 {
-                    stream.write_all(&self.buf[(payload.len() - remain)..(payload.len())])?;
-                }
+            let total_bytes = header_len(false, payload.len() as u64) + payload.len();
+            let header = ctor_header(
+                &mut self.header_buf,
+                true,
+                false,
+                false,
+                false,
+                None,
+                opcode,
+                payload.len() as u64,
+            );
+            if self.buf.len() < payload.len() {
+                self.buf.resize(payload.len(), 0)
+            }
+            let num = stream.write_vectored(&[
+                IoSlice::new(header),
+                IoSlice::new(&self.buf[..(payload.len())]),
+            ])?;
+            let remain = total_bytes - num;
+            if remain > 0 {
+                stream.write_all(&self.buf[(payload.len() - remain)..(payload.len())])?;
             }
         };
 
