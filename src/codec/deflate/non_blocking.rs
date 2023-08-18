@@ -3,7 +3,7 @@ use rand::random;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
 use crate::{
-    codec::{apply_mask_fast32, FrameConfig, Split},
+    codec::{apply_mask, FrameConfig, Split},
     errors::{ProtocolError, WsError},
     frame::{ctor_header, OpCode, OwnedFrame},
     protocol::standard_handshake_resp_check,
@@ -115,7 +115,7 @@ impl DeflateWriteState {
                 );
                 stream.write_all(header).await?;
                 if let Some(mask) = mask {
-                    apply_mask_fast32(&mut output, mask)
+                    apply_mask(&mut output, mask)
                 };
                 stream.write_all(&output).await?;
                 if (self.is_server && handler.config.server_no_context_takeover)
@@ -138,7 +138,7 @@ impl DeflateWriteState {
                 stream.write_all(header).await?;
                 if let Some(mask) = mask {
                     let mut data = BytesMut::from_iter(chunk);
-                    apply_mask_fast32(&mut data, mask);
+                    apply_mask(&mut data, mask);
                     stream.write_all(&data).await?;
                 } else {
                     stream.write_all(chunk).await?;

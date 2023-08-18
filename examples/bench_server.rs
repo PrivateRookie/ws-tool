@@ -1,10 +1,8 @@
-use std::io::BufWriter;
-
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{default_handshake_handler, BytesCodec, FrameConfig},
-    stream::WrappedWriter,
+    stream::BufStream,
     ServerBuilder,
 };
 
@@ -44,11 +42,10 @@ fn main() -> Result<(), ()> {
                 Some(buf) => {
                     let mut server =
                         ServerBuilder::accept(stream, default_handshake_handler, |_req, stream| {
-                            let stream = WrappedWriter(BufWriter::with_capacity(buf, stream));
+                            let stream = BufStream::with_capacity(buf, buf, stream);
                             let config = FrameConfig {
                                 mask_send_frame: false,
                                 resize_size: buf,
-                                resize_thresh: buf / 3,
                                 ..Default::default()
                             };
                             Ok(BytesCodec::new_with(stream, config))

@@ -85,15 +85,21 @@ fn main() -> Result<(), ()> {
 
                     let w = std::thread::spawn(move || {
                         let payload = vec![0].repeat(size);
-                        for _ in 0..count {
-                            w.send(Binary, &payload[..]).unwrap();
+                        for i in 0..count {
+                            if w.send(Binary, &payload[..]).is_err() {
+                                println!("send error on {i}");
+                                break;
+                            }
                         }
-                        w.flush().unwrap();
-                        w.send(Close, 1000u16.to_be_bytes().as_slice()).unwrap();
+                        w.flush().ok();
+                        w.send(Close, 1000u16.to_be_bytes().as_slice()).ok();
                     });
                     let r = std::thread::spawn(move || {
-                        for _ in 0..count {
-                            r.receive().unwrap();
+                        for i in 0..count {
+                            if r.receive().is_err() {
+                                println!("recv error on {i}");
+                                break;
+                            }
                         }
                     });
                     r.join().and_then(|_| w.join()).unwrap();
@@ -138,7 +144,7 @@ fn parse_window(s: &str) -> Result<WindowBit, String> {
     WindowBit::try_from(v).map_err(|e| e.to_string())
 }
 
-use tabled::{Table, Tabled, settings::Style};
+use tabled::{settings::Style, Table, Tabled};
 
 #[derive(Tabled, PartialEq, PartialOrd)]
 struct Record {

@@ -1,6 +1,6 @@
 [package]
 name = "ws-tool"
-version = "0.8.1"
+version = "0.9.0"
 authors = ["PrivateRookie <996514515@qq.com>"]
 edition = "2021"
 description = "an easy to use websocket tool"
@@ -10,8 +10,8 @@ homepage = "https://github.com/PrivateRookie/ws-tool"
 repository = "https://github.com/PrivateRookie/ws-tool"
 keywords = ["websocket", "proxy", "network"]
 
-# [profile.release]
-# debug = true
+#[profile.release]
+#debug = true
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -61,6 +61,7 @@ async_tls_rustls = [
 deflate = ["libz-sys"]
 deflate_static = ["libz-sys/static"]
 deflate_ng = ["libz-sys/zlib-ng"]
+simd = []
 
 [dev-dependencies]
 fastrand = "2.0.0"

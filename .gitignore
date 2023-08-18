@@ -9,3 +9,4 @@ certs
 test_reports
 bench_data
 perf.data*
+/tmp

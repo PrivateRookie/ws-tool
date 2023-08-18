@@ -1,4 +1,4 @@
-use crate::codec::{apply_mask, apply_mask_fast32};
+use crate::codec::apply_mask;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::fmt::Debug;
 
@@ -78,12 +78,13 @@ impl OpCode {
     }
 }
 
+#[inline]
 pub(crate) fn parse_opcode(val: u8) -> OpCode {
     unsafe { std::mem::transmute(val & 0b00001111) }
 }
 
 #[inline]
-pub(crate) const fn get_bit(source: &[u8], byte_idx: usize, bit_idx: u8) -> bool {
+pub(crate) fn get_bit(source: &[u8], byte_idx: usize, bit_idx: u8) -> bool {
     let mask = match bit_idx {
         0 => 128,
         1 => 64,
@@ -95,7 +96,7 @@ pub(crate) const fn get_bit(source: &[u8], byte_idx: usize, bit_idx: u8) -> bool
         7 => 1,
         _ => unreachable!(),
     };
-    source[byte_idx] & mask == mask
+    unsafe { *source.get_unchecked(byte_idx) & mask == mask }
 }
 
 #[inline]
@@ -163,7 +164,7 @@ macro_rules! impl_get {
         /// return frame opcode
         #[inline]
         pub fn opcode(&self) -> OpCode {
-            parse_opcode(self.0[0])
+            parse_opcode(unsafe { *self.0.get_unchecked(0) })
         }
 
         /// get mask bit value
@@ -173,37 +174,37 @@ macro_rules! impl_get {
         }
 
         #[inline]
-        fn frame_sep(&self) -> (usize, u64) {
+        fn len_bytes(&self) -> usize {
             let header = &self.0;
-            let  len = header[1] & 0b01111111;
-            match len {
-                0..=125 => (1, len as u64),
-                126 => {
-                    let mut arr = [0u8; 2];
-                    arr[0] = header[2];
-                    arr[1] = header[3];
-                    (1 + 2, u16::from_be_bytes(arr) as u64)
-                }
-                127 => {
-                    let mut arr = [0u8; 8];
-                    arr[..8].copy_from_slice(&header[2..(8 + 2)]);
-                    (1 + 8, u64::from_be_bytes(arr))
-                }
-                _ => unreachable!(),
+            match header[1] {
+                0..=125 | 128..=253 => 1,
+                126 | 254 => 3,
+                127 | 255 => 9,
             }
         }
 
         /// return **payload** len
         #[inline]
         pub fn payload_len(&self) -> u64 {
-            self.frame_sep().1
+            let header = &self.0;
+            match header[1] {
+                len @ (0..=125 | 128..=253) => (len & 127) as u64,
+                126 | 254 => {
+                    assert!(header.len() >= 4);
+                    u16::from_be_bytes((&header[2..4]).try_into().unwrap()) as u64
+                }
+                127 | 255 => {
+                    assert!(header.len() >= 10);
+                    u64::from_be_bytes((&header[2..(8 + 2)]).try_into().unwrap())
+                }
+            }
         }
 
         /// get frame mask key
         #[inline]
         pub fn masking_key(&self) -> Option<[u8; 4]> {
             if self.masked() {
-                let len_occupied = self.frame_sep().0;
+                let len_occupied = self.len_bytes();
                 let mut arr = [0u8; 4];
                 arr.copy_from_slice(&self.0[(1 + len_occupied)..(5 + len_occupied)]);
                 Some(arr)
@@ -211,23 +212,10 @@ macro_rules! impl_get {
                 None
             }
         }
-
-        /// return (headerlen, the whole frame len)
-        #[inline]
-        pub fn payload_idx(&self) -> (usize, usize) {
-            let mut start_idx = 1;
-            let (len_occupied, len) = self.frame_sep();
-            start_idx += len_occupied;
-            if self.masked() {
-                start_idx += 4;
-            }
-            (start_idx, start_idx + (len as usize))
-        }
     };
 }
 
 /// get expected header len
-#[allow(clippy::too_many_arguments)]
 pub fn header_len(mask: bool, payload_len: u64) -> usize {
     let mut header_len = 1;
     if mask {
@@ -243,6 +231,29 @@ pub fn header_len(mask: bool, payload_len: u64) -> usize {
     header_len
 }
 
+#[inline]
+const fn first_byte(fin: bool, rsv1: bool, rsv2: bool, rsv3: bool, opcode: OpCode) -> u8 {
+    let leading = match (fin, rsv1, rsv2, rsv3) {
+        (true, true, true, true) => 0b1111_0000,
+        (true, true, true, false) => 0b1110_0000,
+        (true, true, false, true) => 0b1101_0000,
+        (true, true, false, false) => 0b1100_0000,
+        (true, false, true, true) => 0b1011_0000,
+        (true, false, true, false) => 0b1010_0000,
+        (true, false, false, true) => 0b1001_0000,
+        (true, false, false, false) => 0b1000_0000,
+        (false, true, true, true) => 0b0111_0000,
+        (false, true, true, false) => 0b0110_0000,
+        (false, true, false, true) => 0b0101_0000,
+        (false, true, false, false) => 0b0100_0000,
+        (false, false, true, true) => 0b0011_0000,
+        (false, false, true, false) => 0b0010_0000,
+        (false, false, false, true) => 0b0001_0000,
+        (false, false, false, false) => 0b0000_0000,
+    };
+    leading | opcode as u8
+}
+
 /// write header without allocation
 #[allow(clippy::too_many_arguments)]
 pub fn ctor_header<M: Into<Option<[u8; 4]>>>(
@@ -255,7 +266,6 @@ pub fn ctor_header<M: Into<Option<[u8; 4]>>>(
     opcode: OpCode,
     payload_len: u64,
 ) -> &[u8] {
-    // assert!(buf.len() >= 14);
     let mask = mask_key.into();
     let mut header_len = 1;
     if mask.is_some() {
@@ -273,12 +283,7 @@ pub fn ctor_header<M: Into<Option<[u8; 4]>>>(
         buf[2..10].copy_from_slice(&payload_len.to_be_bytes());
         header_len += 9;
     }
-    buf[0] = 0;
-    buf[0] |= opcode as u8;
-    set_bit(buf, 0, 0, fin);
-    set_bit(buf, 0, 1, rsv1);
-    set_bit(buf, 0, 2, rsv2);
-    set_bit(buf, 0, 3, rsv3);
+    buf[0] = first_byte(fin, rsv1, rsv2, rsv3, opcode);
     if let Some(key) = mask {
         set_bit(buf, 1, 0, true);
         buf[(header_len - 4)..header_len].copy_from_slice(&key);
@@ -444,18 +449,14 @@ impl Header {
     ) -> Self {
         let mask = mask_key.into();
         let len = header_len(mask.is_some(), payload_len);
-        let mut buf = BytesMut::new();
-        buf.resize(len, 0);
+        assert!(len >= 2);
+        let mut buf = BytesMut::zeroed(len);
+        buf[0] = first_byte(fin, rsv1, rsv2, rsv3, opcode);
         let mut header = Self(buf);
-        header.set_fin(fin);
-        header.set_rsv1(rsv1);
-        header.set_rsv2(rsv2);
-        header.set_rsv3(rsv3);
-        header.set_opcode(opcode);
         header.set_payload_len(payload_len);
         if let Some(mask) = mask {
             header.set_mask(true);
-            header.0.extend_from_slice(&mask);
+            header.0[(len - 4)..len].copy_from_slice(&mask);
         }
         header
     }
@@ -536,11 +537,12 @@ impl OwnedFrame {
     }
 
     /// unmask frame if masked
+    #[inline]
     pub fn unmask(&mut self) -> Option<[u8; 4]> {
         if let Some(mask) = self.header.masking_key() {
-            apply_mask_fast32(&mut self.payload, mask);
+            apply_mask(&mut self.payload, mask);
             self.header.set_mask(false);
-            self.header.0.resize(self.header.0.len() - 4, 0);
+            self.header.0.truncate(self.header.0.len() - 4);
             Some(mask)
         } else {
             None
@@ -554,7 +556,7 @@ impl OwnedFrame {
         self.unmask();
         self.header.set_mask(true);
         self.header.0.extend_from_slice(&mask);
-        apply_mask_fast32(&mut self.payload, mask);
+        apply_mask(&mut self.payload, mask);
     }
 
     /// extend frame payload
@@ -573,21 +575,25 @@ impl OwnedFrame {
     }
 
     /// get frame header
+    #[inline]
     pub fn header(&self) -> &Header {
         &self.header
     }
 
     /// get mutable frame header
+    #[inline]
     pub fn header_mut(&mut self) -> &mut Header {
         &mut self.header
     }
 
     /// get payload
+    #[inline]
     pub fn payload(&self) -> &BytesMut {
         &self.payload
     }
 
     /// consume frame return header and payload
+    #[inline]
     pub fn parts(self) -> (Header, BytesMut) {
         (self.header, self.payload)
     }
