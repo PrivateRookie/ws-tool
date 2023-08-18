@@ -9,6 +9,7 @@
         "permessage",
         "rustls",
         "rutls",
+        "simd",
         "sproxy",
         "thiserror",
         "tungstenite",

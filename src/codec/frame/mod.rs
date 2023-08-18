@@ -83,10 +83,17 @@ impl Default for FrameConfig {
 /// apply websocket mask to buf by given key
 #[inline]
 pub fn apply_mask(buf: &mut [u8], mask: [u8; 4]) {
-    // apply_mask_fast32(buf, mask)
-    apply_mask_simd(buf, mask)
+    #[cfg(feature = "simd")]
+    {
+        apply_mask_simd(buf, mask)
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        apply_mask_fast32(buf, mask)
+    }
 }
 
+#[cfg(feature = "simd")]
 fn apply_mask_simd(buf: &mut [u8], mask: [u8; 4]) {
     use std::simd::*;
     match buf.len() {
