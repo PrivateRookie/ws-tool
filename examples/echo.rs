@@ -69,7 +69,6 @@ async fn run() -> Result<(), ()> {
                 if item.data == "quit" {
                     break;
                 }
-                client.send((1000u16, "done".into())).await.ok();
                 input.clear()
             }
             Err(e) => {
@@ -78,5 +77,6 @@ async fn run() -> Result<(), ()> {
             }
         }
     }
+    client.send((1000u16, "done".into())).await.ok();
     Ok(())
 }

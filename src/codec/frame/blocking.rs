@@ -135,7 +135,9 @@ impl FrameWriteState {
                         chunk.len() as u64,
                     )
                     .len();
-                    apply_mask(&mut self.buf[(s_idx + header_len)..], mask);
+                    let slice = &mut self.buf[(s_idx + header_len)..];
+                    slice.copy_from_slice(chunk);
+                    apply_mask(slice, mask);
                 });
                 stream.write_all(&self.buf[..total_bytes])?;
             } else {
@@ -192,7 +194,8 @@ impl FrameWriteState {
             if self.buf.len() < payload.len() {
                 self.buf.resize(payload.len(), 0)
             }
-            apply_mask(&mut self.buf, mask);
+            self.buf[..(payload.len())].copy_from_slice(payload);
+            apply_mask(&mut self.buf[..(payload.len())], mask);
             let num = stream.write_vectored(&[
                 IoSlice::new(header),
                 IoSlice::new(&self.buf[..(payload.len())]),
@@ -213,13 +216,10 @@ impl FrameWriteState {
                 opcode,
                 payload.len() as u64,
             );
-            if self.buf.len() < payload.len() {
-                self.buf.resize(payload.len(), 0)
-            }
-            let num = stream.write_vectored(&[
-                IoSlice::new(header),
-                IoSlice::new(&self.buf[..(payload.len())]),
-            ])?;
+            // if self.buf.len() < payload.len() {
+            //     self.buf.resize(payload.len(), 0)
+            // }
+            let num = stream.write_vectored(&[IoSlice::new(header), IoSlice::new(payload)])?;
             let remain = total_bytes - num;
             if remain > 0 {
                 stream.write_all(&self.buf[(payload.len() - remain)..(payload.len())])?;

@@ -389,7 +389,7 @@ impl Header {
     /// set header payload lens
     /// TODO do not overlay mask key
     #[inline]
-    pub fn set_payload_len(&mut self, len: u64) -> usize {
+    pub fn set_payload_len(&mut self, len: u64) {
         let mask = self.masking_key();
         let mask_len = mask.as_ref().map(|_| 4).unwrap_or_default();
         let header = &mut self.0;
@@ -403,7 +403,6 @@ impl Header {
                 if let Some(mask) = mask {
                     header[idx..].copy_from_slice(&mask);
                 }
-                1
             }
             126..=65535 => {
                 leading_byte &= 128;
@@ -416,7 +415,6 @@ impl Header {
                 if let Some(mask) = mask {
                     header[idx..].copy_from_slice(&mask);
                 }
-                3
             }
             _ => {
                 leading_byte &= 128;
@@ -428,7 +426,6 @@ impl Header {
                 if let Some(mask) = mask {
                     header[idx..].copy_from_slice(&mask);
                 }
-                9
             }
         }
     }
@@ -453,9 +450,9 @@ impl Header {
         let mut buf = BytesMut::zeroed(len);
         buf[0] = first_byte(fin, rsv1, rsv2, rsv3, opcode);
         let mut header = Self(buf);
+        header.set_mask(mask.is_some());
         header.set_payload_len(payload_len);
         if let Some(mask) = mask {
-            header.set_mask(true);
             header.0[(len - 4)..len].copy_from_slice(&mask);
         }
         header
