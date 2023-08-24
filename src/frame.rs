@@ -187,6 +187,7 @@ macro_rules! impl_get {
         #[inline]
         pub fn payload_len(&self) -> u64 {
             let header = &self.0;
+            assert!(header.len() >= 1);
             match header[1] {
                 len @ (0..=125 | 128..=253) => (len & 127) as u64,
                 126 | 254 => {
@@ -430,7 +431,8 @@ impl Header {
         }
     }
 
-    pub(crate) fn raw(data: BytesMut) -> Self {
+    /// construct header without checking
+    pub fn raw(data: BytesMut) -> Self {
         Self(data)
     }
 
@@ -471,12 +473,13 @@ pub enum Frame<'a> {
 /// owned frame
 #[derive(Debug, Clone)]
 pub struct OwnedFrame {
-    header: Header,
-    payload: BytesMut,
+    pub(crate) header: Header,
+    pub(crate) payload: BytesMut,
 }
 
 impl OwnedFrame {
     /// construct new owned frame
+    #[inline]
     pub fn new(code: OpCode, mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
         let header = Header::new(true, false, false, false, mask, code, data.len() as u64);
         let mut payload = BytesMut::with_capacity(data.len());
@@ -490,33 +493,39 @@ impl OwnedFrame {
     /// use constructed header and payload
     ///
     /// **NOTE**: this will not check header and payload
+    #[inline]
     pub fn with_raw(header: Header, payload: BytesMut) -> Self {
         Self { header, payload }
     }
 
     /// helper function to construct a text frame
+    #[inline]
     pub fn text_frame(mask: impl Into<Option<[u8; 4]>>, data: &str) -> Self {
         Self::new(OpCode::Text, mask, data.as_bytes())
     }
 
     /// helper function to construct a binary frame
+    #[inline]
     pub fn binary_frame(mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
         Self::new(OpCode::Binary, mask, data)
     }
 
     /// helper function to construct a ping frame
+    #[inline]
     pub fn ping_frame(mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
         assert!(data.len() <= 125);
         Self::new(OpCode::Ping, mask, data)
     }
 
     /// helper function to construct a pong frame
+    #[inline]
     pub fn pong_frame(mask: impl Into<Option<[u8; 4]>>, data: &[u8]) -> Self {
         assert!(data.len() <= 125);
         Self::new(OpCode::Pong, mask, data)
     }
 
     /// helper function to construct a close frame
+    #[inline]
     pub fn close_frame(
         mask: impl Into<Option<[u8; 4]>>,
         code: impl Into<Option<u16>>,

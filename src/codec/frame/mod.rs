@@ -1,5 +1,5 @@
 use crate::errors::{ProtocolError, WsError};
-use crate::frame::{get_bit, Header, HeaderView, OpCode, OwnedFrame};
+use crate::frame::{get_bit, Header, OpCode, OwnedFrame};
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
 use bytes::BytesMut;
 use std::fmt::Debug;
@@ -200,31 +200,30 @@ impl FrameReadState {
         self.read_data[0] >> 4
     }
 
-    /// try to parse frame header in buffer, return expected payload
+    /// try to parse frame header in buffer, return (header_len, payload_len, header_len + payload_len)
     #[inline]
-    pub fn parse_frame_header(&mut self) -> Result<usize, WsError> {
+    pub fn parse_frame_header(&mut self) -> Result<(usize, usize, usize), WsError> {
         fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
-            let len = source[1] & 0b01111111;
-            match len {
-                0..=125 => Ok((1, len as usize)),
-                126 => {
+            match source[1] {
+                len @ (0..=125 | 128..=253) => Ok((1, (len & 127) as usize)),
+                126 | 254 => {
                     if source.len() < 4 {
                         return Err(ProtocolError::InsufficientLen(source.len()));
                     }
-                    let mut arr = [0u8; 2];
-                    arr[0] = source[2];
-                    arr[1] = source[3];
-                    Ok((1 + 2, u16::from_be_bytes(arr) as usize))
+                    Ok((
+                        1 + 2,
+                        u16::from_be_bytes((&source[2..4]).try_into().unwrap()) as usize,
+                    ))
                 }
-                127 => {
+                127 | 255 => {
                     if source.len() < 10 {
                         return Err(ProtocolError::InsufficientLen(source.len()));
                     }
-                    let mut arr = [0u8; 8];
-                    arr[..8].copy_from_slice(&source[2..(8 + 2)]);
-                    Ok((1 + 8, usize::from_be_bytes(arr)))
+                    Ok((
+                        1 + 8,
+                        usize::from_be_bytes((&source[2..(8 + 2)]).try_into().unwrap()),
+                    ))
                 }
-                _ => Err(ProtocolError::InvalidLeadingLen(len)),
             }
         }
 
@@ -247,29 +246,29 @@ impl FrameReadState {
                 error: ProtocolError::PayloadTooLarge(max_payload_size),
             });
         }
-        let mut expected_len = 1 + len_occ_bytes + payload_len;
         let mask = get_bit(&self.read_data, 1, 0);
-        if mask {
-            expected_len += 4;
-        };
-        Ok(expected_len)
+        let header_len = 1 + len_occ_bytes + if mask { 4 } else { 0 };
+        Ok((header_len, payload_len, header_len + payload_len))
     }
 
     /// get a frame and reset state
     #[inline]
-    pub fn consume_frame(&mut self, len: usize) -> (bool, OpCode, u64, OwnedFrame) {
-        let mut data = self.read_data.split_to(len);
-        let view = HeaderView(&data);
-        let fin = view.fin();
-        let code = view.opcode();
-        let payload_len = view.payload_len();
-        let header = data.split_to(data.len() - payload_len as usize);
-        self.read_idx -= len;
-        let mut frame = OwnedFrame::with_raw(Header::raw(header), data);
+    pub fn consume_frame(
+        &mut self,
+        header_len: usize,
+        payload_len: usize,
+        total_len: usize,
+    ) -> (bool, OpCode, u64, OwnedFrame) {
+        let header = Header(self.read_data.split_to(header_len));
+        let payload = self.read_data.split_to(payload_len);
+        let fin = header.fin();
+        let code = header.opcode();
+        self.read_idx -= total_len;
+        let mut frame = OwnedFrame { header, payload };
         if self.config.auto_unmask {
             frame.unmask();
         }
-        (fin, code, payload_len, frame)
+        (fin, code, payload_len as u64, frame)
     }
 
     /// This method is technically private, but custom parsers are allowed to use it.
@@ -338,7 +337,17 @@ impl FrameReadState {
                 }
                 Ok(unmasked_frame)
             }
-            OpCode::Text | OpCode::Binary => {
+            OpCode::Binary => {
+                if self.fragmented {
+                    return Err(WsError::ProtocolError {
+                        close_code: 1002,
+                        error: ProtocolError::NotContinueFrameAfterFragmented,
+                    });
+                }
+                self.fragmented = !fin;
+                Ok(unmasked_frame)
+            }
+            OpCode::Text => {
                 if self.fragmented {
                     return Err(WsError::ProtocolError {
                         close_code: 1002,

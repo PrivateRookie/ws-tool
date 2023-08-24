@@ -36,16 +36,14 @@ impl FrameReadState {
         &mut self,
         stream: &mut S,
         size: usize,
-    ) -> IOResult<usize> {
-        let start = self.read_idx;
+    ) -> IOResult<()> {
         if self.read_idx + size > self.read_data.len() {
             self.read_data.resize(self.read_idx + size, 0)
         }
         while self.read_idx < size {
             self.async_poll(stream).await?;
         }
-        let num = self.read_idx - start;
-        Ok(num)
+        Ok(())
     }
 
     #[inline]
@@ -56,9 +54,9 @@ impl FrameReadState {
         while !self.is_header_ok() {
             self.async_poll(stream).await?;
         }
-        let len = self.parse_frame_header()?;
-        self.async_poll_one_frame(stream, len).await?;
-        Ok(self.consume_frame(len))
+        let (header_len, payload_len, total_len) = self.parse_frame_header()?;
+        self.async_poll_one_frame(stream, total_len).await?;
+        Ok(self.consume_frame(header_len, payload_len, total_len))
     }
 
     /// **NOTE** masked frame has already been unmasked
