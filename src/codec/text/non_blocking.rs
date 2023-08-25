@@ -21,8 +21,12 @@ macro_rules! impl_recv {
             let op_code = header.opcode();
             // TODO check protocol error
             let close_code = if op_code == OpCode::Close && data.len() >= 2 {
-                let close_code = data.get_u16();
-                Some(close_code)
+                let code = if data.len() >= 2 {
+                    data.get_u16()
+                } else {
+                    1000
+                };
+                Some(code)
             } else {
                 None
             };

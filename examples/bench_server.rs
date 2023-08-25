@@ -46,7 +46,6 @@ fn main() -> Result<(), ()> {
                             let config = FrameConfig {
                                 mask_send_frame: false,
                                 resize_size: buf,
-                                merge_frame: false,
                                 ..Default::default()
                             };
                             Ok(BytesCodec::new_with(stream, config))
@@ -78,9 +77,7 @@ fn main() -> Result<(), ()> {
                     }
                 }
             }
-            tracing::info!("one conn down");
-        })
-        .join()
-        .unwrap();
+            tracing::info!("{:?} conn down", addr);
+        });
     }
 }

@@ -96,16 +96,15 @@ pub fn apply_mask(buf: &mut [u8], mask: [u8; 4]) {
 #[cfg(feature = "simd")]
 fn apply_mask_simd(buf: &mut [u8], mask: [u8; 4]) {
     use std::simd::*;
-    match buf.len() {
-        0..=3 => apply_mask_fallback(buf, mask),
-        4..=63 => apply_mask_fast32(buf, mask),
-        _ => {
-            let mask: [u8; 64] = std::array::from_fn(|idx| mask[idx % 3]);
-            let mut buf: Simd<u8, 64> = Simd::from_slice(buf);
-            let mask = Simd::from(mask);
-            buf ^= mask;
-        }
-    }
+    let total_len = buf.len();
+    let (prefix, middle, suffix) = buf.as_simd_mut::<64>();
+    apply_mask_fast32(prefix, mask);
+    let middle_mask: [u8; 64] = std::array::from_fn(|idx| mask[(idx + prefix.len()) % 4]);
+    let middle_mask = Simd::from_array(middle_mask);
+    middle.iter_mut().for_each(|m| *m ^= middle_mask);
+    let suffix_mask: [u8; 4] =
+        std::array::from_fn(|idx| mask[(idx + total_len - suffix.len()) % 4]);
+    apply_mask_fast32(suffix, suffix_mask);
 }
 
 #[inline]

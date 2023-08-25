@@ -220,7 +220,7 @@ impl FrameWriteState {
             let num = stream.write_vectored(&[IoSlice::new(header), IoSlice::new(payload)])?;
             let remain = total_bytes - num;
             if remain > 0 {
-                stream.write_all(&self.buf[(payload.len() - remain)..(payload.len())])?;
+                stream.write_all(&payload[(payload.len() - remain)..])?;
             }
         };
 

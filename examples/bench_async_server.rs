@@ -1,5 +1,6 @@
 use clap::Parser;
 use tokio::io::BufWriter;
+use tracing::info;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{default_handshake_handler, AsyncBytesCodec, FrameConfig},
@@ -26,6 +27,7 @@ struct Args {
 
     /// tokio runtime worker, if not not use current thread runtime, else
     /// use multi thread runtime
+    #[arg(short, long)]
     jobs: Option<usize>,
 }
 
@@ -38,11 +40,14 @@ fn main() {
         .expect("failed to init log");
     tracing::info!("binding on {}:{}", args.host, args.port);
     let rt = match args.jobs {
-        Some(jobs) => tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(jobs)
-            .build()
-            .unwrap(),
+        Some(jobs) => {
+            info!("use multi thread");
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(jobs)
+                .build()
+                .unwrap()
+        }
         None => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -69,7 +74,6 @@ async fn run(args: Args) {
                             let config = FrameConfig {
                                 mask_send_frame: false,
                                 resize_size: buf,
-                                resize_thresh: buf / 3,
                                 ..Default::default()
                             };
                             Ok(AsyncBytesCodec::new_with(stream, config))
@@ -104,7 +108,7 @@ async fn run(args: Args) {
                     }
                 }
             }
-            tracing::info!("one conn down");
+            tracing::info!("{:?} conn down", addr);
         });
     }
 }

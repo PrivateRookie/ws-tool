@@ -20,7 +20,12 @@ macro_rules! impl_recv {
             let (header, mut data) = frame.parts();
             let op_code = header.opcode();
             let close_code = if op_code == OpCode::Close {
-                Some(data.get_u16())
+                let code = if data.len() >= 2 {
+                    data.get_u16()
+                } else {
+                    1000
+                };
+                Some(code)
             } else {
                 None
             };

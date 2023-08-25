@@ -235,7 +235,7 @@ impl FrameWriteState {
             let remain = total_bytes - num;
             if remain > 0 {
                 stream
-                    .write_all(&self.buf[(payload.len() - remain)..(payload.len())])
+                    .write_all(&payload[(payload.len() - remain)..])
                     .await?;
             }
         };
