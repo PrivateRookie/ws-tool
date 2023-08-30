@@ -59,7 +59,7 @@ pub struct FrameConfig {
     pub validate_utf8: ValidateUtf8Policy,
     /// resize size of read buf, default 4K
     pub resize_size: usize,
-    /// if avalible len < resize, resize read buf, default 1K
+    /// if available len < resize, resize read buf, default 1K
     pub resize_thresh: usize,
 }
 
@@ -97,9 +97,9 @@ pub fn apply_mask(buf: &mut [u8], mask: [u8; 4]) {
 fn apply_mask_simd(buf: &mut [u8], mask: [u8; 4]) {
     use std::simd::*;
     let total_len = buf.len();
-    let (prefix, middle, suffix) = buf.as_simd_mut::<64>();
+    let (prefix, middle, suffix) = buf.as_simd_mut::<32>();
     apply_mask_fast32(prefix, mask);
-    let middle_mask: [u8; 64] = std::array::from_fn(|idx| mask[(idx + prefix.len()) % 4]);
+    let middle_mask: [u8; 32] = std::array::from_fn(|idx| mask[(idx + prefix.len()) % 4]);
     let middle_mask = Simd::from_array(middle_mask);
     middle.iter_mut().for_each(|m| *m ^= middle_mask);
     let suffix_mask: [u8; 4] =

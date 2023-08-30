@@ -9,8 +9,8 @@ use clap::Parser;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{DeflateCodec, PMDConfig, WindowBit},
-    frame::OpCode::{Binary, Close},
+    codec::{BytesCodec, PMDConfig, WindowBit},
+    frame::OpCode::Close,
     stream::BufStream,
     ClientBuilder,
 };
@@ -78,7 +78,7 @@ fn main() -> Result<(), ()> {
                             } else {
                                 BufStream::new(stream)
                             };
-                            DeflateCodec::check_fn(key, resp, stream)
+                            BytesCodec::check_fn(key, resp, stream)
                         })
                         .unwrap();
                     let (mut r, mut w) = client.split();
@@ -86,13 +86,15 @@ fn main() -> Result<(), ()> {
                     let w = std::thread::spawn(move || {
                         let payload = vec![0].repeat(size);
                         for i in 0..count {
-                            if w.send(Binary, &payload[..]).is_err() {
+                            if w.send(&payload[..]).is_err() {
                                 println!("send error on {i}");
                                 break;
                             }
+                            // std::thread::sleep(std::time::Duration::from_micros(100));
                         }
                         w.flush().ok();
-                        w.send(Close, 1000u16.to_be_bytes().as_slice()).ok();
+                        // w.send((1000u16, b"")).ok();
+                        w.send((Close, 1000u16.to_be_bytes().as_slice())).ok();
                     });
                     let r = std::thread::spawn(move || {
                         for i in 0..count {

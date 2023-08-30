@@ -55,18 +55,19 @@ impl FrameReadState {
 
     /// **NOTE** masked frame has already been unmasked
     pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
-        loop {
-            let (fin, code, payload_len, frame) = self.read_one_frame(stream)?;
-            if self.config.merge_frame {
+        if self.config.merge_frame {
+            loop {
+                let (fin, code, payload_len, frame) = self.read_one_frame(stream)?;
                 if let Some(frame) = self
                     .check_frame(fin, code, payload_len, frame)
                     .and_then(|frame| self.merge_frame(fin, code, frame))?
                 {
                     break Ok(frame);
                 }
-            } else {
-                break self.check_frame(fin, code, payload_len, frame);
             }
+        } else {
+            let (fin, code, payload_len, frame) = self.read_one_frame(stream)?;
+            self.check_frame(fin, code, payload_len, frame)
         }
     }
 }

@@ -317,7 +317,7 @@ impl<'a> DefaultCode for BorrowedFrame<'a> {
 
 /// generic message receive/send from websocket stream
 #[derive(Debug)]
-pub struct Message<T: AsRef<[u8]> + DefaultCode> {
+pub struct Message<T> {
     /// opcode of message
     ///
     /// see all codes in [overview](https://datatracker.ietf.org/doc/html/rfc6455#section-5.2) of opcode
@@ -353,7 +353,7 @@ impl<T: AsRef<[u8]> + DefaultCode> From<(OpCode, T)> for Message<T> {
     }
 }
 
-impl<T: AsRef<[u8]> + DefaultCode> From<(u16, T)> for Message<T> {
+impl<T: AsRef<[u8]>> From<(u16, T)> for Message<T> {
     fn from(data: (u16, T)) -> Self {
         Self {
             code: OpCode::Close,

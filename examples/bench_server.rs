@@ -36,28 +36,32 @@ fn main() -> Result<(), ()> {
     let listener = std::net::TcpListener::bind(format!("{}:{}", args.host, args.port)).unwrap();
     loop {
         let (stream, addr) = listener.accept().unwrap();
+        stream.set_nodelay(true).unwrap();
         std::thread::spawn(move || {
             tracing::info!("got connect from {:?}", addr);
             match args.buffer {
                 Some(buf) => {
                     let mut server =
                         ServerBuilder::accept(stream, default_handshake_handler, |_req, stream| {
-                            let stream = BufStream::with_capacity(buf, buf, stream);
+                            let stream = BufStream::with_capacity(buf, buf / 2, stream);
                             let config = FrameConfig {
                                 mask_send_frame: false,
                                 resize_size: buf,
+                                merge_frame: false,
                                 ..Default::default()
                             };
                             Ok(BytesCodec::new_with(stream, config))
                         })
                         .unwrap();
                     loop {
-                        let msg = server.receive().unwrap();
-                        if msg.code.is_close() {
-                            break;
+                        match server.receive() {
+                            Ok(msg) => {
+                                server.send(&msg.data[..]).unwrap();
+                            }
+                            Err(_) => {
+                                break;
+                            }
                         }
-
-                        server.send(&msg.data[..]).unwrap();
                     }
                 }
                 None => {

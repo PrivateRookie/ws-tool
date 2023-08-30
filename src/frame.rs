@@ -343,6 +343,11 @@ pub struct Header(pub(crate) BytesMut);
 
 impl Header {
     impl_get! {}
+    /// get header as bytes
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
     #[inline]
     fn set_bit(&mut self, byte_idx: usize, bit_idx: u8, val: bool) {
         set_bit(&mut self.0, byte_idx, bit_idx, val)
