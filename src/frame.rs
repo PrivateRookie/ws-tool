@@ -331,7 +331,7 @@ fn test_header() {
 
 /// frame header
 #[derive(Debug, Clone, Copy)]
-pub struct HeaderView<'a>(pub(crate) &'a BytesMut);
+pub struct HeaderView<'a>(pub(crate) &'a [u8]);
 
 impl<'a> HeaderView<'a> {
     impl_get! {}
