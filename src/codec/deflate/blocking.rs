@@ -6,7 +6,7 @@ use rand::random;
 use crate::{
     codec::{apply_mask, FrameConfig, Split},
     errors::{ProtocolError, WsError},
-    frame::{ctor_header, OpCode, OwnedFrame},
+    frame::{ctor_header, OpCode, OwnedFrame, SimplifiedHeader},
     protocol::standard_handshake_resp_check,
 };
 
@@ -149,11 +149,11 @@ impl DeflateWriteState {
 }
 
 impl DeflateReadState {
-    fn receive_one<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
-        let frame = self.read_state.receive(stream)?;
+    fn receive_one<S: Read>(&mut self, stream: &mut S) -> Result<(SimplifiedHeader, &[u8]), WsError> {
+        let (header, data) = self.read_state.receive(stream)?;
         // let frame = self.frame_codec.receive()?;
-        let compressed = frame.header().rsv1();
-        let is_data_frame = frame.header().opcode().is_data();
+        let compressed = header.rsv1;
+        let is_data_frame = header.code.is_data();
         if compressed && !is_data_frame {
             return Err(WsError::ProtocolError {
                 close_code: 1002,
@@ -161,7 +161,7 @@ impl DeflateReadState {
             });
         }
         if !is_data_frame {
-            return Ok(frame);
+            return Ok((header, data));
         }
         let frame: OwnedFrame = match self.de.as_mut() {
             Some(handler) => {
@@ -181,7 +181,7 @@ impl DeflateReadState {
                 OwnedFrame::new(header.opcode(), None, &decompressed[..])
             }
             None => {
-                if frame.header().rsv1() {
+                if header.rsv1 {
                     return Err(WsError::DeCompressFailed(
                         "extension not enabled but got compressed frame".into(),
                     ));

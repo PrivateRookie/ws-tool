@@ -3,7 +3,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{
         default_handshake_handler, BytesCodec, FrameConfig, FrameSend, FrameWriteState,
-        ReactorFrameRecv, ReactorRead, Split,
+        ReactorFrameRecv, NewFrameReadState, Split,
     },
     stream::BufStream,
     ServerBuilder,
@@ -55,7 +55,7 @@ fn main() -> Result<(), ()> {
                             };
                             let (r, w) = stream.split();
                             Ok((
-                                ReactorFrameRecv::new(r, ReactorRead::with_config(config.clone())),
+                                ReactorFrameRecv::new(r, NewFrameReadState::with_config(config.clone())),
                                 FrameSend::new(w, FrameWriteState::with_config(config)),
                             ))
                         })

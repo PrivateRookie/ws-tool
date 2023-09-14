@@ -154,7 +154,7 @@ impl DeflateReadState {
         &mut self,
         stream: &mut S,
     ) -> Result<OwnedFrame, WsError> {
-        let frame = self.read_state.async_receive(stream).await?;
+        let (header, data) = self.read_state.async_receive(stream).await?;
         // let frame = self.frame_codec.receive()?;
         let compressed = frame.header().rsv1();
         let is_data_frame = frame.header().opcode().is_data();

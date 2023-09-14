@@ -1,4 +1,4 @@
-use std::io::IoSlice;
+use std::{io::IoSlice, ops::Range};
 
 use bytes::BytesMut;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -7,7 +7,7 @@ use super::{apply_mask, FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     codec::Split,
     errors::WsError,
-    frame::{ctor_header, header_len, OpCode, OwnedFrame},
+    frame::{ctor_header, header_len, OpCode, OwnedFrame, SimplifiedHeader},
     protocol::standard_handshake_resp_check,
 };
 
@@ -16,12 +16,9 @@ type IOResult<T> = std::io::Result<T>;
 impl FrameReadState {
     #[inline]
     async fn async_poll<S: AsyncRead + Unpin>(&mut self, stream: &mut S) -> IOResult<usize> {
-        if self.read_idx + self.config.resize_thresh >= self.read_data.len() {
-            self.read_data
-                .resize(self.config.resize_size + self.read_data.len(), 0)
-        }
-        let count = stream.read(&mut self.read_data[self.read_idx..]).await?;
-        self.read_idx += count;
+        let buf = self.buf.prepare(self.config.resize_size);
+        let count = stream.read(buf).await?;
+        self.buf.produce(count);
         if count == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
@@ -37,11 +34,11 @@ impl FrameReadState {
         stream: &mut S,
         size: usize,
     ) -> IOResult<()> {
-        if self.read_idx + size > self.read_data.len() {
-            self.read_data.resize(self.read_idx + size, 0)
-        }
-        while self.read_idx < size {
-            self.async_poll(stream).await?;
+        let read_len = self.buf.ava_data().len();
+        if read_len < size {
+            let buf = self.buf.prepare(size - read_len);
+            stream.read_exact(buf).await?;
+            self.buf.produce(size - read_len);
         }
         Ok(())
     }
@@ -50,7 +47,7 @@ impl FrameReadState {
     async fn async_read_one_frame<S: AsyncRead + Unpin>(
         &mut self,
         stream: &mut S,
-    ) -> Result<(bool, OpCode, u64, OwnedFrame), WsError> {
+    ) -> Result<(SimplifiedHeader, Range<usize>), WsError> {
         while !self.is_header_ok() {
             self.async_poll(stream).await?;
         }
@@ -63,19 +60,26 @@ impl FrameReadState {
     pub async fn async_receive<S: AsyncRead + Unpin>(
         &mut self,
         stream: &mut S,
-    ) -> Result<OwnedFrame, WsError> {
-        loop {
-            let (fin, code, payload_len, frame) = self.async_read_one_frame(stream).await?;
-            if self.config.merge_frame {
-                if let Some(frame) = self
-                    .check_frame(fin, code, payload_len, frame)
-                    .and_then(|frame| self.merge_frame(fin, code, frame))?
+    ) -> Result<(SimplifiedHeader, &[u8]), WsError> {
+        if self.config.merge_frame {
+            loop {
+                let (mut header, range) = self.async_read_one_frame(stream).await?;
+                if let Some(merged) = self
+                    .check_frame(header, range.clone())
+                    .and_then(|_| self.merge_frame(header, range.clone()))?
                 {
-                    break Ok(frame);
+                    header.code = self.fragmented_type;
+                    if merged {
+                        break Ok((header, &self.fragmented_data));
+                    } else {
+                        break Ok((header, &self.buf.buf[range]));
+                    }
                 }
-            } else {
-                break self.check_frame(fin, code, payload_len, frame);
             }
+        } else {
+            let (header, range) = self.async_read_one_frame(stream).await?;
+            self.check_frame(header, range.clone())?;
+            Ok((header, &self.buf.buf[range]))
         }
     }
 }
@@ -269,7 +273,7 @@ impl<S: AsyncRead + Unpin> AsyncFrameRecv<S> {
     }
 
     /// receive a frame
-    pub async fn receive(&mut self) -> Result<OwnedFrame, WsError> {
+    pub async fn receive(&mut self) -> Result<(SimplifiedHeader, &[u8]), WsError> {
         self.read_state.async_receive(&mut self.stream).await
     }
 }
@@ -363,7 +367,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncFrameCodec<S> {
     }
 
     /// receive a frame
-    pub async fn receive(&mut self) -> Result<OwnedFrame, WsError> {
+    pub async fn receive(&mut self) -> Result<(SimplifiedHeader, &[u8]), WsError> {
         self.read_state.async_receive(&mut self.stream).await
     }
 

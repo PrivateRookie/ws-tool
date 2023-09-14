@@ -4,22 +4,62 @@ use super::{FrameConfig, FrameReadState, FrameWriteState};
 use crate::{
     codec::{apply_mask, Split},
     errors::WsError,
-    frame::{ctor_header, header_len, OpCode, OwnedFrame},
+    frame::{ctor_header, header_len, OpCode, OwnedFrame, SimplifiedHeader},
     protocol::standard_handshake_resp_check,
 };
-use std::io::{IoSlice, Read, Write};
+use std::{
+    io::{IoSlice, Read, Write},
+    ops::Range,
+};
 
 type IOResult<T> = std::io::Result<T>;
 
 impl FrameReadState {
-    #[inline]
-    fn poll<S: Read>(&mut self, stream: &mut S) -> IOResult<usize> {
-        if self.read_idx + self.config.resize_thresh >= self.read_data.len() {
-            self.read_data
-                .resize(self.config.resize_size + self.read_data.len(), 0)
+    /// **NOTE** masked frame has already been unmasked
+    pub fn receive<S: Read>(
+        &mut self,
+        stream: &mut S,
+    ) -> Result<(SimplifiedHeader, &[u8]), WsError> {
+        if self.config.merge_frame {
+            loop {
+                let (mut header, range) = self.read_one_frame(stream)?;
+                if let Some(merged) = self
+                    .check_frame(header, range.clone())
+                    .and_then(|_| self.merge_frame(header, range.clone()))?
+                {
+                    header.code = self.fragmented_type;
+                    if merged {
+                        break Ok((header, &self.fragmented_data));
+                    } else {
+                        break Ok((header, &self.buf.buf[range]));
+                    }
+                }
+            }
+        } else {
+            let (header, range) = self.read_one_frame(stream)?;
+            self.check_frame(header, range.clone())?;
+            Ok((header, &self.buf.buf[range]))
         }
-        let count = stream.read(&mut self.read_data[self.read_idx..])?;
-        self.read_idx += count;
+    }
+
+    #[inline]
+    fn read_one_frame<S: Read>(
+        &mut self,
+        stream: &mut S,
+    ) -> Result<(SimplifiedHeader, Range<usize>), WsError> {
+        while !self.is_header_ok() {
+            self.poll(stream)?;
+        }
+        let (header_len, payload_len, total_len) = self.parse_frame_header()?;
+        self.poll_one_frame(stream, total_len)?;
+        Ok(self.consume_frame(header_len, payload_len, total_len))
+    }
+
+    #[inline]
+    fn poll<S: Read>(&mut self, stream: &mut S) -> std::io::Result<usize> {
+        let buf = self.buf.prepare(self.config.resize_size);
+        let count = stream.read(buf)?;
+        self.buf.produce(count);
         if count == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
@@ -30,45 +70,14 @@ impl FrameReadState {
     }
 
     #[inline]
-    fn poll_one_frame<S: Read>(&mut self, stream: &mut S, size: usize) -> IOResult<()> {
-        if self.read_idx + size > self.read_data.len() {
-            self.read_data.resize(self.read_idx + size, 0)
-        }
-        while self.read_idx < size {
-            self.poll(stream)?;
+    fn poll_one_frame<S: Read>(&mut self, stream: &mut S, size: usize) -> std::io::Result<()> {
+        let read_len = self.buf.ava_data().len();
+        if read_len < size {
+            let buf = self.buf.prepare(size - read_len);
+            stream.read_exact(buf)?;
+            self.buf.produce(size - read_len);
         }
         Ok(())
-    }
-
-    #[inline]
-    fn read_one_frame<S: Read>(
-        &mut self,
-        stream: &mut S,
-    ) -> Result<(bool, OpCode, u64, OwnedFrame), WsError> {
-        while !self.is_header_ok() {
-            self.poll(stream)?;
-        }
-        let (header_len, payload_len, total_len) = self.parse_frame_header()?;
-        self.poll_one_frame(stream, total_len)?;
-        Ok(self.consume_frame(header_len, payload_len, total_len))
-    }
-
-    /// **NOTE** masked frame has already been unmasked
-    pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
-        if self.config.merge_frame {
-            loop {
-                let (fin, code, payload_len, frame) = self.read_one_frame(stream)?;
-                if let Some(frame) = self
-                    .check_frame(fin, code, payload_len, frame)
-                    .and_then(|frame| self.merge_frame(fin, code, frame))?
-                {
-                    break Ok(frame);
-                }
-            }
-        } else {
-            let (fin, code, payload_len, frame) = self.read_one_frame(stream)?;
-            self.check_frame(fin, code, payload_len, frame)
-        }
     }
 }
 
@@ -261,7 +270,7 @@ impl<S: Read> FrameRecv<S> {
     }
 
     /// receive a frame
-    pub fn receive(&mut self) -> Result<OwnedFrame, WsError> {
+    pub fn receive(&mut self) -> Result<(SimplifiedHeader, &[u8]), WsError> {
         self.read_state.receive(&mut self.stream)
     }
 }
@@ -353,7 +362,7 @@ impl<S: Read + Write> FrameCodec<S> {
     }
 
     /// receive a frame
-    pub fn receive(&mut self) -> Result<OwnedFrame, WsError> {
+    pub fn receive(&mut self) -> Result<(SimplifiedHeader, &[u8]), WsError> {
         self.read_state.receive(&mut self.stream)
     }
 

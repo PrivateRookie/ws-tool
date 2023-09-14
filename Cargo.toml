@@ -70,7 +70,6 @@ async_tls_native = [
 deflate = ["libz-sys"]
 deflate_static = ["libz-sys/static"]
 deflate_ng = ["libz-sys/zlib-ng"]
-simd = []
 
 [dev-dependencies]
 fastrand = "2.0.0"

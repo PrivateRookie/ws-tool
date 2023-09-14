@@ -3,6 +3,7 @@
 #![warn(missing_docs)]
 #![cfg_attr(docrs, feature(doc_auto_cfg))]
 #![cfg_attr(feature = "simd", feature(portable_simd))]
+#![feature(array_chunks)]
 
 use std::collections::HashMap;
 

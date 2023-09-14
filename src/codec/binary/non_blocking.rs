@@ -1,4 +1,4 @@
-use bytes::{Buf, BytesMut};
+use bytes::Buf;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
@@ -15,22 +15,21 @@ use crate::{
 macro_rules! impl_recv {
     () => {
         /// receive a message
-        pub async fn receive(&mut self) -> Result<Message<BytesMut>, WsError> {
-            let frame = self.frame_codec.receive().await?;
-            let (header, mut data) = frame.parts();
-            let code = header.opcode();
-            let close_code = if code == OpCode::Close {
+        pub async fn receive(&mut self) -> Result<Message<&[u8]>, WsError> {
+            let (header, mut data) = self.frame_codec.receive().await?;
+            let close_code = if header.code == OpCode::Close {
                 let code = if data.len() >= 2 {
                     data.get_u16()
                 } else {
                     1000
                 };
+                data = &data[2..];
                 Some(code)
             } else {
                 None
             };
             Ok(Message {
-                code,
+                code: header.code,
                 data,
                 close_code,
             })

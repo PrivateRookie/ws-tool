@@ -329,6 +329,33 @@ fn test_header() {
     }
 }
 
+/// header with less info
+#[derive(Debug, Clone, Copy)]
+pub struct SimplifiedHeader {
+    /// fin
+    pub fin: bool,
+    /// compressed bit
+    pub rsv1: bool,
+    /// reserved
+    pub rsv2: bool,
+    /// reserved
+    pub rsv3: bool,
+    /// frame type
+    pub code: OpCode,
+}
+
+impl<'a> From<HeaderView<'a>> for SimplifiedHeader {
+    fn from(value: HeaderView<'a>) -> Self {
+        Self {
+            fin: value.fin(),
+            rsv1: value.rsv1(),
+            rsv2: value.rsv2(),
+            rsv3: value.rsv3(),
+            code: value.opcode(),
+        }
+    }
+}
+
 /// frame header
 #[derive(Debug, Clone, Copy)]
 pub struct HeaderView<'a>(pub(crate) &'a [u8]);
