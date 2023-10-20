@@ -1,6 +1,10 @@
 #[cfg(feature = "sync")]
 mod blocking {
     use std::io::{BufReader, BufWriter, Read, Write};
+    #[allow(missing_docs)]
+    pub trait RW: Read + Write {}
+
+    impl<S: Read + Write> RW for S {}
 
     /// a buffered stream
     pub struct BufStream<S: Read + Write>(pub BufReader<WrappedWriter<S>>);

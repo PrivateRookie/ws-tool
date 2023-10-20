@@ -84,54 +84,32 @@ mod blocking {
 
 #[cfg(feature = "async")]
 mod non_blocking {
-    use tokio::net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
+    use tokio::{
+        io::{AsyncRead, AsyncWrite, BufStream},
+        net::TcpStream,
     };
 
-    use super::Split;
-
-    // impl<R: AsyncRead + Unpin> AsyncRead for ReadHalf<R> {
-    //     fn poll_read(
-    //         mut self: std::pin::Pin<&mut Self>,
-    //         cx: &mut std::task::Context<'_>,
-    //         buf: &mut tokio::io::ReadBuf<'_>,
-    //     ) -> std::task::Poll<std::io::Result<()>> {
-    //         std::pin::Pin::new(self.inner_mut()).poll_read(cx, buf)
-    //     }
-    // }
-
-    // impl<W: AsyncWrite + Unpin> AsyncWrite for WriteHalf<W> {
-    //     fn poll_write(
-    //         mut self: std::pin::Pin<&mut Self>,
-    //         cx: &mut std::task::Context<'_>,
-    //         buf: &[u8],
-    //     ) -> std::task::Poll<Result<usize, std::io::Error>> {
-    //         std::pin::Pin::new(self.inner_mut()).poll_write(cx, buf)
-    //     }
-
-    //     fn poll_flush(
-    //         mut self: std::pin::Pin<&mut Self>,
-    //         cx: &mut std::task::Context<'_>,
-    //     ) -> std::task::Poll<Result<(), std::io::Error>> {
-    //         std::pin::Pin::new(self.inner_mut()).poll_flush(cx)
-    //     }
-
-    //     fn poll_shutdown(
-    //         mut self: std::pin::Pin<&mut Self>,
-    //         cx: &mut std::task::Context<'_>,
-    //     ) -> std::task::Poll<Result<(), std::io::Error>> {
-    //         std::pin::Pin::new(self.inner_mut()).poll_shutdown(cx)
-    //     }
-    // }
-
-    impl Split for TcpStream {
-        type R = OwnedReadHalf;
-
-        type W = OwnedWriteHalf;
-
+    impl crate::codec::Split for TcpStream {
+        type R = tokio::io::ReadHalf<TcpStream>;
+        type W = tokio::io::WriteHalf<TcpStream>;
         fn split(self) -> (Self::R, Self::W) {
-            self.into_split()
+            tokio::io::split(self)
         }
     }
+
+    impl<S: AsyncRead + AsyncWrite> crate::codec::Split for BufStream<S> {
+        type R = tokio::io::ReadHalf<BufStream<S>>;
+        type W = tokio::io::WriteHalf<BufStream<S>>;
+        fn split(self) -> (Self::R, Self::W) {
+            tokio::io::split(self)
+        }
+    }
+
+    // impl<S: AsyncRead + AsyncWrite> crate::codec::Split for BufStream<S> {
+    //     type R = tokio::io::ReadHalf<BufStream<S>>;
+    //     type W = tokio::io::WriteHalf<BufStream<S>>;
+    //     fn split(self) -> (Self::R, Self::W) {
+    //         tokio::io::split(self)
+    //     }
+    // }
 }

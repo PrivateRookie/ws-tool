@@ -40,33 +40,35 @@ fn main() -> Result<(), ()> {
             tracing::info!("got connect from {:?}", addr);
             match args.buffer {
                 Some(buf) => {
-                    let mut server =
+                    let (mut read, mut write) =
                         ServerBuilder::accept(stream, deflate_handshake_handler, |req, stream| {
                             let stream = BufStream::with_capacity(buf, buf, stream);
                             DeflateCodec::factory(req, stream)
                         })
-                        .unwrap();
+                        .unwrap()
+                        .split();
                     loop {
-                        let frame = server.receive().unwrap();
-                        if frame.header().opcode().is_close() {
+                        let (header, data) = read.receive().unwrap();
+                        if header.code.is_close() {
                             break;
                         }
-                        server.send_owned_frame(frame).unwrap();
+                        write.send(header.code, data).unwrap();
                     }
                 }
                 None => {
-                    let mut server = ServerBuilder::accept(
+                    let (mut read, mut write) = ServerBuilder::accept(
                         stream,
                         deflate_handshake_handler,
                         DeflateCodec::factory,
                     )
-                    .unwrap();
+                    .unwrap()
+                    .split();
                     loop {
-                        let frame = server.receive().unwrap();
-                        if frame.header().opcode().is_close() {
+                        let (header, data) = read.receive().unwrap();
+                        if header.code.is_close() {
                             break;
                         }
-                        server.send_owned_frame(frame).unwrap();
+                        write.send(header.code, data).unwrap();
                     }
                 }
             }

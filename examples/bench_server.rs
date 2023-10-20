@@ -1,7 +1,7 @@
 use clap::Parser;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{default_handshake_handler, BytesCodec, FrameConfig},
+    codec::{default_handshake_handler, BytesCodec},
     stream::BufStream,
     ServerBuilder,
 };
@@ -41,22 +41,20 @@ fn main() -> Result<(), ()> {
             tracing::info!("got connect from {:?}", addr);
             match args.buffer {
                 Some(buf) => {
-                    let mut server =
-                        ServerBuilder::accept(stream, default_handshake_handler, |_req, stream| {
-                            let stream = BufStream::with_capacity(buf, buf / 2, stream);
-                            let config = FrameConfig {
-                                mask_send_frame: false,
-                                resize_size: buf,
-                                merge_frame: false,
-                                ..Default::default()
-                            };
-                            Ok(BytesCodec::new_with(stream, config))
+                    let (mut r, mut w) =
+                        ServerBuilder::accept(stream, default_handshake_handler, |req, stream| {
+                            let stream = BufStream::with_capacity(buf, buf, stream);
+                            BytesCodec::factory(req, stream)
                         })
-                        .unwrap();
+                        .unwrap()
+                        .split();
                     loop {
-                        match server.receive() {
+                        match r.receive() {
                             Ok(msg) => {
-                                server.send(&msg.data[..]).unwrap();
+                                if msg.code.is_close() {
+                                    break;
+                                }
+                                w.send(msg).unwrap();
                             }
                             Err(_) => {
                                 break;
@@ -65,19 +63,19 @@ fn main() -> Result<(), ()> {
                     }
                 }
                 None => {
-                    let mut server = ServerBuilder::accept(
+                    let (mut read, mut write) = ServerBuilder::accept(
                         stream,
                         default_handshake_handler,
                         BytesCodec::factory,
                     )
-                    .unwrap();
+                    .unwrap()
+                    .split();
                     loop {
-                        let msg = server.receive().unwrap();
+                        let msg = read.receive().unwrap();
                         if msg.code.is_close() {
                             break;
                         }
-
-                        server.send(&msg.data[..]).unwrap();
+                        write.send(msg).unwrap();
                     }
                 }
             }

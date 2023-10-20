@@ -12,6 +12,7 @@ keywords = ["websocket", "proxy", "network"]
 
 # [profile.release]
 # debug = true
+# strip = false
 # opt-level = 3
 # lto = true
 
@@ -76,7 +77,7 @@ fastrand = "2.0.0"
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
 clap = { version = "4.0", features = ["derive"] }
-rcgen = "0.8"
+rcgen = "0.11"
 dashmap = { version = "5.4.0", features = ["serde"] }
 serde_json = { version = "1" }
 serde = { version = "1", features = ["derive"] }
@@ -86,7 +87,3 @@ tabled = "0.13.0"
 # benchmark deps
 tungstenite = "0.20.0"
 criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name = "mps"
-harness = false

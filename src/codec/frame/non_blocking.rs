@@ -68,8 +68,8 @@ impl FrameReadState {
                     .check_frame(header, range.clone())
                     .and_then(|_| self.merge_frame(header, range.clone()))?
                 {
-                    header.code = self.fragmented_type;
                     if merged {
+                        header.code = self.fragmented_type;
                         break Ok((header, &self.fragmented_data));
                     } else {
                         break Ok((header, &self.buf.buf[range]));

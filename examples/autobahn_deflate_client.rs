@@ -17,9 +17,9 @@ fn get_case_count() -> Result<usize, WsError> {
             StringCodec::check_fn,
         )
         .unwrap();
-    let msg = client.receive().unwrap();
+    let msg = client.receive().unwrap().data.parse().unwrap();
     client.receive().unwrap();
-    Ok(msg.data.parse().unwrap())
+    Ok(msg)
 }
 
 fn mask_key() -> [u8; 4] {
@@ -36,11 +36,11 @@ fn run_test(case: usize) -> Result<(), WsError> {
         client_max_window_bits: WindowBit::Nine,
         ..PMDConfig::default()
     };
-    let mut client = match ClientBuilder::new()
+    let (mut read, mut write) = match ClientBuilder::new()
         .extension(config.ext_string())
         .connect(url, DeflateCodec::check_fn)
     {
-        Ok(client) => client,
+        Ok(client) => client.split(),
         Err(e) => {
             tracing::error!("{e}");
             return Ok(());
@@ -48,18 +48,18 @@ fn run_test(case: usize) -> Result<(), WsError> {
     };
     let now = std::time::Instant::now();
     loop {
-        match client.receive() {
-            Ok(frame) => {
-                let code = frame.header().opcode();
+        match read.receive() {
+            Ok((header, data)) => {
+                let code = header.code;
                 match &code {
-                    OpCode::Text | OpCode::Binary => client.send(code, frame.payload())?,
+                    OpCode::Text | OpCode::Binary => write.send(code, data)?,
                     OpCode::Close => {
-                        client.send_owned_frame(OwnedFrame::close_frame(mask_key(), 1000, &[]))?;
+                        write.send(OpCode::Close, &1000u16.to_be_bytes()).unwrap();
                         tracing::info!("case {case} elapsed {:?}", now.elapsed());
                         break;
                     }
                     OpCode::Ping => {
-                        client.send(OpCode::Pong, frame.payload())?;
+                        write.send(OpCode::Pong, data)?;
                     }
                     OpCode::Pong => {}
                     _ => {
@@ -69,7 +69,7 @@ fn run_test(case: usize) -> Result<(), WsError> {
             }
             Err(e) => match e {
                 WsError::ProtocolError { close_code, error } => {
-                    if client
+                    if write
                         .send_owned_frame(OwnedFrame::close_frame(
                             mask_key(),
                             close_code,
@@ -82,7 +82,7 @@ fn run_test(case: usize) -> Result<(), WsError> {
                 }
                 e => {
                     tracing::warn!("{e}");
-                    client
+                    write
                         .send_owned_frame(OwnedFrame::close_frame(mask_key(), 1000, &[]))
                         .ok();
                     break;

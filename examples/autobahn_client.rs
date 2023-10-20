@@ -15,9 +15,9 @@ fn get_case_count() -> Result<usize, WsError> {
     let mut client = ClientBuilder::new()
         .connect(uri.parse().unwrap(), StringCodec::check_fn)
         .unwrap();
-    let msg = client.receive().unwrap();
+    let msg = client.receive().unwrap().data.parse().unwrap();
     client.receive().unwrap();
-    Ok(msg.data.parse().unwrap())
+    Ok(msg)
 }
 
 fn run_test(case: usize) -> Result<(), WsError> {
@@ -25,25 +25,26 @@ fn run_test(case: usize) -> Result<(), WsError> {
     let url: http::Uri = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT)
         .parse()
         .unwrap();
-    let mut client = ClientBuilder::new()
+    let (mut read, mut write) = ClientBuilder::new()
         .connect(url, FrameCodec::check_fn)
-        .unwrap();
+        .unwrap()
+        .split();
     loop {
-        match client.receive() {
-            Ok(frame) => {
-                let code = frame.header().opcode();
+        match read.receive() {
+            Ok((header, data)) => {
+                let code = header.code;
                 match &code {
                     OpCode::Text | OpCode::Binary => {
-                        client.send(code, frame.payload())?;
+                        write.send(code, data)?;
                     }
                     OpCode::Close => {
                         let mut data = BytesMut::new();
                         data.extend_from_slice(&1000u16.to_be_bytes());
-                        client.send(OpCode::Close, &data).unwrap();
+                        write.send(OpCode::Close, &data).unwrap();
                         break;
                     }
                     OpCode::Ping => {
-                        client.send(OpCode::Pong, frame.payload())?;
+                        write.send(OpCode::Pong, data)?;
                     }
                     OpCode::Pong => {}
                     _ => {
@@ -56,7 +57,7 @@ fn run_test(case: usize) -> Result<(), WsError> {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&close_code.to_be_bytes());
                     data.extend_from_slice(error.to_string().as_bytes());
-                    if client.send(OpCode::Close, &data).is_err() {
+                    if write.send(OpCode::Close, &data).is_err() {
                         break;
                     }
                 }
@@ -64,7 +65,7 @@ fn run_test(case: usize) -> Result<(), WsError> {
                     tracing::warn!("{e}");
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&1000u16.to_be_bytes());
-                    client.send(OpCode::Close, &data).ok();
+                    write.send(OpCode::Close, &data).ok();
                     break;
                 }
             },

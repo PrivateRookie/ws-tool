@@ -1,5 +1,5 @@
 use crate::codec::apply_mask;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use std::fmt::Debug;
 
 /// Defines the interpretation of the "Payload data".  If an unknown
@@ -493,15 +493,6 @@ impl Header {
     }
 }
 
-/// unified frame type
-#[derive(Debug, Clone)]
-pub enum Frame<'a> {
-    /// owned frame
-    Owned(OwnedFrame),
-    /// borrowed payload frame
-    BorrowedFrame(BorrowedFrame<'a>),
-}
-
 /// owned frame
 #[derive(Debug, Clone)]
 pub struct OwnedFrame {
@@ -634,24 +625,5 @@ impl OwnedFrame {
     #[inline]
     pub fn parts(self) -> (Header, BytesMut) {
         (self.header, self.payload)
-    }
-}
-
-/// borrowed frame
-#[derive(Debug, Clone)]
-pub struct BorrowedFrame<'a> {
-    header: HeaderView<'a>,
-    payload: Bytes,
-}
-
-impl<'a> BorrowedFrame<'a> {
-    /// get frame header
-    pub fn header(&self) -> HeaderView<'a> {
-        self.header
-    }
-
-    /// get frame payload
-    pub fn payload(&self) -> &Bytes {
-        &self.payload
     }
 }

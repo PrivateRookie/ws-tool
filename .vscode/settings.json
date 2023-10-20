@@ -15,6 +15,5 @@
         "tungstenite",
         "webpki"
     ],
-    "python.pythonPath": ".venv/bin/python",
-    "rust-analyzer.cargo.allFeatures": true
+    "rust-analyzer.cargo.features": "all",
 }

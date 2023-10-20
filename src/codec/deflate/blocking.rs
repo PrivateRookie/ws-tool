@@ -27,15 +27,17 @@ impl DeflateWriteState {
         }
         let prev_mask = frame.unmask();
         let header = frame.header();
-        let frame: Result<OwnedFrame, WsError> = self
-            .com
-            .as_mut()
+        let frame: Result<OwnedFrame, WsError> = header
+            .opcode()
+            .is_data()
+            .then(|| self.com.as_mut())
+            .flatten()
             .map(|handler| {
                 let mut compressed = Vec::with_capacity(frame.payload().len());
                 handler
                     .com
-                    .compress(frame.payload(), &mut compressed)
-                    .map_err(WsError::CompressFailed)?;
+                    .compress(&[frame.payload()], &mut compressed)
+                    .map_err(|code| WsError::CompressFailed(code.to_string()))?;
                 compressed.truncate(compressed.len() - 4);
                 let mut new = OwnedFrame::new(header.opcode(), prev_mask, &compressed);
                 let header = new.header_mut();
@@ -45,7 +47,10 @@ impl DeflateWriteState {
                 if (self.is_server && handler.config.server_no_context_takeover)
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {
-                    handler.com.reset().map_err(WsError::CompressFailed)?;
+                    handler
+                        .com
+                        .reset()
+                        .map_err(|code| WsError::CompressFailed(code.to_string()))?;
                     tracing::trace!("reset compressor");
                 }
                 Ok(new)
@@ -94,53 +99,58 @@ impl DeflateWriteState {
         for (idx, chunk) in parts.into_iter().enumerate() {
             let fin = idx + 1 == total;
             let mask = mask_fn();
-
-            if let Some(handler) = self.com.as_mut() {
-                let mut output = Vec::with_capacity(chunk.len());
-                handler
-                    .com
-                    .compress(chunk, &mut output)
-                    .map_err(WsError::CompressFailed)?;
-                output.truncate(output.len() - 4);
-                let header = ctor_header(
-                    &mut self.header_buf,
-                    fin,
-                    true,
-                    false,
-                    false,
-                    mask,
-                    code,
-                    output.len() as u64,
-                );
-                stream.write_all(header)?;
-                if let Some(mask) = mask {
-                    apply_mask(&mut output, mask)
-                };
-                stream.write_all(&output)?;
-                if (self.is_server && handler.config.server_no_context_takeover)
-                    || (!self.is_server && handler.config.client_no_context_takeover)
-                {
-                    handler.com.reset().map_err(WsError::CompressFailed)?;
-                    tracing::trace!("reset compressor");
+            match (self.com.as_mut(), code.is_data()) {
+                (Some(handler), true) => {
+                    let mut output = Vec::with_capacity(chunk.len());
+                    handler
+                        .com
+                        .compress(&[chunk], &mut output)
+                        .map_err(|code| WsError::CompressFailed(code.to_string()))?;
+                    output.truncate(output.len() - 4);
+                    let header = ctor_header(
+                        &mut self.header_buf,
+                        fin,
+                        true,
+                        false,
+                        false,
+                        mask,
+                        code,
+                        output.len() as u64,
+                    );
+                    stream.write_all(header)?;
+                    if let Some(mask) = mask {
+                        apply_mask(&mut output, mask)
+                    };
+                    stream.write_all(&output)?;
+                    if (self.is_server && handler.config.server_no_context_takeover)
+                        || (!self.is_server && handler.config.client_no_context_takeover)
+                    {
+                        handler
+                            .com
+                            .reset()
+                            .map_err(|code| WsError::CompressFailed(code.to_string()))?;
+                        tracing::trace!("reset compressor");
+                    }
                 }
-            } else {
-                let header = ctor_header(
-                    &mut self.header_buf,
-                    fin,
-                    false,
-                    false,
-                    false,
-                    mask,
-                    code,
-                    chunk.len() as u64,
-                );
-                stream.write_all(header)?;
-                if let Some(mask) = mask {
-                    let mut data = BytesMut::from_iter(chunk);
-                    apply_mask(&mut data, mask);
-                    stream.write_all(&data)?;
-                } else {
-                    stream.write_all(chunk)?;
+                _ => {
+                    let header = ctor_header(
+                        &mut self.header_buf,
+                        fin,
+                        false,
+                        false,
+                        false,
+                        mask,
+                        code,
+                        chunk.len() as u64,
+                    );
+                    stream.write_all(header)?;
+                    if let Some(mask) = mask {
+                        let mut data = BytesMut::from_iter(chunk);
+                        apply_mask(&mut data, mask);
+                        stream.write_all(&data)?;
+                    } else {
+                        stream.write_all(chunk)?;
+                    }
                 }
             }
         }
@@ -149,9 +159,12 @@ impl DeflateWriteState {
 }
 
 impl DeflateReadState {
-    fn receive_one<S: Read>(&mut self, stream: &mut S) -> Result<(SimplifiedHeader, &[u8]), WsError> {
-        let (header, data) = self.read_state.receive(stream)?;
-        // let frame = self.frame_codec.receive()?;
+    fn receive_one<S: Read>(
+        &mut self,
+        stream: &mut S,
+    ) -> Result<(SimplifiedHeader, Vec<u8>), WsError> {
+        let (mut header, data) = self.read_state.receive(stream)?;
+        let data = data.to_vec();
         let compressed = header.rsv1;
         let is_data_frame = header.code.is_data();
         if compressed && !is_data_frame {
@@ -163,22 +176,23 @@ impl DeflateReadState {
         if !is_data_frame {
             return Ok((header, data));
         }
-        let frame: OwnedFrame = match self.de.as_mut() {
+        let frame = match self.de.as_mut() {
             Some(handler) => {
-                let mut decompressed = Vec::with_capacity(frame.payload().len() * 2);
-                let (header, mut payload) = frame.parts();
-                payload.extend_from_slice(&[0, 0, 255, 255]);
+                let mut de_data = vec![];
                 handler
                     .de
-                    .decompress(&payload, &mut decompressed)
-                    .map_err(WsError::DeCompressFailed)?;
+                    .de_compress(&[&data, &[0, 0, 255, 255]], &mut de_data)
+                    .map_err(|code| WsError::DeCompressFailed(code.to_string()))?;
                 if (self.is_server && handler.config.server_no_context_takeover)
                     || (!self.is_server && handler.config.client_no_context_takeover)
                 {
-                    handler.de.reset().map_err(WsError::DeCompressFailed)?;
+                    handler
+                        .de
+                        .reset()
+                        .map_err(|code| WsError::DeCompressFailed(code.to_string()))?;
                     tracing::trace!("reset decompressor state");
                 }
-                OwnedFrame::new(header.opcode(), None, &decompressed[..])
+                de_data
             }
             None => {
                 if header.rsv1 {
@@ -186,24 +200,27 @@ impl DeflateReadState {
                         "extension not enabled but got compressed frame".into(),
                     ));
                 } else {
-                    frame
+                    data
                 }
             }
         };
-
-        Ok(frame)
+        header.rsv1 = false;
+        Ok((header, frame))
     }
 
     /// receive a message
-    pub fn receive<S: Read>(&mut self, stream: &mut S) -> Result<OwnedFrame, WsError> {
+    pub fn receive<S: Read>(
+        &mut self,
+        stream: &mut S,
+    ) -> Result<(SimplifiedHeader, &[u8]), WsError> {
         loop {
-            let unmasked_frame = self.receive_one(stream)?;
+            let (mut header, mut data) = self.receive_one(stream)?;
             if !self.config.merge_frame {
-                break Ok(unmasked_frame);
+                self.fragmented_data.clear();
+                self.fragmented_data.append(&mut data);
+                break Ok((header, &self.fragmented_data));
             }
-            let header = unmasked_frame.header();
-            let opcode = header.opcode();
-            match opcode {
+            match header.code {
                 OpCode::Continue => {
                     if !self.fragmented {
                         return Err(WsError::ProtocolError {
@@ -211,16 +228,12 @@ impl DeflateReadState {
                             error: ProtocolError::MissInitialFragmentedFrame,
                         });
                     }
-                    let fin = header.fin();
-                    self.fragmented_data
-                        .extend_from_slice(unmasked_frame.payload());
+                    let fin = header.fin;
+                    self.fragmented_data.extend_from_slice(&data);
                     if fin {
-                        let completed_frame = std::mem::replace(
-                            &mut self.fragmented_data,
-                            OwnedFrame::new(OpCode::Binary, None, &[]),
-                        );
                         self.fragmented = false;
-                        break Ok(completed_frame);
+                        header.code = self.fragmented_type;
+                        break Ok((header, &self.fragmented_data));
                     } else {
                         continue;
                     }
@@ -232,37 +245,41 @@ impl DeflateReadState {
                             error: ProtocolError::NotContinueFrameAfterFragmented,
                         });
                     }
-                    if !header.fin() {
+                    if !header.fin {
                         self.fragmented = true;
-                        self.fragmented_type = opcode;
-                        if opcode == OpCode::Text
+                        self.fragmented_type = header.code;
+                        if header.code == OpCode::Text
                             && self.config.validate_utf8.is_fast_fail()
-                            && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
+                            && simdutf8::basic::from_utf8(&data).is_err()
                         {
                             return Err(WsError::ProtocolError {
                                 close_code: 1007,
                                 error: ProtocolError::InvalidUtf8,
                             });
                         }
-                        self.fragmented_data.header_mut().set_opcode(opcode);
-                        self.fragmented_data
-                            .extend_from_slice(unmasked_frame.payload());
+                        self.fragmented_data.clear();
+                        self.fragmented_data.extend_from_slice(&data);
                         continue;
                     } else {
-                        if opcode == OpCode::Text
+                        if header.code == OpCode::Text
                             && self.config.validate_utf8.should_check()
-                            && simdutf8::basic::from_utf8(unmasked_frame.payload()).is_err()
+                            && simdutf8::basic::from_utf8(&data).is_err()
                         {
                             return Err(WsError::ProtocolError {
                                 close_code: 1007,
                                 error: ProtocolError::InvalidUtf8,
                             });
                         }
-                        break Ok(unmasked_frame);
+                        self.fragmented_data.clear();
+                        self.fragmented_data.extend_from_slice(&data);
+                        break Ok((header, &self.fragmented_data));
                     }
                 }
-                OpCode::Close | OpCode::Ping | OpCode::Pong => break Ok(unmasked_frame),
-                _ => break Err(WsError::UnsupportedFrame(opcode)),
+                OpCode::Close | OpCode::Ping | OpCode::Pong => {
+                    self.control_buf = data;
+                    break Ok((header, &self.control_buf));
+                }
+                _ => break Err(WsError::UnsupportedFrame(header.code)),
             }
         }
     }
@@ -357,7 +374,7 @@ impl<S: Read + Write> DeflateCodec<S> {
     }
 
     /// receive a message
-    pub fn receive(&mut self) -> Result<OwnedFrame, WsError> {
+    pub fn receive(&mut self) -> Result<(SimplifiedHeader, &[u8]), WsError> {
         self.read_state.receive(&mut self.stream)
     }
 
@@ -397,7 +414,7 @@ impl<S: Read> DeflateRecv<S> {
     }
 
     /// receive a frame
-    pub fn receive(&mut self) -> Result<OwnedFrame, WsError> {
+    pub fn receive(&mut self) -> Result<(SimplifiedHeader, &[u8]), WsError> {
         self.read_state.receive(&mut self.stream)
     }
 }

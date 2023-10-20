@@ -36,6 +36,15 @@ mod blocking {
         Ok(stream)
     }
 
+    // #[cfg(feature = "sync_tls_rustls")]
+    // impl<S: std::io::Read + std::io::Write> crate::codec::Split for rustls_connector::TlsStream<S> {
+    //     type R = tokio::io::ReadHalf<BufStream<S>>;
+    //     type W = tokio::io::WriteHalf<BufStream<S>>;
+    //     fn split(self) -> (Self::R, Self::W) {
+    //         tokio::io::split(self)
+    //     }
+    // }
+
     #[cfg(feature = "sync_tls_rustls")]
     /// start tls session
     pub fn wrap_rustls<
@@ -70,6 +79,15 @@ mod blocking {
         tracing::debug!("tls connection established");
         Ok(tls_stream)
     }
+
+    // #[cfg(feature = "sync_tls_native")]
+    // impl<S: std::io::Read + std::io::Write> crate::codec::Split for rustls_connector::TlsStream<S> {
+    //     type R = tokio::io::ReadHalf<BufStream<S>>;
+    //     type W = tokio::io::WriteHalf<BufStream<S>>;
+    //     fn split(self) -> (Self::R, Self::W) {
+    //         tokio::io::split(self)
+    //     }
+    // }
 
     #[cfg(feature = "sync_tls_native")]
     /// start tls session
@@ -139,6 +157,28 @@ mod non_blocking {
     }
 
     #[cfg(feature = "async_tls_rustls")]
+    impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> crate::codec::Split
+        for tokio_rustls::client::TlsStream<S>
+    {
+        type R = tokio::io::ReadHalf<tokio_rustls::client::TlsStream<S>>;
+        type W = tokio::io::WriteHalf<tokio_rustls::client::TlsStream<S>>;
+        fn split(self) -> (Self::R, Self::W) {
+            tokio::io::split(self)
+        }
+    }
+
+    #[cfg(feature = "async_tls_rustls")]
+    impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> crate::codec::Split
+        for tokio_rustls::server::TlsStream<S>
+    {
+        type R = tokio::io::ReadHalf<tokio_rustls::server::TlsStream<S>>;
+        type W = tokio::io::WriteHalf<tokio_rustls::server::TlsStream<S>>;
+        fn split(self) -> (Self::R, Self::W) {
+            tokio::io::split(self)
+        }
+    }
+
+    #[cfg(feature = "async_tls_rustls")]
     /// async version of starting tls session
     pub async fn async_wrap_rustls<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
         stream: S,
@@ -189,6 +229,17 @@ mod non_blocking {
             .map_err(|e| WsError::ConnectionFailed(e.to_string()))?;
         tracing::debug!("tls connection established");
         Ok(tls_stream)
+    }
+
+    #[cfg(feature = "async_tls_rustls")]
+    impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> crate::codec::Split
+        for tokio_native_tls::TlsStream<S>
+    {
+        type R = tokio::io::ReadHalf<tokio_native_tls::TlsStream<S>>;
+        type W = tokio::io::WriteHalf<tokio_native_tls::TlsStream<S>>;
+        fn split(self) -> (Self::R, Self::W) {
+            tokio::io::split(self)
+        }
     }
 
     #[cfg(feature = "async_tls_native")]

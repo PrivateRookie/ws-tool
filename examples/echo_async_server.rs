@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::{fs::create_dir_all, path::PathBuf};
 
 use clap::Parser;
+use tokio::io::BufStream;
 use tokio_rustls::rustls::{self, Certificate, PrivateKey};
 use tokio_rustls::TlsAcceptor;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -98,17 +99,19 @@ async fn main() -> Result<(), ()> {
             .unwrap();
         let (stream, addr) = listener.accept().await.unwrap();
         let stream = accepter.accept(stream).await.unwrap();
+        let stream = BufStream::with_capacity(0, 0, stream);
         tracing::info!("got connect from {:?}", addr);
-        let mut server = ServerBuilder::async_accept(
+        let (mut read, mut write) = ServerBuilder::async_accept(
             stream,
             default_handshake_handler,
             // AsyncWsStringCodec::factory,
             AsyncStringCodec::factory,
         )
         .await
-        .unwrap();
-        while let Ok(msg) = server.receive().await {
-            server.send((msg.code, msg.data)).await.unwrap();
+        .unwrap()
+        .split();
+        while let Ok(msg) = read.receive().await {
+            write.send((msg.code, msg.data)).await.unwrap();
         }
     } else {
         tracing::info!("binding on {}:{}", args.host, args.port);
@@ -119,18 +122,19 @@ async fn main() -> Result<(), ()> {
         let (stream, addr) = listener.accept().await.unwrap();
 
         tracing::info!("got connect from {:?}", addr);
-        let mut server = ServerBuilder::async_accept(
+        let (mut read, mut write) = ServerBuilder::async_accept(
             stream,
             default_handshake_handler,
             // AsyncWsStringCodec::factory,
             AsyncStringCodec::factory,
         )
         .await
-        .unwrap();
+        .unwrap()
+        .split();
 
         loop {
-            match server.receive().await {
-                Ok(msg) => server.send((msg.code, msg.data)).await.unwrap(),
+            match read.receive().await {
+                Ok(msg) => write.send(msg).await.unwrap(),
                 Err(e) => {
                     dbg!(e);
                     break;

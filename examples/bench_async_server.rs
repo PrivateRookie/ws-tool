@@ -1,5 +1,5 @@
 use clap::Parser;
-use tokio::io::BufWriter;
+use tokio::io::BufStream;
 use tracing::info;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
@@ -66,11 +66,11 @@ async fn run(args: Args) {
             tracing::info!("got connect from {:?}", addr);
             match args.buffer {
                 Some(buf) => {
-                    let mut server = ServerBuilder::async_accept(
+                    let (mut read, mut write) = ServerBuilder::async_accept(
                         stream,
                         default_handshake_handler,
                         |_req, stream| {
-                            let stream = BufWriter::with_capacity(buf, stream);
+                            let stream = BufStream::with_capacity(buf, buf, stream);
                             let config = FrameConfig {
                                 mask_send_frame: false,
                                 resize_size: buf,
@@ -80,31 +80,33 @@ async fn run(args: Args) {
                         },
                     )
                     .await
-                    .unwrap();
+                    .unwrap()
+                    .split();
                     loop {
-                        let msg = server.receive().await.unwrap();
+                        let msg = read.receive().await.unwrap();
                         if msg.code.is_close() {
                             break;
                         }
 
-                        server.send(&msg.data[..]).await.unwrap();
+                        write.send(msg).await.unwrap();
                     }
-                    server.flush().await.unwrap();
+                    write.flush().await.unwrap();
                 }
                 None => {
-                    let mut server = ServerBuilder::async_accept(
+                    let (mut read, mut write) = ServerBuilder::async_accept(
                         stream,
                         default_handshake_handler,
                         AsyncBytesCodec::factory,
                     )
                     .await
-                    .unwrap();
+                    .unwrap()
+                    .split();
                     loop {
-                        let msg = server.receive().await.unwrap();
+                        let msg = read.receive().await.unwrap();
                         if msg.code.is_close() {
                             break;
                         }
-                        server.send(&msg.data[..]).await.unwrap();
+                        write.send(msg).await.unwrap();
                     }
                 }
             }

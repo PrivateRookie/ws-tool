@@ -18,7 +18,7 @@ struct Args {
     uri: Uri,
     /// cert file path
     #[arg(short, long)]
-    cert: Option<PathBuf>,
+    cert: Option<Vec<PathBuf>>,
 }
 
 #[tokio::main]
@@ -38,9 +38,13 @@ async fn run() -> Result<(), ()> {
     let stream: Box<dyn AsyncRW> = match mode {
         Mode::WS => Box::new(stream),
         Mode::WSS => {
-            let stream = async_wrap_rustls(stream, get_host(&args.uri).unwrap(), vec![])
-                .await
-                .unwrap();
+            let stream = async_wrap_rustls(
+                stream,
+                get_host(&args.uri).unwrap(),
+                args.cert.unwrap_or_default(),
+            )
+            .await
+            .unwrap();
             Box::new(stream)
         }
     };
@@ -62,7 +66,7 @@ async fn run() -> Result<(), ()> {
         if &input == "quit\n" {
             break;
         }
-        client.send(input.clone()).await.unwrap();
+        client.send(&input).await.unwrap();
         match client.receive().await {
             Ok(item) => {
                 println!("[RECV] > {}", item.data.trim());
@@ -77,6 +81,6 @@ async fn run() -> Result<(), ()> {
             }
         }
     }
-    client.send((1000u16, "done".into())).await.ok();
+    client.send((1000u16, "done")).await.ok();
     Ok(())
 }

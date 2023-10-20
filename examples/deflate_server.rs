@@ -34,12 +34,13 @@ fn main() {
     tracing::info!("binding on {}:{}", args.host, args.port);
     let listener = TcpListener::bind(format!("{}:{}", args.host, args.port)).unwrap();
     for stream in listener.incoming().flatten() {
-        let mut server =
+        let (mut read, mut write) =
             ServerBuilder::accept(stream, deflate_handshake_handler, DeflateCodec::factory)
-                .unwrap();
+                .unwrap()
+                .split();
         loop {
-            match server.receive() {
-                Ok(msg) => server.send_owned_frame(msg).unwrap(),
+            match read.receive() {
+                Ok((header, data)) => write.send(header.code, data).unwrap(),
                 Err(e) => {
                     dbg!(e);
                     break;

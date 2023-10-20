@@ -2,13 +2,9 @@
 
 #![warn(missing_docs)]
 #![cfg_attr(docrs, feature(doc_auto_cfg))]
-#![cfg_attr(feature = "simd", feature(portable_simd))]
 #![feature(array_chunks)]
 
 use std::collections::HashMap;
-
-use bytes::{Bytes, BytesMut};
-use frame::{BorrowedFrame, OpCode, OwnedFrame};
 
 pub use http;
 
@@ -24,7 +20,10 @@ pub mod codec;
 /// connection helper function
 pub mod connector;
 
-/// helpler stream definition
+/// helper message definition
+mod message;
+pub use message::*;
+/// helper stream definition
 pub mod stream;
 
 /// helper builder to construct websocket client
@@ -80,7 +79,7 @@ impl ClientBuilder {
         Self { extensions, ..self }
     }
 
-    /// set websocket version
+    /// set websocket version, default 13
     pub fn version(self, version: u8) -> Self {
         Self { version, ..self }
     }
@@ -119,7 +118,54 @@ mod blocking {
         where
             F: FnMut(String, http::Response<()>, TcpStream) -> Result<C, WsError>,
         {
+            let mode = get_scheme(&uri)?;
+            if matches!(mode, crate::protocol::Mode::WSS) {
+                panic!("can not perform ssl connection, use `rustls_connect` or `native_tls_connect` instead");
+            }
             let stream = tcp_connect(&uri)?;
+            self.with_stream(uri, stream, check_fn)
+        }
+
+        #[cfg(feature = "sync_tls_rustls")]
+        /// perform protocol handshake via ssl with default certs & check server response
+        pub fn rustls_connect<C, F>(&self, uri: http::Uri, check_fn: F) -> Result<C, WsError>
+        where
+            F: FnMut(
+                String,
+                http::Response<()>,
+                rustls_connector::rustls::StreamOwned<
+                    rustls_connector::rustls::ClientConnection,
+                    TcpStream,
+                >,
+            ) -> Result<C, WsError>,
+        {
+            use crate::connector::{get_host, wrap_rustls};
+            let mode = get_scheme(&uri)?;
+            if matches!(mode, crate::protocol::Mode::WSS) {
+                panic!("can not perform not ssl connection, use `connect` instead");
+            }
+            let stream = tcp_connect(&uri)?;
+            let stream = wrap_rustls(stream, get_host(&uri)?, vec![])?;
+            self.with_stream(uri, stream, check_fn)
+        }
+
+        #[cfg(feature = "sync_tls_native")]
+        /// perform protocol handshake via ssl with default certs & check server response
+        pub fn native_tls_connect<C, F>(&self, uri: http::Uri, check_fn: F) -> Result<C, WsError>
+        where
+            F: FnMut(
+                String,
+                http::Response<()>,
+                native_tls::TlsStream<TcpStream>,
+            ) -> Result<C, WsError>,
+        {
+            use crate::connector::{get_host, wrap_native_tls};
+            let mode = get_scheme(&uri)?;
+            if matches!(mode, crate::protocol::Mode::WSS) {
+                panic!("can not perform not ssl connection, use `connect` instead");
+            }
+            let stream = tcp_connect(&uri)?;
+            let stream = wrap_native_tls(stream, get_host(&uri)?, vec![])?;
             self.with_stream(uri, stream, check_fn)
         }
 
@@ -207,6 +253,54 @@ mod non_blocking {
             self.async_with_stream(uri, stream, check_fn).await
         }
 
+        #[cfg(feature = "async_tls_rustls")]
+        /// perform protocol handshake via ssl with default certs & check server response
+        pub async fn async_rustls_connect<C, F>(
+            &self,
+            uri: http::Uri,
+            check_fn: F,
+        ) -> Result<C, WsError>
+        where
+            F: FnMut(
+                String,
+                http::Response<()>,
+                tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+            ) -> Result<C, WsError>,
+        {
+            use crate::connector::{async_wrap_rustls, get_host};
+            let mode = crate::connector::get_scheme(&uri)?;
+            if matches!(mode, crate::protocol::Mode::WSS) {
+                panic!("can not perform not ssl connection, use `connect` instead");
+            }
+            let stream = async_tcp_connect(&uri).await?;
+            let stream = async_wrap_rustls(stream, get_host(&uri)?, vec![]).await?;
+            self.async_with_stream(uri, stream, check_fn).await
+        }
+
+        #[cfg(feature = "async_tls_native")]
+        /// perform protocol handshake via ssl with default certs & check server response
+        pub async fn async_native_tls_connect<C, F>(
+            &self,
+            uri: http::Uri,
+            check_fn: F,
+        ) -> Result<C, WsError>
+        where
+            F: FnMut(
+                String,
+                http::Response<()>,
+                tokio_native_tls::TlsStream<TcpStream>,
+            ) -> Result<C, WsError>,
+        {
+            use crate::connector::{async_wrap_native_tls, get_host};
+            let mode = crate::connector::get_scheme(&uri)?;
+            if matches!(mode, crate::protocol::Mode::WSS) {
+                panic!("can not perform not ssl connection, use `connect` instead");
+            }
+            let stream = async_tcp_connect(&uri).await?;
+            let stream = async_wrap_native_tls(stream, get_host(&uri)?, vec![]).await?;
+            self.async_with_stream(uri, stream, check_fn).await
+        }
+
         /// async version of connect
         ///
         /// perform protocol handshake & check server response
@@ -268,108 +362,3 @@ mod non_blocking {
 
 /// helper struct to config & construct websocket server
 pub struct ServerBuilder {}
-
-/// a trait that tells ws-tool corresponding opcode of custom type
-pub trait DefaultCode {
-    /// get payload opcode
-    fn code(&self) -> OpCode;
-}
-
-impl DefaultCode for String {
-    fn code(&self) -> OpCode {
-        OpCode::Text
-    }
-}
-
-impl DefaultCode for &[u8] {
-    fn code(&self) -> OpCode {
-        OpCode::Binary
-    }
-}
-impl DefaultCode for &mut [u8] {
-    fn code(&self) -> OpCode {
-        OpCode::Binary
-    }
-}
-
-impl DefaultCode for BytesMut {
-    fn code(&self) -> OpCode {
-        OpCode::Binary
-    }
-}
-
-impl DefaultCode for Bytes {
-    fn code(&self) -> OpCode {
-        OpCode::Binary
-    }
-}
-
-impl DefaultCode for OwnedFrame {
-    fn code(&self) -> OpCode {
-        self.header().opcode()
-    }
-}
-
-impl<'a> DefaultCode for BorrowedFrame<'a> {
-    fn code(&self) -> OpCode {
-        self.header().opcode()
-    }
-}
-
-/// generic message receive/send from websocket stream
-#[derive(Debug)]
-pub struct Message<T> {
-    /// opcode of message
-    ///
-    /// see all codes in [overview](https://datatracker.ietf.org/doc/html/rfc6455#section-5.2) of opcode
-    pub code: OpCode,
-    /// payload of message
-    pub data: T,
-
-    /// available in close frame only
-    ///
-    /// see [status code](https://datatracker.ietf.org/doc/html/rfc6455#section-7.4)
-    pub close_code: Option<u16>,
-}
-
-impl<T: AsRef<[u8]> + DefaultCode> Message<T> {
-    /// consume message and return payload
-    pub fn into(self) -> T {
-        self.data
-    }
-}
-
-impl<T: AsRef<[u8]> + DefaultCode> From<(OpCode, T)> for Message<T> {
-    fn from(data: (OpCode, T)) -> Self {
-        let close_code = if data.0 == OpCode::Close {
-            Some(1000)
-        } else {
-            None
-        };
-        Self {
-            data: data.1,
-            code: data.0,
-            close_code,
-        }
-    }
-}
-
-impl<T: AsRef<[u8]>> From<(u16, T)> for Message<T> {
-    fn from(data: (u16, T)) -> Self {
-        Self {
-            code: OpCode::Close,
-            close_code: Some(data.0),
-            data: data.1,
-        }
-    }
-}
-
-impl<T: AsRef<[u8]> + DefaultCode> From<T> for Message<T> {
-    fn from(data: T) -> Self {
-        Self {
-            code: data.code(),
-            data,
-            close_code: None,
-        }
-    }
-}

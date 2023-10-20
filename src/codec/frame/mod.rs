@@ -100,6 +100,7 @@ fn apply_mask_array_chunk(buf: &mut [u8], mask: [u8; 4]) {
     }
 }
 
+/// websocket frame reader
 pub struct FrameReadState {
     fragmented: bool,
     config: FrameConfig,
@@ -159,6 +160,11 @@ impl FrameReadState {
     /// try to parse frame header in buffer, return (header_len, payload_len, header_len + payload_len)
     #[inline]
     pub fn parse_frame_header(&mut self) -> Result<(usize, usize, usize), WsError> {
+        let ava_data = self.buf.ava_data();
+        let leading_bits = self.get_leading_bits();
+        let max_payload_size = self.config.max_frame_payload_size;
+        let check_rsv = self.config.check_rsv;
+
         fn parse_payload_len(source: &[u8]) -> Result<(usize, usize), ProtocolError> {
             match source[1] {
                 len @ (0..=125 | 128..=253) => Ok((1, (len & 127) as usize)),
@@ -183,20 +189,18 @@ impl FrameReadState {
             }
         }
 
-        let leading_bits = self.get_leading_bits();
-        if self.config.check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
+        if check_rsv && !(leading_bits == 0b00001000 || leading_bits == 0b00000000) {
             return Err(WsError::ProtocolError {
                 close_code: 1008,
                 error: ProtocolError::InvalidLeadingBits(leading_bits),
             });
         }
-        let ava_data = self.buf.ava_data();
         let (len_occ_bytes, payload_len) =
             parse_payload_len(ava_data).map_err(|e| WsError::ProtocolError {
                 close_code: 1008,
                 error: e,
             })?;
-        let max_payload_size = self.config.max_frame_payload_size;
+
         if max_payload_size > 0 && payload_len > max_payload_size {
             return Err(WsError::ProtocolError {
                 close_code: 1008,
@@ -216,21 +220,23 @@ impl FrameReadState {
         payload_len: usize,
         total_len: usize,
     ) -> (SimplifiedHeader, Range<usize>) {
-        let ava_data = self.buf.ava_mut_data();
+        let buf = &mut self.buf;
+        let auto_unmask = self.config.auto_unmask;
+
+        let ava_data = buf.ava_mut_data();
         let (header_data, remain) = ava_data.split_at_mut(header_len);
         let header = HeaderView(header_data);
         let payload = remain.split_at_mut(payload_len).0;
-        let fin = header.fin();
-        let code = header.opcode();
-        if self.config.auto_unmask {
+        if auto_unmask {
             if let Some(mask) = header.masking_key() {
                 apply_mask(payload, mask)
             }
         }
-        let s_idx = self.buf.consume_idx + header_len;
+        let header: SimplifiedHeader = header.into();
+        let s_idx = buf.consume_idx + header_len;
         let e_idx = s_idx + payload_len;
-        self.buf.consume(total_len);
-        (header.into(), s_idx..e_idx)
+        buf.consume(total_len);
+        (header, s_idx..e_idx)
     }
 
     fn check_frame(
@@ -238,41 +244,44 @@ impl FrameReadState {
         header: SimplifiedHeader,
         range: Range<usize>,
     ) -> Result<(), WsError> {
+        let fragmented = &mut self.fragmented;
+        let utf8_policy = &self.config.validate_utf8;
+        let payload = &self.buf.buf[range];
         match header.code {
             OpCode::Continue => {
-                if !self.fragmented {
+                if !*fragmented {
                     return Err(WsError::ProtocolError {
                         close_code: 1002,
                         error: ProtocolError::MissInitialFragmentedFrame,
                     });
                 }
                 if header.fin {
-                    self.fragmented = false;
+                    *fragmented = false;
                 }
                 Ok(())
             }
             OpCode::Binary => {
-                if self.fragmented {
+                if *fragmented {
                     return Err(WsError::ProtocolError {
                         close_code: 1002,
                         error: ProtocolError::NotContinueFrameAfterFragmented,
                     });
                 }
-                self.fragmented = !header.fin;
+                *fragmented = !header.fin;
                 Ok(())
             }
             OpCode::Text => {
-                if self.fragmented {
+                if *fragmented {
                     return Err(WsError::ProtocolError {
                         close_code: 1002,
                         error: ProtocolError::NotContinueFrameAfterFragmented,
                     });
                 }
                 if !header.fin {
-                    self.fragmented = true;
+                    *fragmented = true;
                     if header.code == OpCode::Text
-                        && self.config.validate_utf8.is_fast_fail()
-                        && simdutf8::basic::from_utf8(&self.buf.buf[range]).is_err()
+                        && utf8_policy.is_fast_fail()
+                        && simdutf8::basic::from_utf8(payload).is_err()
                     {
                         return Err(WsError::ProtocolError {
                             close_code: 1007,
@@ -283,8 +292,8 @@ impl FrameReadState {
                     Ok(())
                 } else {
                     if header.code == OpCode::Text
-                        && self.config.validate_utf8.should_check()
-                        && simdutf8::basic::from_utf8(&self.buf.buf[range]).is_err()
+                        && utf8_policy.should_check()
+                        && simdutf8::basic::from_utf8(payload).is_err()
                     {
                         return Err(WsError::ProtocolError {
                             close_code: 1007,
@@ -301,7 +310,6 @@ impl FrameReadState {
                         error: ProtocolError::FragmentedControlFrame,
                     });
                 }
-                let payload = &self.buf.buf[range];
                 let payload_len = payload.len();
                 if payload.len() > 125 {
                     let error = ProtocolError::ControlFrameTooBig(payload_len);
@@ -359,22 +367,27 @@ impl FrameReadState {
         header: SimplifiedHeader,
         range: Range<usize>,
     ) -> Result<Option<bool>, WsError> {
+        let fragmented = &mut self.fragmented;
+        let fragmented_data = &mut self.fragmented_data;
+        let fragmented_type = &mut self.fragmented_type;
+        let payload = &self.buf.buf[range];
         match header.code {
             OpCode::Continue => {
-                self.fragmented_data.extend_from_slice(&self.buf.buf[range]);
+                fragmented_data.extend_from_slice(payload);
                 if header.fin {
-                    self.fragmented = false;
+                    *fragmented = false;
                     Ok(Some(true))
                 } else {
                     Ok(None)
                 }
             }
             OpCode::Text | OpCode::Binary => {
+                *fragmented_type = header.code;
                 if !header.fin {
-                    self.fragmented = true;
-                    self.fragmented_type = header.code;
-                    self.fragmented_data.clear();
-                    self.fragmented_data.extend_from_slice(&self.buf.buf[range]);
+                    *fragmented = true;
+                    *fragmented_type = header.code;
+                    fragmented_data.clear();
+                    fragmented_data.extend_from_slice(payload);
                     Ok(None)
                 } else {
                     Ok(Some(false))
@@ -386,14 +399,14 @@ impl FrameReadState {
     }
 }
 
-struct FrameBuffer {
-    buf: Vec<u8>,
+pub(crate) struct FrameBuffer {
+    pub(crate) buf: Vec<u8>,
     produce_idx: usize,
     consume_idx: usize,
 }
 
 impl FrameBuffer {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             buf: vec![0; 4096],
             produce_idx: 0,
@@ -401,13 +414,13 @@ impl FrameBuffer {
         }
     }
 
-    fn prepare(&mut self, payload_size: usize) -> &mut [u8] {
+    pub(crate) fn prepare(&mut self, payload_size: usize) -> &mut [u8] {
         let remain = self.buf.len() - self.produce_idx;
         if remain >= payload_size {
             &mut self.buf[self.produce_idx..(self.produce_idx + payload_size)]
         } else {
             if (self.produce_idx - self.consume_idx) * 2 > self.buf.len() {
-                self.buf.resize(payload_size - remain, 0);
+                self.buf.resize(payload_size - remain + self.buf.len(), 0);
                 &mut self.buf[self.produce_idx..(self.produce_idx + payload_size)]
             } else {
                 let not_consumed_data = self.buf[self.consume_idx..self.produce_idx].to_vec();
@@ -422,19 +435,19 @@ impl FrameBuffer {
         }
     }
 
-    fn ava_data(&self) -> &[u8] {
+    pub(crate) fn ava_data(&self) -> &[u8] {
         &self.buf[self.consume_idx..self.produce_idx]
     }
 
-    fn ava_mut_data(&mut self) -> &mut [u8] {
+    pub(crate) fn ava_mut_data(&mut self) -> &mut [u8] {
         &mut self.buf[self.consume_idx..self.produce_idx]
     }
 
-    fn produce(&mut self, num: usize) {
+    pub(crate) fn produce(&mut self, num: usize) {
         self.produce_idx += num;
     }
 
-    fn consume(&mut self, num: usize) {
+    pub(crate) fn consume(&mut self, num: usize) {
         self.consume_idx += num;
     }
 }

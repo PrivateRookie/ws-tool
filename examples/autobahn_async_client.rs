@@ -18,10 +18,10 @@ async fn get_case_count() -> Result<usize, WsError> {
         )
         .await
         .unwrap();
-    let msg = client.receive().await.unwrap();
+    let msg = client.receive().await.unwrap().data.parse().unwrap();
     client.receive().await.unwrap();
     // send_close(&mut client, 1001, "".to_string()).unwrap();
-    Ok(msg.data.parse().unwrap())
+    Ok(msg)
 }
 
 async fn run_test(case: usize) -> Result<(), WsError> {
@@ -29,26 +29,27 @@ async fn run_test(case: usize) -> Result<(), WsError> {
     let url: http::Uri = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT)
         .parse()
         .unwrap();
-    let mut client = ClientBuilder::new()
+    let (mut read, mut write) = ClientBuilder::new()
         .async_connect(url, AsyncFrameCodec::check_fn)
         .await
-        .unwrap();
+        .unwrap()
+        .split();
     loop {
-        match client.receive().await {
-            Ok(frame) => {
-                let code = frame.header().opcode();
+        match read.receive().await {
+            Ok((header, data)) => {
+                let code = header.code;
                 match &code {
                     OpCode::Text | OpCode::Binary => {
-                        client.send(code, frame.payload()).await?;
+                        write.send(code, data).await?;
                     }
                     OpCode::Close => {
                         let mut data = BytesMut::new();
                         data.extend_from_slice(&1000u16.to_be_bytes());
-                        client.send(OpCode::Close, &data).await.unwrap();
+                        write.send(OpCode::Close, &data).await.unwrap();
                         break;
                     }
                     OpCode::Ping => {
-                        client.send(OpCode::Pong, frame.payload()).await?;
+                        write.send(OpCode::Pong, data).await?;
                     }
                     OpCode::Pong => {}
                     _ => {
@@ -61,16 +62,13 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                     let mut data = BytesMut::new();
                     data.extend_from_slice(&close_code.to_be_bytes());
                     data.extend_from_slice(error.to_string().as_bytes());
-                    if client.send(OpCode::Close, &data).await.is_err() {
+                    if write.send(OpCode::Close, &data).await.is_err() {
                         break;
                     }
                 }
                 e => {
                     tracing::warn!("{e}");
-                    client
-                        .send(OpCode::Close, &1000u16.to_be_bytes())
-                        .await
-                        .ok();
+                    write.send(OpCode::Close, &1000u16.to_be_bytes()).await.ok();
                     break;
                 }
             },

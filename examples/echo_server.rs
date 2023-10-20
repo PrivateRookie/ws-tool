@@ -34,17 +34,14 @@ async fn main() -> Result<(), ()> {
     let (stream, addr) = listener.accept().unwrap();
 
     tracing::info!("got connect from {:?}", addr);
-    let mut server = ServerBuilder::accept(
-        stream,
-        default_handshake_handler,
-        // AsyncWsStringCodec::factory,
-        StringCodec::factory,
-    )
-    .unwrap();
+    let (mut read, mut write) =
+        ServerBuilder::accept(stream, default_handshake_handler, StringCodec::factory)
+            .unwrap()
+            .split();
 
     loop {
-        match server.receive() {
-            Ok(msg) => server.send((msg.code, msg.data)).unwrap(),
+        match read.receive() {
+            Ok(msg) => write.send(msg).unwrap(),
             Err(e) => {
                 dbg!(e);
                 break;

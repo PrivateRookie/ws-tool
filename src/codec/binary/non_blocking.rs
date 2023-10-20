@@ -1,4 +1,5 @@
 use bytes::Buf;
+use std::borrow::Cow;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
@@ -15,7 +16,7 @@ use crate::{
 macro_rules! impl_recv {
     () => {
         /// receive a message
-        pub async fn receive(&mut self) -> Result<Message<&[u8]>, WsError> {
+        pub async fn receive(&mut self) -> Result<Message<Cow<[u8]>>, WsError> {
             let (header, mut data) = self.frame_codec.receive().await?;
             let close_code = if header.code == OpCode::Close {
                 let code = if data.len() >= 2 {
@@ -23,14 +24,13 @@ macro_rules! impl_recv {
                 } else {
                     1000
                 };
-                data = &data[2..];
                 Some(code)
             } else {
                 None
             };
             Ok(Message {
                 code: header.code,
-                data,
+                data: Cow::Borrowed(data),
                 close_code,
             })
         }
@@ -39,26 +39,41 @@ macro_rules! impl_recv {
 
 macro_rules! impl_send {
     () => {
+        /// helper method to send ping message
+        pub async fn ping<'a>(&mut self, msg: &'a [u8]) -> Result<(), WsError> {
+            self.send((OpCode::Ping, msg)).await
+        }
+
+        /// helper method to send pong message
+        pub async fn pong<'a>(&mut self, msg: &'a [u8]) -> Result<(), WsError> {
+            self.send((OpCode::Pong, msg)).await
+        }
+
+        /// helper method to send close message
+        pub async fn close<'a>(&mut self, code: u16, msg: &'a [u8]) -> Result<(), WsError> {
+            self.send((code, msg)).await
+        }
+
         /// send a message
-        pub async fn send<'a, T: Into<Message<&'a [u8]>>>(
+        pub async fn send<'a, T: Into<Message<Cow<'a, [u8]>>>>(
             &mut self,
             msg: T,
         ) -> Result<(), WsError> {
-            let msg: Message<&'a [u8]> = msg.into();
+            let msg: Message<Cow<'a, [u8]>> = msg.into();
             if let Some(close_code) = msg.close_code {
                 if msg.code == OpCode::Close {
                     let mut data = close_code.to_be_bytes().to_vec();
-                    data.extend_from_slice(msg.data);
+                    data.extend_from_slice(msg.data.as_ref());
                     self.frame_codec.send(msg.code, &data).await
                 } else {
-                    self.frame_codec.send(msg.code, msg.data).await
+                    self.frame_codec.send(msg.code, msg.data.as_ref()).await
                 }
             } else {
-                self.frame_codec.send(msg.code, msg.data).await
+                self.frame_codec.send(msg.code, msg.data.as_ref()).await
             }
         }
 
-        /// flush underlaying stream
+        /// flush underlying stream
         pub async fn flush(&mut self) -> Result<(), WsError> {
             self.frame_codec.flush().await
         }

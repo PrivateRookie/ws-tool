@@ -1,3 +1,4 @@
+use bytes::BytesMut;
 use rand::random;
 use tracing::*;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -18,9 +19,9 @@ async fn get_case_count() -> Result<usize, WsError> {
         )
         .await
         .unwrap();
-    let msg = client.receive().await.unwrap();
+    let msg = client.receive().await.unwrap().data.parse().unwrap();
     client.receive().await.unwrap();
-    Ok(msg.data.parse().unwrap())
+    Ok(msg)
 }
 
 fn mask_key() -> [u8; 4] {
@@ -37,12 +38,12 @@ async fn run_test(case: usize) -> Result<(), WsError> {
         client_max_window_bits: WindowBit::Nine,
         ..PMDConfig::default()
     };
-    let mut client = match ClientBuilder::new()
+    let (mut read, mut write) = match ClientBuilder::new()
         .extension(config.ext_string())
         .async_connect(url, AsyncDeflateCodec::check_fn)
         .await
     {
-        Ok(client) => client,
+        Ok(client) => client.split(),
         Err(e) => {
             tracing::error!("{e}");
             return Ok(());
@@ -50,19 +51,19 @@ async fn run_test(case: usize) -> Result<(), WsError> {
     };
     let now = std::time::Instant::now();
     loop {
-        match client.receive().await {
-            Ok(frame) => {
-                let code = frame.header().opcode();
+        match read.receive().await {
+            Ok((header, data)) => {
+                let code = header.code;
                 match &code {
-                    OpCode::Text | OpCode::Binary => client.send(code, frame.payload()).await?,
+                    OpCode::Text | OpCode::Binary => write.send(code, data).await?,
                     OpCode::Close => {
-                        client
-                            .send_owned_frame(OwnedFrame::close_frame(mask_key(), 1000, &[]))
-                            .await?;
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&1000u16.to_be_bytes());
+                        write.send(OpCode::Close, &data).await.unwrap();
                         tracing::info!("case {case} elapsed {:?}", now.elapsed());
                         break;
                     }
-                    OpCode::Ping => client.send(OpCode::Pong, frame.payload()).await?,
+                    OpCode::Ping => write.send(OpCode::Pong, data).await?,
                     OpCode::Pong => {}
                     _ => {
                         unreachable!()
@@ -71,7 +72,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
             }
             Err(e) => match e {
                 WsError::ProtocolError { close_code, error } => {
-                    if client
+                    if write
                         .send_owned_frame(OwnedFrame::close_frame(
                             mask_key(),
                             close_code,
@@ -85,7 +86,7 @@ async fn run_test(case: usize) -> Result<(), WsError> {
                 }
                 e => {
                     tracing::warn!("{e}");
-                    client
+                    write
                         .send_owned_frame(OwnedFrame::close_frame(mask_key(), 1000, &[]))
                         .await
                         .ok();

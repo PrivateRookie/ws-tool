@@ -46,9 +46,9 @@ fn main() {
         let frame = OwnedFrame::text_frame(random::<[u8; 4]>(), input.trim_end());
         client.send_owned_frame(frame).unwrap();
         match client.receive() {
-            Ok(item) => {
-                if item.header().opcode().is_data() {
-                    let payload = item.payload().to_vec();
+            Ok((header, data)) => {
+                if header.code.is_data() {
+                    let payload = data.to_vec();
                     let msg = String::from_utf8(payload).unwrap();
                     println!("[RECV] > {}", msg);
                     if msg == "quit" {

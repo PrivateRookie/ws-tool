@@ -22,16 +22,14 @@ pub const ZLIB_VERSION: &str = "1.2.13\0";
 mod blocking;
 #[cfg(feature = "sync")]
 pub use blocking::*;
+use libz_sys::{Z_BUF_ERROR, Z_NO_FLUSH, Z_OK, Z_SYNC_FLUSH};
 
 #[cfg(feature = "async")]
 mod non_blocking;
 #[cfg(feature = "async")]
 pub use non_blocking::*;
 
-use crate::{
-    errors::WsError,
-    frame::{OpCode, OwnedFrame},
-};
+use crate::{errors::WsError, frame::OpCode};
 
 use super::{
     default_handshake_handler, FrameConfig, FrameReadState, FrameWriteState, ValidateUtf8Policy,
@@ -109,7 +107,7 @@ pub struct WriteStreamHandler {
     /// permessage deflate config
     pub config: PMDConfig,
     /// compressor
-    pub com: Compressor,
+    pub com: ZLibCompressStream,
 }
 
 /// helper struct to handle de stream
@@ -117,7 +115,7 @@ pub struct ReadStreamHandler {
     /// permessage deflate config
     pub config: PMDConfig,
     /// decompressor
-    pub de: DeCompressor,
+    pub de: ZLibDeCompressStream,
 }
 
 /// permessage-deflate
@@ -173,6 +171,214 @@ impl PMDConfig {
             .map(|conf| conf.ext_string())
             .collect::<Vec<String>>()
             .join(", ")
+    }
+}
+
+///
+pub struct ZLibDeCompressStream {
+    stream: Box<libz_sys::z_stream>,
+}
+
+impl Drop for ZLibDeCompressStream {
+    fn drop(&mut self) {
+        match unsafe { libz_sys::inflateEnd(self.stream.as_mut()) } {
+            libz_sys::Z_STREAM_ERROR => {
+                tracing::trace!("decompression stream encountered bad state.")
+            }
+            // Ignore discarded data error because we are raw
+            libz_sys::Z_OK | libz_sys::Z_DATA_ERROR => {
+                tracing::trace!("deallocated compression context.")
+            }
+            code => tracing::trace!("bad zlib status encountered: {}", code),
+        }
+    }
+}
+
+impl ZLibDeCompressStream {
+    /// construct new compress stream
+    pub fn new(window: WindowBit) -> Self {
+        let mut stream: Box<MaybeUninit<libz_sys::z_stream>> = Box::new(MaybeUninit::zeroed());
+        let result = unsafe {
+            libz_sys::inflateInit2_(
+                stream.as_mut_ptr(),
+                -(window as i8) as c_int,
+                ZLIB_VERSION.as_ptr() as *const c_char,
+                mem::size_of::<libz_sys::z_stream>() as c_int,
+            )
+        };
+        assert!(result == libz_sys::Z_OK, "Failed to initialize compresser.");
+        Self {
+            stream: unsafe { Box::from_raw(Box::into_raw(stream) as *mut libz_sys::z_stream) },
+        }
+    }
+
+    /// construct with custom stream
+    pub fn with(stream: Box<libz_sys::z_stream>) -> Self {
+        Self { stream }
+    }
+
+    /// decompress data
+    pub fn de_compress(&mut self, inputs: &[&[u8]], output: &mut Vec<u8>) -> Result<(), c_int> {
+        let total_input: usize = inputs.iter().map(|i| i.len()).sum();
+        if total_input > output.capacity() * 2 + 4 {
+            output.resize(total_input * 2 + 4, 0);
+        }
+        let mut write_idx = 0;
+        let before = self.stream.total_out;
+        for i in inputs {
+            let mut iter_read_idx = 0;
+            loop {
+                unsafe {
+                    self.stream.next_in = i.as_ptr().add(iter_read_idx) as *mut _;
+                }
+                self.stream.avail_in = (i.len() - iter_read_idx) as c_uint;
+                if output.capacity() - output.len() <= 0 {
+                    output.resize(output.capacity() * 2, 0);
+                }
+                let out_slice = unsafe {
+                    slice::from_raw_parts_mut(
+                        output.as_mut_ptr().add(write_idx),
+                        output.capacity() - write_idx,
+                    )
+                };
+                self.stream.next_out = out_slice.as_mut_ptr();
+                self.stream.avail_out = out_slice.len() as c_uint;
+
+                match unsafe { libz_sys::inflate(*&mut self.stream.as_mut(), Z_NO_FLUSH) } {
+                    Z_OK | Z_BUF_ERROR => {}
+                    code => return Err(code),
+                };
+                iter_read_idx = i.len() - self.stream.avail_in as usize;
+                write_idx = (self.stream.total_out - before) as usize;
+                if self.stream.avail_in == 0 {
+                    break;
+                }
+            }
+        }
+        unsafe {
+            match libz_sys::inflate(*&mut self.stream.as_mut(), Z_SYNC_FLUSH) {
+                Z_OK | Z_BUF_ERROR => {}
+                code => return Err(code),
+            }
+            output.set_len((self.stream.total_out - before) as usize);
+        };
+        Ok(())
+    }
+
+    /// reset stream state
+    pub fn reset(&mut self) -> Result<(), c_int> {
+        let code = unsafe { libz_sys::inflateReset(self.stream.as_mut()) };
+        match code {
+            Z_OK => Ok(()),
+            code => Err(code),
+        }
+    }
+}
+
+/// zlib compress stream
+pub struct ZLibCompressStream {
+    stream: Box<libz_sys::z_stream>,
+}
+
+impl Drop for ZLibCompressStream {
+    fn drop(&mut self) {
+        match unsafe { libz_sys::deflateEnd(self.stream.as_mut()) } {
+            libz_sys::Z_STREAM_ERROR => {
+                tracing::trace!("compression stream encountered bad state.")
+            }
+            // Ignore discarded data error because we are raw
+            libz_sys::Z_OK | libz_sys::Z_DATA_ERROR => {
+                tracing::trace!("deallocated compression context.")
+            }
+            code => tracing::trace!("bad zlib status encountered: {}", code),
+        }
+    }
+}
+
+impl ZLibCompressStream {
+    /// construct with window bit
+    pub fn new(window: WindowBit) -> Self {
+        let mut stream: Box<MaybeUninit<libz_sys::z_stream>> = Box::new(MaybeUninit::zeroed());
+        let result = unsafe {
+            libz_sys::deflateInit2_(
+                stream.as_mut_ptr(),
+                9,
+                libz_sys::Z_DEFLATED,
+                -(window as i8) as c_int,
+                9,
+                libz_sys::Z_DEFAULT_STRATEGY,
+                ZLIB_VERSION.as_ptr() as *const c_char,
+                mem::size_of::<libz_sys::z_stream>() as c_int,
+            )
+        };
+        assert!(result == libz_sys::Z_OK, "Failed to initialize compresser.");
+        Self {
+            stream: unsafe { Box::from_raw(Box::into_raw(stream) as *mut libz_sys::z_stream) },
+        }
+    }
+
+    /// construct with custom stream
+    pub fn with(stream: Box<libz_sys::z_stream>) -> Self {
+        Self { stream }
+    }
+
+    /// compress data
+    pub fn compress(&mut self, inputs: &[&[u8]], output: &mut Vec<u8>) -> Result<(), c_int> {
+        let total_input: usize = inputs.iter().map(|i| i.len()).sum();
+        if total_input > output.capacity() * 2 + 4 {
+            output.resize(total_input * 2 + 4, 0);
+        }
+        let mut write_idx = 0;
+        let mut total_remain = total_input;
+        let before = self.stream.total_out;
+        for i in inputs {
+            let mut iter_read_idx = 0;
+            loop {
+                unsafe {
+                    self.stream.next_in = i.as_ptr().add(iter_read_idx) as *mut _;
+                }
+                self.stream.avail_in = (i.len() - iter_read_idx) as c_uint;
+                if output.capacity() - output.len() <= 0 {
+                    output.resize(output.len() + total_remain * 2, 0)
+                }
+                let out_slice = unsafe {
+                    slice::from_raw_parts_mut(
+                        output.as_mut_ptr().add(write_idx),
+                        output.capacity() - write_idx,
+                    )
+                };
+                self.stream.next_out = out_slice.as_mut_ptr();
+                self.stream.avail_out = out_slice.len() as c_uint;
+
+                match unsafe { libz_sys::deflate(*&mut self.stream.as_mut(), Z_NO_FLUSH) } {
+                    libz_sys::Z_OK => {}
+                    code => return Err(code),
+                };
+                iter_read_idx = i.len() - self.stream.avail_in as usize;
+                write_idx = (self.stream.total_out - before) as usize;
+                if self.stream.avail_in == 0 {
+                    break;
+                }
+            }
+            total_remain -= iter_read_idx;
+        }
+        unsafe {
+            match libz_sys::deflate(*&mut self.stream.as_mut(), Z_SYNC_FLUSH) {
+                Z_OK => {}
+                code => return Err(code),
+            }
+            output.set_len((self.stream.total_out - before) as usize);
+        };
+        Ok(())
+    }
+
+    /// reset stream state
+    pub fn reset(&mut self) -> Result<(), c_int> {
+        let code = unsafe { libz_sys::deflateReset(self.stream.as_mut()) };
+        match code {
+            Z_OK => Ok(()),
+            code => Err(code),
+        }
     }
 }
 
@@ -282,211 +488,6 @@ impl PMDConfig {
     }
 }
 
-trait Context {
-    fn stream(&mut self) -> &mut libz_sys::z_stream;
-
-    fn stream_apply<F>(&mut self, input: &[u8], output: &mut Vec<u8>, each: F) -> Result<(), String>
-    where
-        F: Fn(&mut libz_sys::z_stream) -> Option<Result<(), String>>,
-    {
-        debug_assert!(output.is_empty(), "Output vector is not empty.");
-
-        let stream = self.stream();
-
-        stream.next_in = input.as_ptr() as *mut _;
-        stream.avail_in = input.len() as c_uint;
-
-        let mut output_size;
-
-        loop {
-            output_size = output.len();
-
-            if output_size == output.capacity() {
-                output.reserve(input.len())
-            }
-
-            let out_slice = unsafe {
-                slice::from_raw_parts_mut(
-                    output.as_mut_ptr().add(output_size),
-                    output.capacity() - output_size,
-                )
-            };
-
-            stream.next_out = out_slice.as_mut_ptr();
-            stream.avail_out = out_slice.len() as c_uint;
-
-            let before = stream.total_out;
-            let cont = each(stream);
-
-            unsafe {
-                output.set_len((stream.total_out - before) as usize + output_size);
-            }
-
-            if let Some(result) = cont {
-                return result;
-            }
-        }
-    }
-}
-
-/// permessage-deflate compress
-///
-/// copy from ws-rs
-pub struct Compressor {
-    stream: Box<libz_sys::z_stream>,
-}
-
-unsafe impl Send for Compressor {}
-
-impl Context for Compressor {
-    fn stream(&mut self) -> &mut libz_sys::z_stream {
-        &mut self.stream
-    }
-}
-
-impl Drop for Compressor {
-    fn drop(&mut self) {
-        match unsafe { libz_sys::deflateEnd(self.stream.as_mut()) } {
-            libz_sys::Z_STREAM_ERROR => {
-                tracing::trace!("Compression stream encountered bad state.")
-            }
-            // Ignore discarded data error because we are raw
-            libz_sys::Z_OK | libz_sys::Z_DATA_ERROR => {
-                tracing::trace!("Deallocated compression context.")
-            }
-            code => tracing::trace!("Bad zlib status encountered: {}", code),
-        }
-    }
-}
-
-impl Compressor {
-    /// construct a compressor
-    pub fn new(size: WindowBit) -> Compressor {
-        unsafe {
-            let mut stream: Box<MaybeUninit<libz_sys::z_stream>> = Box::new(MaybeUninit::zeroed());
-            let result = libz_sys::deflateInit2_(
-                stream.as_mut_ptr(),
-                9,
-                libz_sys::Z_DEFLATED,
-                -(size as i8) as c_int,
-                9,
-                libz_sys::Z_DEFAULT_STRATEGY,
-                ZLIB_VERSION.as_ptr() as *const c_char,
-                mem::size_of::<libz_sys::z_stream>() as c_int,
-            );
-            assert!(result == libz_sys::Z_OK, "Failed to initialize compresser.");
-            // SAFETY: This is exactly what the (currently unstable) Box::assume_init does.
-            let stream = Box::from_raw(Box::into_raw(stream) as *mut libz_sys::z_stream);
-            Self { stream }
-        }
-    }
-
-    /// compress data
-    pub fn compress(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
-        // tracing::debug!("compress source {:?}", input);
-        self.stream_apply(input, output, |stream| unsafe {
-            match libz_sys::deflate(stream, libz_sys::Z_SYNC_FLUSH) {
-                libz_sys::Z_OK | libz_sys::Z_BUF_ERROR => {
-                    if stream.avail_in == 0 && stream.avail_out > 0 {
-                        Some(Ok(()))
-                    } else {
-                        None
-                    }
-                }
-                code => Some(Err(code.to_string())),
-            }
-        })?;
-        // tracing::debug!("compress output {:?}", output);
-        Ok(())
-    }
-
-    /// reset compressor state
-    pub fn reset(&mut self) -> Result<(), String> {
-        match unsafe { libz_sys::deflateReset(self.stream.as_mut()) } {
-            libz_sys::Z_OK => Ok(()),
-            code => Err(format!("Failed to reset compression context: {}", code)),
-        }
-    }
-}
-
-/// permessage-deflate decompress
-///
-/// copy from ws-rs
-pub struct DeCompressor {
-    stream: Box<libz_sys::z_stream>,
-}
-
-impl Context for DeCompressor {
-    fn stream(&mut self) -> &mut libz_sys::z_stream {
-        &mut self.stream
-    }
-}
-
-unsafe impl Send for DeCompressor {}
-
-impl Drop for DeCompressor {
-    fn drop(&mut self) {
-        match unsafe { libz_sys::deflateEnd(self.stream.as_mut()) } {
-            libz_sys::Z_STREAM_ERROR => {
-                tracing::trace!("Decompression stream encountered bad state.")
-            }
-            // Ignore discarded data error because we are raw
-            libz_sys::Z_OK | libz_sys::Z_DATA_ERROR => {
-                tracing::trace!("Deallocated decompression context.")
-            }
-            code => tracing::trace!("Bad zlib status encountered: {}", code),
-        }
-    }
-}
-
-impl DeCompressor {
-    /// construct a decompressor
-    pub fn new(size: WindowBit) -> Self {
-        unsafe {
-            let mut stream: Box<MaybeUninit<libz_sys::z_stream>> = Box::new(MaybeUninit::zeroed());
-            let result = libz_sys::inflateInit2_(
-                stream.as_mut_ptr(),
-                -(size as i8) as c_int,
-                ZLIB_VERSION.as_ptr() as *const c_char,
-                mem::size_of::<libz_sys::z_stream>() as c_int,
-            );
-            assert!(
-                result == libz_sys::Z_OK,
-                "Failed to initialize decompresser."
-            );
-            let stream = Box::from_raw(Box::into_raw(stream) as *mut libz_sys::z_stream);
-            DeCompressor { stream }
-        }
-    }
-
-    /// decompress data
-    pub fn decompress(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
-        // tracing::debug!("decompress source {:?}", input);
-        self.stream_apply(input, output, |stream| unsafe {
-            match libz_sys::inflate(stream, libz_sys::Z_SYNC_FLUSH) {
-                libz_sys::Z_OK | libz_sys::Z_BUF_ERROR => {
-                    if stream.avail_in == 0 && stream.avail_out > 0 {
-                        Some(Ok(()))
-                    } else {
-                        None
-                    }
-                }
-                code => Some(Err(code.to_string())),
-            }
-        })?;
-        // tracing::debug!("decompress output {:?}", output);
-        Ok(())
-    }
-
-    /// reset decompressor state
-    pub fn reset(&mut self) -> Result<(), String> {
-        match unsafe { libz_sys::inflateReset(self.stream.as_mut()) } {
-            libz_sys::Z_OK => Ok(()),
-            code => Err(format!("Failed to reset compression context: {}", code)),
-        }
-    }
-}
-
 /// deflate frame write state
 pub struct DeflateWriteState {
     write_state: FrameWriteState,
@@ -511,7 +512,7 @@ impl DeflateWriteState {
             } else {
                 config.server_max_window_bits
             };
-            let com = Compressor::new(com_size);
+            let com = ZLibCompressStream::new(com_size);
             Some(WriteStreamHandler { config, com })
         } else {
             None
@@ -532,7 +533,8 @@ pub struct DeflateReadState {
     de: Option<ReadStreamHandler>,
     config: FrameConfig,
     fragmented: bool,
-    fragmented_data: OwnedFrame,
+    fragmented_data: Vec<u8>,
+    control_buf: Vec<u8>,
     fragmented_type: OpCode,
     is_server: bool,
 }
@@ -552,7 +554,7 @@ impl DeflateReadState {
             } else {
                 config.server_max_window_bits
             };
-            let de = DeCompressor::new(de_size);
+            let de = ZLibDeCompressStream::new(de_size);
             Some(ReadStreamHandler { config, de })
         } else {
             None
@@ -562,7 +564,8 @@ impl DeflateReadState {
             de,
             config: frame_config,
             fragmented: false,
-            fragmented_data: OwnedFrame::binary_frame(None, &[]),
+            fragmented_data: vec![],
+            control_buf: vec![],
             fragmented_type: OpCode::Binary,
             is_server,
         }
