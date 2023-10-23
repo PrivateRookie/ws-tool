@@ -401,6 +401,7 @@ impl FrameReadState {
 
 pub(crate) struct FrameBuffer {
     pub(crate) buf: Vec<u8>,
+    tmp: Vec<u8>,
     produce_idx: usize,
     consume_idx: usize,
 }
@@ -408,7 +409,8 @@ pub(crate) struct FrameBuffer {
 impl FrameBuffer {
     pub(crate) fn new() -> Self {
         Self {
-            buf: vec![0; 4096],
+            buf: vec![0; 8192],
+            tmp: vec![0; 8192],
             produce_idx: 0,
             consume_idx: 0,
         }
@@ -419,17 +421,23 @@ impl FrameBuffer {
         if remain >= payload_size {
             &mut self.buf[self.produce_idx..(self.produce_idx + payload_size)]
         } else {
-            if (self.produce_idx - self.consume_idx) * 2 > self.buf.len() {
-                self.buf.resize(payload_size - remain + self.buf.len(), 0);
-                &mut self.buf[self.produce_idx..(self.produce_idx + payload_size)]
-            } else {
-                let not_consumed_data = self.buf[self.consume_idx..self.produce_idx].to_vec();
-                if payload_size + not_consumed_data.len() > self.buf.len() {
-                    self.buf.resize(payload_size + not_consumed_data.len(), 0);
+            if self.produce_idx == self.consume_idx {
+                if payload_size > self.buf.len() {
+                    self.buf.resize(payload_size, 0);
                 }
-                self.buf[..(not_consumed_data.len())].copy_from_slice(&not_consumed_data);
                 self.consume_idx = 0;
-                self.produce_idx = not_consumed_data.len();
+                self.produce_idx = 0;
+                &mut self.buf[0..payload_size]
+            } else {
+                self.tmp.resize(self.produce_idx - self.consume_idx, 0);
+                self.tmp
+                    .copy_from_slice(&self.buf[self.consume_idx..self.produce_idx]);
+                if payload_size + self.tmp.len() > self.buf.len() {
+                    self.buf.resize(payload_size + self.tmp.len(), 0);
+                }
+                self.buf[..(self.tmp.len())].copy_from_slice(&self.tmp);
+                self.consume_idx = 0;
+                self.produce_idx = self.tmp.len();
                 &mut self.buf[self.produce_idx..(self.produce_idx + payload_size)]
             }
         }
