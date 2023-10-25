@@ -97,51 +97,58 @@ async fn main() -> Result<(), ()> {
         let listener = tokio::net::TcpListener::bind(format!("{}:{}", args.host, args.port))
             .await
             .unwrap();
-        let (stream, addr) = listener.accept().await.unwrap();
-        let stream = accepter.accept(stream).await.unwrap();
-        let stream = BufStream::with_capacity(0, 0, stream);
-        tracing::info!("got connect from {:?}", addr);
-        let (mut read, mut write) = ServerBuilder::async_accept(
-            stream,
-            default_handshake_handler,
-            // AsyncWsStringCodec::factory,
-            AsyncStringCodec::factory,
-        )
-        .await
-        .unwrap()
-        .split();
-        while let Ok(msg) = read.receive().await {
-            write.send((msg.code, msg.data)).await.unwrap();
+        loop {
+            let (stream, addr) = listener.accept().await.unwrap();
+            let stream = match accepter.accept(stream).await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    tracing::error!("{e:?}");
+                    continue;
+                }
+            };
+            let stream = BufStream::with_capacity(0, 0, stream);
+            tracing::info!("got connect from {:?}", addr);
+            let (mut read, mut write) = ServerBuilder::async_accept(
+                stream,
+                default_handshake_handler,
+                // AsyncWsStringCodec::factory,
+                AsyncStringCodec::factory,
+            )
+            .await
+            .unwrap()
+            .split();
+            while let Ok(msg) = read.receive().await {
+                write.send((msg.code, msg.data)).await.unwrap();
+            }
         }
     } else {
         tracing::info!("binding on {}:{}", args.host, args.port);
         let listener = tokio::net::TcpListener::bind(format!("{}:{}", args.host, args.port))
             .await
             .unwrap();
-        // loop {
-        let (stream, addr) = listener.accept().await.unwrap();
-
-        tracing::info!("got connect from {:?}", addr);
-        let (mut read, mut write) = ServerBuilder::async_accept(
-            stream,
-            default_handshake_handler,
-            // AsyncWsStringCodec::factory,
-            AsyncStringCodec::factory,
-        )
-        .await
-        .unwrap()
-        .split();
-
         loop {
-            match read.receive().await {
-                Ok(msg) => write.send(msg).await.unwrap(),
-                Err(e) => {
-                    dbg!(e);
-                    break;
+            let (stream, addr) = listener.accept().await.unwrap();
+
+            tracing::info!("got connect from {:?}", addr);
+            let (mut read, mut write) = ServerBuilder::async_accept(
+                stream,
+                default_handshake_handler,
+                // AsyncWsStringCodec::factory,
+                AsyncStringCodec::factory,
+            )
+            .await
+            .unwrap()
+            .split();
+
+            loop {
+                match read.receive().await {
+                    Ok(msg) => write.send(msg).await.unwrap(),
+                    Err(e) => {
+                        dbg!(e);
+                        break;
+                    }
                 }
             }
         }
     }
-
-    Ok(())
 }

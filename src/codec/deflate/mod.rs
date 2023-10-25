@@ -179,6 +179,9 @@ pub struct ZLibDeCompressStream {
     stream: Box<libz_sys::z_stream>,
 }
 
+unsafe impl Send for ZLibDeCompressStream {}
+unsafe impl Sync for ZLibDeCompressStream {}
+
 impl Drop for ZLibDeCompressStream {
     fn drop(&mut self) {
         match unsafe { libz_sys::inflateEnd(self.stream.as_mut()) } {
@@ -279,6 +282,9 @@ impl ZLibDeCompressStream {
 pub struct ZLibCompressStream {
     stream: Box<libz_sys::z_stream>,
 }
+
+unsafe impl Send for ZLibCompressStream {}
+unsafe impl Sync for ZLibCompressStream {}
 
 impl Drop for ZLibCompressStream {
     fn drop(&mut self) {

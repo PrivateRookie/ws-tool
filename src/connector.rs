@@ -54,22 +54,18 @@ mod blocking {
         host: &str,
         certs: Vec<std::path::PathBuf>,
     ) -> Result<rustls_connector::TlsStream<S>, WsError> {
+        use std::io::BufReader;
+
         let mut config = rustls_connector::RustlsConnectorConfig::new_with_webpki_roots_certs();
         let mut cert_data = vec![];
         for cert_path in certs.iter() {
             let mut pem = std::fs::File::open(cert_path).map_err(|_| {
                 WsError::CertFileNotFound(cert_path.to_str().unwrap_or_default().to_string())
             })?;
-            let mut data = vec![];
-            if let Err(e) = std::io::Read::read_to_end(&mut pem, &mut data) {
-                tracing::error!(
-                    "failed to read cert file {} {}",
-                    cert_path.display(),
-                    e.to_string()
-                );
-                continue;
-            }
-            cert_data.push(data);
+            let mut cert = BufReader::new(&mut pem);
+            let certs = rustls_pemfile::certs(&mut cert)
+                .map_err(|e| WsError::LoadCertFailed(e.to_string()))?;
+            cert_data.extend_from_slice(&certs);
         }
         config.add_parsable_certificates(&cert_data);
         let connector = config.connector_with_no_client_auth();

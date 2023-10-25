@@ -28,7 +28,7 @@ async fn main() -> Result<(), ()> {
 
 async fn run() -> Result<(), ()> {
     tracing_subscriber::fmt::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::TRACE)
         .finish()
         .try_init()
         .expect("failed to init log");

@@ -1,0 +1,20 @@
+[package]
+name = "py_ws"
+version.workspace = true
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "py_ws"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.19.0"
+pyo3-log = "0.9"
+ws-tool = { path = "../..", features = [
+    "sync",
+    "deflate_static",
+    "sync_tls_rustls",
+] }
+rustls-connector = { version = "0.16", features = ["webpki-roots-certs"] }
+http = "0.2"
