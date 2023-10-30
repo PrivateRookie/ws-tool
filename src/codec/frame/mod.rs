@@ -90,12 +90,12 @@ pub fn apply_mask(buf: &mut [u8], mask: [u8; 4]) {
 #[inline]
 fn apply_mask_array_chunk(buf: &mut [u8], mask: [u8; 4]) {
     let mask32 = u32::from_ne_bytes(mask);
-    for chunk in buf.array_chunks_mut::<4>() {
-        let val: &mut u32 = unsafe { std::mem::transmute(chunk) };
+    let mut iter = buf.chunks_exact_mut(4);
+    while let Some(chunk) = iter.next() {
+        let val: &mut u32 = unsafe { std::mem::transmute(chunk.as_mut_ptr().cast::<u32>()) };
         *val ^= mask32;
     }
-    let start_idx = buf.len() - (buf.len() % 4);
-    for (i, byte) in buf[start_idx..].iter_mut().enumerate() {
+    for (i, byte) in iter.into_remainder().iter_mut().enumerate() {
         *byte ^= mask[i & 3];
     }
 }
