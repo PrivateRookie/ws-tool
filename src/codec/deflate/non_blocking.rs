@@ -394,6 +394,35 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncDeflateCodec<S> {
             .await
     }
 
+    /// helper function to send text message
+    pub async fn text(&mut self, text: &str) -> Result<(), WsError> {
+        self.write_state
+            .async_send(&mut self.stream, OpCode::Text, text.as_bytes())
+            .await
+    }
+
+    /// helper function to send binary message
+    pub async fn binary(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Binary, data).await
+    }
+
+    /// helper function to send ping message
+    pub async fn ping(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Ping, data).await
+    }
+
+    /// helper function to send ping message
+    pub async fn pong(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Pong, data).await
+    }
+
+    /// helper method to send close message
+    pub async fn close(&mut self, code: u16, msg: &[u8]) -> Result<(), WsError> {
+        let mut data = code.to_be_bytes().to_vec();
+        data.extend_from_slice(msg);
+        self.send(OpCode::Close, &data).await
+    }
+
     /// flush stream to ensure all data are send
     pub async fn flush(&mut self) -> Result<(), WsError> {
         self.stream.flush().await.map_err(WsError::IOError)
@@ -457,6 +486,35 @@ impl<S: AsyncWrite + Unpin> AsyncDeflateSend<S> {
         self.write_state
             .async_send(&mut self.stream, code, payload)
             .await
+    }
+
+    /// helper function to send text message
+    pub async fn text(&mut self, text: &str) -> Result<(), WsError> {
+        self.write_state
+            .async_send(&mut self.stream, OpCode::Text, text.as_bytes())
+            .await
+    }
+
+    /// helper function to send binary message
+    pub async fn binary(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Binary, data).await
+    }
+
+    /// helper function to send ping message
+    pub async fn ping(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Ping, data).await
+    }
+
+    /// helper function to send ping message
+    pub async fn pong(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Pong, data).await
+    }
+
+    /// helper method to send close message
+    pub async fn close(&mut self, code: u16, msg: &[u8]) -> Result<(), WsError> {
+        let mut data = code.to_be_bytes().to_vec();
+        data.extend_from_slice(msg);
+        self.send(OpCode::Close, &data).await
     }
 
     /// flush stream to ensure all data are send

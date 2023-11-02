@@ -390,6 +390,34 @@ impl<S: Read + Write> DeflateCodec<S> {
         self.write_state.send(&mut self.stream, code, payload)
     }
 
+    /// helper function to send text message
+    pub fn text(&mut self, text: &str) -> Result<(), WsError> {
+        self.write_state
+            .send(&mut self.stream, OpCode::Text, text.as_bytes())
+    }
+
+    /// helper function to send binary message
+    pub fn binary(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Binary, data)
+    }
+
+    /// helper function to send ping message
+    pub fn ping(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Ping, data)
+    }
+
+    /// helper function to send ping message
+    pub fn pong(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Pong, data)
+    }
+
+    /// helper method to send close message
+    pub fn close(&mut self, code: u16, msg: &[u8]) -> Result<(), WsError> {
+        let mut data = code.to_be_bytes().to_vec();
+        data.extend_from_slice(msg);
+        self.send(OpCode::Close, &data)
+    }
+
     /// flush stream to ensure all data are send
     pub fn flush(&mut self) -> Result<(), WsError> {
         self.stream.flush().map_err(WsError::IOError)
@@ -449,6 +477,34 @@ impl<S: Write> DeflateSend<S> {
     /// will auto fragment **before compression** if auto_fragment_size > 0
     pub fn send(&mut self, code: OpCode, payload: &[u8]) -> Result<(), WsError> {
         self.write_state.send(&mut self.stream, code, payload)
+    }
+
+    /// helper function to send text message
+    pub fn text(&mut self, text: &str) -> Result<(), WsError> {
+        self.write_state
+            .send(&mut self.stream, OpCode::Text, text.as_bytes())
+    }
+
+    /// helper function to send binary message
+    pub fn binary(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Binary, data)
+    }
+
+    /// helper function to send ping message
+    pub fn ping(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Ping, data)
+    }
+
+    /// helper function to send ping message
+    pub fn pong(&mut self, data: &[u8]) -> Result<(), WsError> {
+        self.send(OpCode::Pong, data)
+    }
+
+    /// helper method to send close message
+    pub fn close(&mut self, code: u16, msg: &[u8]) -> Result<(), WsError> {
+        let mut data = code.to_be_bytes().to_vec();
+        data.extend_from_slice(msg);
+        self.send(OpCode::Close, &data)
     }
 
     /// flush stream to ensure all data are send

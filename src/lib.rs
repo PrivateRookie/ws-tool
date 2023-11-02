@@ -2,7 +2,6 @@
 
 #![warn(missing_docs)]
 #![cfg_attr(docrs, feature(doc_auto_cfg))]
-#![feature(array_chunks)]
 
 use std::collections::HashMap;
 
@@ -23,8 +22,12 @@ pub mod connector;
 /// helper message definition
 mod message;
 pub use message::*;
+/// simple api to create websocket connection
+pub mod simple;
 /// helper stream definition
 pub mod stream;
+
+pub use simple::ClientConfig;
 
 /// helper builder to construct websocket client
 #[derive(Debug, Clone)]
