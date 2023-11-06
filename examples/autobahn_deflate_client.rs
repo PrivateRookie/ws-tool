@@ -2,23 +2,20 @@ use rand::random;
 use tracing::*;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{DeflateCodec, PMDConfig, StringCodec, WindowBit},
+    codec::{StringCodec, WindowBit},
     errors::WsError,
     frame::{OpCode, OwnedFrame},
-    ClientBuilder,
+    ClientConfig,
 };
 
 const AGENT: &str = "deflate-client";
 
 fn get_case_count() -> Result<usize, WsError> {
-    let mut client = ClientBuilder::new()
-        .connect(
-            "ws://localhost:9002/getCaseCount".parse().unwrap(),
-            StringCodec::check_fn,
-        )
+    let uri = "ws://localhost:9002/getCaseCount";
+    let mut client = ClientConfig::default()
+        .connect_with(uri, StringCodec::check_fn)
         .unwrap();
     let msg = client.receive().unwrap().data.parse().unwrap();
-    client.receive().unwrap();
     Ok(msg)
 }
 
@@ -28,24 +25,14 @@ fn mask_key() -> [u8; 4] {
 
 fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
-    let url: http::Uri = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT)
-        .parse()
-        .unwrap();
-    let config = PMDConfig {
-        server_max_window_bits: WindowBit::Nine,
-        client_max_window_bits: WindowBit::Nine,
-        ..PMDConfig::default()
-    };
-    let (mut read, mut write) = match ClientBuilder::new()
-        .extension(config.ext_string())
-        .connect(url, DeflateCodec::check_fn)
-    {
-        Ok(client) => client.split(),
-        Err(e) => {
-            tracing::error!("{e}");
-            return Ok(());
-        }
-    };
+    let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
+    let (mut read, mut write) = ClientConfig {
+        window: Some(WindowBit::Nine),
+        ..Default::default()
+    }
+    .connect(url)
+    .unwrap()
+    .split();
     let now = std::time::Instant::now();
     loop {
         match read.receive() {
@@ -95,13 +82,9 @@ fn run_test(case: usize) -> Result<(), WsError> {
 }
 
 fn update_report() -> Result<(), WsError> {
-    let url: http::Uri = format!("ws://localhost:9002/updateReports?agent={}", AGENT)
-        .parse()
-        .unwrap();
-    let mut client = ClientBuilder::new()
-        .connect(url, StringCodec::check_fn)
-        .unwrap();
-    client.send((1000u16, String::new())).map(|_| ())
+    let url = format!("ws://localhost:9002/updateReports?agent={}", AGENT);
+    let mut client = ClientConfig::default().connect(url).unwrap();
+    client.close(1000u16, &[]).map(|_| ())
 }
 
 fn main() -> Result<(), ()> {

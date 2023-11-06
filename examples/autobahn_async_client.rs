@@ -5,32 +5,29 @@ use ws_tool::{
     codec::{AsyncFrameCodec, AsyncStringCodec},
     errors::WsError,
     frame::OpCode,
-    ClientBuilder,
+    ClientConfig,
 };
 
 const AGENT: &str = "async-client";
 
 async fn get_case_count() -> Result<usize, WsError> {
-    let mut client = ClientBuilder::new()
-        .async_connect(
-            "ws://localhost:9002/getCaseCount".parse().unwrap(),
+    let mut client = ClientConfig::default()
+        .async_connect_with(
+            "ws://localhost:9002/getCaseCount",
             AsyncStringCodec::check_fn,
         )
         .await
         .unwrap();
-    let msg = client.receive().await.unwrap().data.parse().unwrap();
-    client.receive().await.unwrap();
-    // send_close(&mut client, 1001, "".to_string()).unwrap();
+    let msg = client.receive().await.unwrap();
+    let msg = msg.data.parse().unwrap();
     Ok(msg)
 }
 
 async fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
-    let url: http::Uri = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT)
-        .parse()
-        .unwrap();
-    let (mut read, mut write) = ClientBuilder::new()
-        .async_connect(url, AsyncFrameCodec::check_fn)
+    let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
+    let (mut read, mut write) = ClientConfig::default()
+        .async_connect_with(url, AsyncFrameCodec::check_fn)
         .await
         .unwrap()
         .split();
@@ -79,14 +76,9 @@ async fn run_test(case: usize) -> Result<(), WsError> {
 }
 
 async fn update_report() -> Result<(), WsError> {
-    let url: http::Uri = format!("ws://localhost:9002/updateReports?agent={}", AGENT)
-        .parse()
-        .unwrap();
-    let mut client = ClientBuilder::new()
-        .async_connect(url, AsyncStringCodec::check_fn)
-        .await
-        .unwrap();
-    client.send((1000u16, String::new())).await.map(|_| ())
+    let url = format!("ws://localhost:9002/updateReports?agent={}", AGENT);
+    let mut client = ClientConfig::default().async_connect(url).await.unwrap();
+    client.close(1000u16, &[]).await
 }
 
 #[tokio::main]

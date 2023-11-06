@@ -5,28 +5,25 @@ use ws_tool::{
     codec::{FrameCodec, StringCodec},
     errors::WsError,
     frame::OpCode,
-    ClientBuilder,
+    ClientConfig,
 };
 
 const AGENT: &str = "client";
 
 fn get_case_count() -> Result<usize, WsError> {
     let uri = "ws://localhost:9002/getCaseCount";
-    let mut client = ClientBuilder::new()
-        .connect(uri.parse().unwrap(), StringCodec::check_fn)
+    let mut client = ClientConfig::default()
+        .connect_with(uri, StringCodec::check_fn)
         .unwrap();
     let msg = client.receive().unwrap().data.parse().unwrap();
-    client.receive().unwrap();
     Ok(msg)
 }
 
 fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
-    let url: http::Uri = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT)
-        .parse()
-        .unwrap();
-    let (mut read, mut write) = ClientBuilder::new()
-        .connect(url, FrameCodec::check_fn)
+    let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
+    let (mut read, mut write) = ClientConfig::default()
+        .connect_with(url, FrameCodec::check_fn)
         .unwrap()
         .split();
     loop {
@@ -76,13 +73,9 @@ fn run_test(case: usize) -> Result<(), WsError> {
 }
 
 fn update_report() -> Result<(), WsError> {
-    let url: http::Uri = format!("ws://localhost:9002/updateReports?agent={}", AGENT)
-        .parse()
-        .unwrap();
-    let mut client = ClientBuilder::new()
-        .connect(url, StringCodec::check_fn)
-        .unwrap();
-    client.send((1000u16, String::new())).map(|_| ())
+    let url = format!("ws://localhost:9002/updateReports?agent={}", AGENT);
+    let mut client = ClientConfig::default().connect(url).unwrap();
+    client.close(1000u16, &[]).map(|_| ())
 }
 
 fn main() -> Result<(), ()> {

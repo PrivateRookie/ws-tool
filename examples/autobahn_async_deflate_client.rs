@@ -3,24 +3,24 @@ use rand::random;
 use tracing::*;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
-    codec::{AsyncDeflateCodec, AsyncStringCodec, PMDConfig, WindowBit},
+    codec::{AsyncStringCodec, WindowBit},
     errors::WsError,
     frame::{OpCode, OwnedFrame},
-    ClientBuilder,
+    ClientConfig,
 };
 
 const AGENT: &str = "async-deflate-client";
 
 async fn get_case_count() -> Result<usize, WsError> {
-    let mut client = ClientBuilder::new()
-        .async_connect(
-            "ws://localhost:9002/getCaseCount".parse().unwrap(),
+    let mut client = ClientConfig::default()
+        .async_connect_with(
+            "ws://localhost:9002/getCaseCount",
             AsyncStringCodec::check_fn,
         )
         .await
         .unwrap();
-    let msg = client.receive().await.unwrap().data.parse().unwrap();
-    client.receive().await.unwrap();
+    let msg = client.receive().await.unwrap();
+    let msg = msg.data.parse().unwrap();
     Ok(msg)
 }
 
@@ -30,25 +30,16 @@ fn mask_key() -> [u8; 4] {
 
 async fn run_test(case: usize) -> Result<(), WsError> {
     info!("running test case {}", case);
-    let url: http::Uri = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT)
-        .parse()
-        .unwrap();
-    let config = PMDConfig {
-        server_max_window_bits: WindowBit::Nine,
-        client_max_window_bits: WindowBit::Nine,
-        ..PMDConfig::default()
-    };
-    let (mut read, mut write) = match ClientBuilder::new()
-        .extension(config.ext_string())
-        .async_connect(url, AsyncDeflateCodec::check_fn)
-        .await
-    {
-        Ok(client) => client.split(),
-        Err(e) => {
-            tracing::error!("{e}");
-            return Ok(());
-        }
-    };
+    let url = format!("ws://localhost:9002/runCase?case={}&agent={}", case, AGENT);
+    let (mut read, mut write) = ClientConfig {
+        window: Some(WindowBit::Nine),
+        ..Default::default()
+    }
+    .async_connect(url)
+    .await
+    .unwrap()
+    .split();
+
     let now = std::time::Instant::now();
     loop {
         match read.receive().await {
@@ -100,14 +91,9 @@ async fn run_test(case: usize) -> Result<(), WsError> {
 }
 
 async fn update_report() -> Result<(), WsError> {
-    let url: http::Uri = format!("ws://localhost:9002/updateReports?agent={}", AGENT)
-        .parse()
-        .unwrap();
-    let mut client = ClientBuilder::new()
-        .async_connect(url, AsyncStringCodec::check_fn)
-        .await
-        .unwrap();
-    client.send((1000u16, String::new())).await.map(|_| ())
+    let url = format!("ws://localhost:9002/updateReports?agent={}", AGENT);
+    let mut client = ClientConfig::default().async_connect(url).await.unwrap();
+    client.close(1000u16, &[]).await
 }
 
 #[tokio::main]

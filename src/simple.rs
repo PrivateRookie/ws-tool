@@ -42,22 +42,35 @@ impl Default for ClientConfig {
 }
 
 impl ClientConfig {
-    /// perform websocket handshake
-    #[cfg(feature = "sync")]
-    pub fn connect(
+    /// use default buffer size 8192
+    pub fn buffered() -> Self {
+        Self {
+            read_buf: 8192,
+            write_buf: 8192,
+            ..Default::default()
+        }
+    }
+
+    /// perform websocket handshake, use custom codec
+    pub fn connect_with<C, F>(
         &mut self,
         uri: impl TryInto<Uri, Error = http::uri::InvalidUri>,
-    ) -> Result<
-        crate::codec::DeflateCodec<crate::stream::BufStream<crate::stream::SyncStream>>,
-        WsError,
-    > {
+        mut check_fn: F,
+    ) -> Result<C, WsError>
+    where
+        F: FnMut(
+            String,
+            http::Response<()>,
+            crate::stream::BufStream<crate::stream::SyncStream>,
+        ) -> Result<C, WsError>,
+    {
         let (uri, mode, builder) = self.prepare(uri)?;
         let stream = crate::connector::tcp_connect(&uri)?;
         (self.set_socket_fn)(&stream)?;
         let check_fn = |key, resp, stream| {
             let stream =
                 crate::stream::BufStream::with_capacity(self.read_buf, self.write_buf, stream);
-            crate::codec::DeflateCodec::check_fn(key, resp, stream)
+            check_fn(key, resp, stream)
         };
         match mode {
             Mode::WS => builder.with_stream(uri, crate::stream::SyncStream::Raw(stream), check_fn),
@@ -79,13 +92,30 @@ impl ClientConfig {
 
     /// perform websocket handshake
     #[cfg(feature = "sync")]
-    pub async fn async_connect(
+    pub fn connect(
         &mut self,
         uri: impl TryInto<Uri, Error = http::uri::InvalidUri>,
     ) -> Result<
-        crate::codec::AsyncDeflateCodec<tokio::io::BufStream<crate::stream::AsyncStream>>,
+        crate::codec::DeflateCodec<crate::stream::BufStream<crate::stream::SyncStream>>,
         WsError,
     > {
+        self.connect_with(uri, crate::codec::DeflateCodec::check_fn)
+    }
+
+    /// perform websocket handshake
+    #[cfg(feature = "async")]
+    pub async fn async_connect_with<C, F>(
+        &mut self,
+        uri: impl TryInto<Uri, Error = http::uri::InvalidUri>,
+        mut check_fn: F,
+    ) -> Result<C, WsError>
+    where
+        F: FnMut(
+            String,
+            http::Response<()>,
+            tokio::io::BufStream<crate::stream::AsyncStream>,
+        ) -> Result<C, WsError>,
+    {
         let (uri, mode, builder) = self.prepare(uri)?;
         let stream = crate::connector::async_tcp_connect(&uri).await?;
         let stream = stream.into_std()?;
@@ -93,7 +123,7 @@ impl ClientConfig {
         let stream = tokio::net::TcpStream::from_std(stream)?;
         let check_fn = |key, resp, stream: crate::stream::AsyncStream| {
             let stream = tokio::io::BufStream::with_capacity(self.read_buf, self.write_buf, stream);
-            crate::codec::AsyncDeflateCodec::check_fn(key, resp, stream)
+            check_fn(key, resp, stream)
         };
         match mode {
             Mode::WS => {
@@ -134,6 +164,19 @@ impl ClientConfig {
         }
     }
 
+    /// perform websocket handshake
+    #[cfg(feature = "async")]
+    pub async fn async_connect(
+        &mut self,
+        uri: impl TryInto<Uri, Error = http::uri::InvalidUri>,
+    ) -> Result<
+        crate::codec::AsyncDeflateCodec<tokio::io::BufStream<crate::stream::AsyncStream>>,
+        WsError,
+    > {
+        self.async_connect_with(uri, crate::codec::AsyncDeflateCodec::check_fn)
+            .await
+    }
+
     fn prepare(
         &mut self,
         uri: impl TryInto<Uri, Error = http::uri::InvalidUri>,
@@ -156,80 +199,5 @@ impl ClientConfig {
             builder = builder.header(k, v);
         }
         Ok((uri, mode, builder))
-    }
-}
-
-/// server service config
-#[derive(Default, Clone, Debug)]
-pub struct ServerConfig {
-    /// read buffer size
-    pub read_buf: usize,
-    /// write buffer size
-    pub write_buf: usize,
-    /// custom certification path
-    pub cert: PathBuf,
-    /// custom key path
-    pub key: PathBuf,
-    /// deflate window size, if none, deflate will be disabled
-    pub window: Option<WindowBit>,
-    /// enable/disable deflate context taker over parameter
-    pub context_take_over: bool,
-}
-
-impl ServerConfig {
-    /// accept websocket stream
-    ///
-    ///
-    #[cfg(feature = "sync")]
-    pub fn accept(
-        &self,
-        stream: std::net::TcpStream,
-        wrap_tls: bool,
-    ) -> Result<
-        crate::codec::DeflateCodec<crate::stream::BufStream<crate::stream::SyncStream>>,
-        WsError,
-    > {
-        let stream = if wrap_tls {
-            if cfg!(feature = "sync_tls_rustls") {
-                let mut certs = vec![];
-                if let Ok(mut r) =
-                    std::fs::File::open(&self.cert).map(|fd| std::io::BufReader::new(fd))
-                {
-                    if let Ok(items) = rustls_pemfile::certs(&mut r) {
-                        items.into_iter().for_each(|data| {
-                            let c = rustls_connector::rustls::Certificate(data);
-                            certs.push(c)
-                        })
-                    };
-                }
-                let mut keys = vec![];
-                if let Ok(mut r) =
-                    std::fs::File::open(&self.key).map(|fd| std::io::BufReader::new(fd))
-                {
-                    if let Ok(mut items) = rustls_pemfile::pkcs8_private_keys(&mut r) {
-                        keys.append(&mut items);
-                    }
-                }
-                let config = rustls_connector::rustls::ServerConfig::builder()
-                    .with_safe_defaults()
-                    .with_no_client_auth()
-                    .with_single_cert(
-                        // vec![Certificate(cert_content.into())],
-                        // PrivateKey(key_content.into()),
-                        certs,
-                        rustls_connector::rustls::PrivateKey(keys.remove(0)),
-                    )
-                    .map_err(|e| WsError::LoadCertFailed(e.to_string()))?;
-                let accept = rustls_connector::rustls::server::Acceptor::default();
-            } else if cfg!(feature = "sync_tls_native") {
-                todo!()
-            } else {
-                panic!("for ssl connection, sync_tls_native or sync_tls_rustls feature is required")
-            }
-            todo!()
-        } else {
-            crate::stream::SyncStream::Raw(stream)
-        };
-        todo!()
     }
 }
