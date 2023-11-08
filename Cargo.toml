@@ -50,6 +50,7 @@ native-tls = { version = "0.2", optional = true }
 
 # deflate deps
 libz-sys = { version = "1.1.8", optional = true }
+poem = { version = "1.3.58", features = ["websocket"], optional = true }
 
 # proxy deps
 
@@ -72,6 +73,8 @@ async_tls_native = ["async", "tokio-native-tls"]
 deflate = ["libz-sys"]
 deflate_static = ["libz-sys/static"]
 deflate_ng = ["libz-sys/zlib-ng"]
+poem = ["dep:poem", "async", "deflate"]
+
 
 [dev-dependencies]
 fastrand = "2.0.0"

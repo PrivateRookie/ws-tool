@@ -29,6 +29,9 @@ pub mod stream;
 
 pub use simple::ClientConfig;
 
+/// some helper extension
+pub mod extension;
+
 /// helper builder to construct websocket client
 #[derive(Debug, Clone)]
 pub struct ClientBuilder {
@@ -207,24 +210,44 @@ mod blocking {
         ) -> Result<C, WsError>
         where
             S: Read + Write,
-            F1: FnMut(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
+            F1: FnMut(
+                http::Request<()>,
+            ) -> Result<
+                (http::Request<()>, http::Response<T>),
+                (http::Response<T>, WsError),
+            >,
             F2: FnMut(http::Request<()>, S) -> Result<C, WsError>,
             T: ToString + std::fmt::Debug,
         {
             let req = handle_handshake(&mut stream)?;
-            let (req, resp) = handshake_handler(req)?;
-            let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
-            resp.headers().iter().for_each(|(k, v)| {
-                resp_lines.push(format!("{}: {}", k, v.to_str().unwrap_or_default()))
-            });
-            resp_lines.push("\r\n".to_string());
-            stream.write_all(resp_lines.join("\r\n").as_bytes())?;
-            tracing::debug!("{:?}", &resp);
-            if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
-                return Err(WsError::HandShakeFailed(resp.body().to_string()));
+            match handshake_handler(req) {
+                Err((resp, e)) => {
+                    write_resp(resp, &mut stream)?;
+                    return Err(e);
+                }
+                Ok((req, resp)) => {
+                    write_resp(resp, &mut stream)?;
+                    codec_factory(req, stream)
+                }
             }
-            codec_factory(req, stream)
         }
+    }
+
+    fn write_resp<S, T>(resp: http::Response<T>, stream: &mut S) -> Result<(), WsError>
+    where
+        S: Read + Write,
+        T: ToString + std::fmt::Debug,
+    {
+        let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
+        resp.headers().iter().for_each(|(k, v)| {
+            resp_lines.push(format!("{}: {}", k, v.to_str().unwrap_or_default()))
+        });
+        resp_lines.push("\r\n".to_string());
+        stream.write_all(resp_lines.join("\r\n").as_bytes())?;
+        tracing::debug!("{:?}", &resp);
+        Ok(if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+            return Err(WsError::HandShakeFailed(resp.body().to_string()));
+        })
     }
 }
 
@@ -342,24 +365,44 @@ mod non_blocking {
         ) -> Result<C, WsError>
         where
             S: AsyncRead + AsyncWrite + Unpin,
-            F1: FnMut(http::Request<()>) -> Result<(http::Request<()>, http::Response<T>), WsError>,
+            F1: FnMut(
+                http::Request<()>,
+            ) -> Result<
+                (http::Request<()>, http::Response<T>),
+                (http::Response<T>, WsError),
+            >,
             F2: FnMut(http::Request<()>, S) -> Result<C, WsError>,
             T: ToString + Debug,
         {
             let req = async_handle_handshake(&mut stream).await?;
-            let (req, resp) = handshake_handler(req)?;
-            let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
-            resp.headers().iter().for_each(|(k, v)| {
-                resp_lines.push(format!("{}: {}", k, v.to_str().unwrap_or_default()))
-            });
-            resp_lines.push("\r\n".to_string());
-            stream.write_all(resp_lines.join("\r\n").as_bytes()).await?;
-            tracing::debug!("{:?}", &resp);
-            if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
-                return Err(WsError::HandShakeFailed(resp.body().to_string()));
+            match handshake_handler(req) {
+                Ok((req, resp)) => {
+                    async_write_resp(resp, &mut stream).await?;
+                    codec_factory(req, stream)
+                }
+                Err((resp, e)) => {
+                    async_write_resp(resp, &mut stream).await?;
+                    return Err(e);
+                }
             }
-            codec_factory(req, stream)
         }
+    }
+
+    async fn async_write_resp<S, T>(resp: http::Response<T>, stream: &mut S) -> Result<(), WsError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+        T: ToString + Debug,
+    {
+        let mut resp_lines = vec![format!("{:?} {}", resp.version(), resp.status())];
+        resp.headers().iter().for_each(|(k, v)| {
+            resp_lines.push(format!("{}: {}", k, v.to_str().unwrap_or_default()))
+        });
+        resp_lines.push("\r\n".to_string());
+        stream.write_all(resp_lines.join("\r\n").as_bytes()).await?;
+        tracing::debug!("{:?}", &resp);
+        Ok(if resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+            return Err(WsError::HandShakeFailed(resp.body().to_string()));
+        })
     }
 }
 

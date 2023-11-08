@@ -1,21 +1,14 @@
 use std::{io::Write, path::PathBuf};
 
 use clap::Parser;
-use http::Uri;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::{
-    codec::AsyncStringCodec,
-    connector::{async_tcp_connect, async_wrap_rustls, get_host, get_scheme},
-    protocol::Mode,
-    stream::AsyncRW,
-    ClientBuilder,
-};
+use ws_tool::{codec::AsyncStringCodec, ClientConfig};
 
 /// websocket client demo with raw frame
 #[derive(Parser)]
 struct Args {
-    uri: Uri,
+    uri: String,
     /// cert file path
     #[arg(short, long)]
     cert: Option<Vec<PathBuf>>,
@@ -32,31 +25,15 @@ async fn run() -> Result<(), ()> {
         .finish()
         .try_init()
         .expect("failed to init log");
+
     let args = Args::parse();
-    let mode = get_scheme(&args.uri).unwrap();
-    let stream = async_tcp_connect(&args.uri).await.unwrap();
-    let stream: Box<dyn AsyncRW> = match mode {
-        Mode::WS => Box::new(stream),
-        Mode::WSS => {
-            let stream = async_wrap_rustls(
-                stream,
-                get_host(&args.uri).unwrap(),
-                args.cert.unwrap_or_default(),
-            )
-            .await
-            .unwrap();
-            Box::new(stream)
-        }
-    };
-    let builder = ClientBuilder::new();
-    let mut client = builder
-        .async_with_stream(
-            args.uri.to_string().try_into().unwrap(),
-            stream,
-            AsyncStringCodec::check_fn,
-        )
-        .await
-        .unwrap();
+    let mut client = ClientConfig {
+        certs: args.cert.unwrap_or_default(),
+        ..Default::default()
+    }
+    .async_connect_with(args.uri, AsyncStringCodec::check_fn)
+    .await
+    .unwrap();
 
     let mut input = String::new();
     loop {
@@ -71,6 +48,7 @@ async fn run() -> Result<(), ()> {
             Ok(item) => {
                 println!("[RECV] > {}", item.data.trim());
                 if item.data == "quit" {
+                    client.close(1000, "bye").await.ok();
                     break;
                 }
                 input.clear()

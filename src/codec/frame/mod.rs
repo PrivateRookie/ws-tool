@@ -483,7 +483,7 @@ impl FrameWriteState {
 /// do standard handshake check and return response
 pub fn default_handshake_handler(
     req: http::Request<()>,
-) -> Result<(http::Request<()>, http::Response<String>), WsError> {
+) -> Result<(http::Request<()>, http::Response<String>), (http::Response<String>, WsError)> {
     match standard_handshake_req_check(&req) {
         Ok(_) => {
             let key = req.headers().get("sec-websocket-key").unwrap();
@@ -504,7 +504,7 @@ pub fn default_handshake_handler(
                 .header("Content-Type", "text/html")
                 .body(e.to_string())
                 .unwrap();
-            Ok((req, resp))
+            Err((resp, e))
         }
     }
 }

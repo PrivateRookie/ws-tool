@@ -66,8 +66,7 @@ impl TryFrom<u8> for WindowBit {
 /// permessage-deflate req handler
 pub fn deflate_handshake_handler(
     req: http::Request<()>,
-) -> Result<(http::Request<()>, http::Response<String>), WsError> {
-    // TODO return error response if parse error
+) -> Result<(http::Request<()>, http::Response<String>), (http::Response<String>, WsError)> {
     let (req, mut resp) = default_handshake_handler(req)?;
     let mut configs: Vec<PMDConfig> = vec![];
     for (k, v) in req.headers() {
@@ -77,7 +76,15 @@ pub fn deflate_handshake_handler(
                     Ok(mut conf) => {
                         configs.append(&mut conf);
                     }
-                    Err(e) => return Err(WsError::HandShakeFailed(e)),
+                    Err(e) => {
+                        let resp = http::Response::builder()
+                            .version(http::Version::HTTP_11)
+                            .status(http::StatusCode::BAD_REQUEST)
+                            .header("Content-Type", "text/html")
+                            .body(e.clone())
+                            .unwrap();
+                        return Err((resp, WsError::HandShakeFailed(e)));
+                    }
                 }
             }
         }
