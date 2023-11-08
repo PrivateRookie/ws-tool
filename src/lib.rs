@@ -22,12 +22,14 @@ pub mod connector;
 /// helper message definition
 mod message;
 pub use message::*;
+#[cfg(feature = "simple")]
 /// simple api to create websocket connection
 pub mod simple;
+#[cfg(feature = "simple")]
+pub use simple::ClientConfig;
+
 /// helper stream definition
 pub mod stream;
-
-pub use simple::ClientConfig;
 
 /// some helper extension
 pub mod extension;

@@ -86,7 +86,9 @@ mod blocking {
                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                     match self {
                         Self::Raw(_) => f.debug_tuple("Raw").finish(),
+                        #[cfg(feature = "sync_tls_rustls")]
                         Self::Rustls(_) => f.debug_tuple("Rustls").finish(),
+                        #[cfg(feature = "sync_tls_native")]
                         Self::NativeTls(_) => f.debug_tuple("NativeTls").finish(),
                     }
                 }

@@ -77,12 +77,35 @@ impl ClientConfig {
             Mode::WSS => {
                 let host = get_host(&uri)?;
                 if cfg!(feature = "sync_tls_rustls") {
-                    let stream = crate::connector::wrap_rustls(stream, host, self.certs.clone())?;
-                    builder.with_stream(uri, crate::stream::SyncStream::Rustls(stream), check_fn)
+                    #[cfg(feature = "sync_tls_rustls")]
+                    {
+                        let stream =
+                            crate::connector::wrap_rustls(stream, host, self.certs.clone())?;
+                        builder.with_stream(
+                            uri,
+                            crate::stream::SyncStream::Rustls(stream),
+                            check_fn,
+                        )
+                    }
+                    #[cfg(not(feature = "sync_tls_rustls"))]
+                    {
+                        panic!("")
+                    }
                 } else if cfg!(feature = "sync_tls_native") {
-                    let stream =
-                        crate::connector::wrap_native_tls(stream, host, self.certs.clone())?;
-                    builder.with_stream(uri, crate::stream::SyncStream::NativeTls(stream), check_fn)
+                    #[cfg(feature = "sync_tls_native")]
+                    {
+                        let stream =
+                            crate::connector::wrap_native_tls(stream, host, self.certs.clone())?;
+                        builder.with_stream(
+                            uri,
+                            crate::stream::SyncStream::NativeTls(stream),
+                            check_fn,
+                        )
+                    }
+                    #[cfg(not(feature = "sync_tls_native"))]
+                    {
+                        panic!("")
+                    }
                 } else {
                     panic!("for ssl connection, sync_tls_native or sync_tls_rustls feature is required")
                 }
@@ -134,29 +157,46 @@ impl ClientConfig {
             Mode::WSS => {
                 let host = get_host(&uri)?;
                 if cfg!(feature = "async_tls_rustls") {
-                    let stream =
-                        crate::connector::async_wrap_rustls(stream, host, self.certs.clone())
-                            .await?;
-                    builder
-                        .async_with_stream(
-                            uri,
-                            crate::stream::AsyncStream::Rustls(tokio_rustls::TlsStream::Client(
-                                stream,
-                            )),
-                            check_fn,
-                        )
-                        .await
+                    #[cfg(feature = "async_tls_rustls")]
+                    {
+                        let stream =
+                            crate::connector::async_wrap_rustls(stream, host, self.certs.clone())
+                                .await?;
+                        builder
+                            .async_with_stream(
+                                uri,
+                                crate::stream::AsyncStream::Rustls(
+                                    tokio_rustls::TlsStream::Client(stream),
+                                ),
+                                check_fn,
+                            )
+                            .await
+                    }
+                    #[cfg(not(feature = "async_tls_rustls"))]
+                    {
+                        panic!("")
+                    }
                 } else if cfg!(feature = "async_tls_native") {
-                    let stream =
-                        crate::connector::async_wrap_native_tls(stream, host, self.certs.clone())
-                            .await?;
-                    builder
-                        .async_with_stream(
-                            uri,
-                            crate::stream::AsyncStream::NativeTls(stream),
-                            check_fn,
+                    #[cfg(feature = "async_tls_native")]
+                    {
+                        let stream = crate::connector::async_wrap_native_tls(
+                            stream,
+                            host,
+                            self.certs.clone(),
                         )
-                        .await
+                        .await?;
+                        builder
+                            .async_with_stream(
+                                uri,
+                                crate::stream::AsyncStream::NativeTls(stream),
+                                check_fn,
+                            )
+                            .await
+                    }
+                    #[cfg(not(feature = "async_tls_native"))]
+                    {
+                        panic!("")
+                    }
                 } else {
                     panic!("for ssl connection, async_tls_native or async_tls_rustls feature is required")
                 }
