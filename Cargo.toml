@@ -1,5 +1,5 @@
 [workspace]
-package.version = "0.9.0"
+package.version = "0.10.0"
 members = [".", "ffi/py"]
 
 [package]

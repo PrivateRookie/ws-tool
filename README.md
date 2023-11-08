@@ -10,8 +10,7 @@ An easy to use websocket client/server toolkit, supporting blocking/async IO.
 | async    | ✅     | ✅     | ✅   | ✅                | ✅       | ✅             | ✅             |
 
 For tls connection, ws-tool support both native-tls and rustls,
-ws-tool also support simd unmask(need simd feature in nightly build) and simd utf checking for faster unmask & utf8 string checking.
-
+ws-tool also support simd utf checking for faster utf8 string checking.
 
 It's tested by autobaha test suit. see [test report](https://privaterookie.github.io/ws-tool-stat/clients/index.html) of 4 example
 
@@ -26,12 +25,11 @@ cargo run --example <example_name> --all-features
 ```
 command.
 
-See [examples/server](examples/server.rs) for building a websocket echo server with self signed certs.
-
+See 
+- [examples/echo_async_server](examples/server.rs) for building a websocket echo server with self signed cert.
 - [examples/echo](examples/echo.rs) demonstrates how to connect to a server.
-- [echo_server](examples/echo_server.rs) demonstrates how to setup a server.
-- [deflate_client](examples/deflate_client.rs) and [deflate_server](examples/deflate_server.rs) demostrate how to enable permessage-deflate extension
-- [binance](examples/binance.rs) demostrates how to connect to wss server via http/socks proxy
+- [binance](examples/binance.rs) demonstrates how to connect to wss server via http/socks proxy
+- [poem](examples/poem.rs) demonstrates how to integrate with poem web framework.
 - autobaha_xxx_client are autobaha test suit client
 - bench_xxx are benchmark server examples, showing how to control read/write buffer or other low level config
 

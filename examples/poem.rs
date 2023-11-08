@@ -1,14 +1,11 @@
-use poem::{get, handler, listener::TcpListener, IntoResponse, Route, Server};
+use poem::{get, handler, listener::TcpListener, web::Path, IntoResponse, Route, Server};
 use tokio::main;
 use tracing::{info, Level};
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::codec::{default_handshake_handler, AsyncStringCodec};
 
 #[handler]
-async fn test(
-    poem::web::Path(prefix): poem::web::Path<String>,
-    req: &poem::Request,
-) -> impl IntoResponse {
+async fn test(Path(prefix): Path<String>, req: &poem::Request) -> impl IntoResponse {
     ws_tool::extension::poem_ext::adapt(
         req,
         default_handshake_handler,
