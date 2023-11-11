@@ -63,23 +63,23 @@ My test machine is i9-12900k and 32GB, 3200MHz ddr4, and load test client is [lo
 Roughly compare with [EchoSever example](https://github.com/uNetworking/uWebSockets/blob/master/examples/EchoServer.cpp),  [tungstenite](./examples/bench_tungstenite.rs)
 
 
-The following are the benchmark(1 connection only) results, there is no tungstenite with buffered stream test case, because there tungstenite does not work well with buffered stream. ws-tool test cases are all built with simd feature enabled, tokio runtime use current_thread flavor.
+The following are the benchmark(1 connection only) results, there is no tungstenite with buffered stream test case, because there tungstenite does not work well with buffered stream, fastwebsockets is not added, because it's performance is very bad in this test case, if you know how to improve fastwebsockets performance, please open a PR! tokio runtime use current_thread flavor.
 
 
 ### 300 bytes payload size, 100000000 messages
 
 ```rust
-cargo lt -- -p 300 --count 100000 -t 1 <url>
+cargo lt -- -b 819200 -p 300 --count 100000 -t 1 <url>
 ```
 
-| server                        | count     | Duration(ms) | Message/sec    |
-| ----------------------------- | --------- | ------------ | -------------- |
-| uWebSocket                    | 100000000 | 16798        | 5953089.65     |
-| tungstenite                   | 100000000 | 19905        | 5023863.35     |
-| bench_server(no buffer)       | 100000000 | 42395        | 2358768.72     |
-| bench_server(8k)              | 100000000 | 16541        | **6045583.70** |
-| bench_async_server(no buffer) | 100000000 | 45774        | 2184646.31     |
-| bench_async_server(8k)        | 100000000 | 16360        | **6112469.44** |
+| server                   | count     | Duration(ms) | Message/sec     |
+| ------------------------ | --------- | ------------ | --------------- |
+| uWebSocket               | 100000000 | 10014        | 9986019.57      |
+| tungstenite              | 100000000 | 21566        | 4636928.50      |
+| bench_server(8k)         | 100000000 | 29597        | 3378720.82      |
+| bench_server(800k)       | 100000000 | 9320         | **10729613.73** |
+| bench_async_server(8k)   | 100000000 | 17846        | 5603496.58      |
+| bench_async_server(800k) | 100000000 | 14006        | 7139797.23      |
 
 
 ### 1M bytes payload size, 100000 messages
@@ -90,13 +90,12 @@ cargo lt -- -p 1048576 --count 100 -t 1 <url>
 
 | server                        | count  | Duration(ms) | Message/sec |
 | ----------------------------- | ------ | ------------ | ----------- |
-| uWebSocket                    | 100000 | 34900        | 2865.33     |
-| tungstenite                   | 100000 | 38745        | 2580.98     |
-| bench_server(no buffer)       | 100000 | 29854        | 3349.63     |
-| bench_server(8k)              | 100000 | 28887        | **3461.76** |
-| bench_async_server(no buffer) | 100000 | 29280        | **3415.30** |
-| bench_async_server(8k)        | 100000 | 29384        | 3403.21     |
-
+| uWebSocket                    | 100000 | 34195        | 2924.40     |
+| tungstenite                   | 100000 | 40139        | 2491.34     |
+| bench_server(no buffer)       | 100000 | 16405        | **6095.70** |
+| bench_server(8k)              | 100000 | 17240        | 5800.46     |
+| bench_async_server(no buffer) | 100000 | 17190        | 5817.34     |
+| bench_async_server(8k)        | 100000 | 17027        | 5873.03     |
 
 
 you can try more combinations with [load_test](./examples/load_test.rs) tool
