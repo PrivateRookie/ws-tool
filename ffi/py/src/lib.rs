@@ -245,3 +245,23 @@ fn py_ws(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(connect, m)?)?;
     Ok(())
 }
+
+#[pyclass]
+/// client connection config
+pub struct NClientConfig {
+    /// read buffer size
+    pub read_buf: usize,
+    /// write buffer size
+    pub write_buf: usize,
+    /// custom certification path
+    pub certs: Vec<PathBuf>,
+    /// deflate window size, if none, deflate will be disabled
+    pub window: Option<WindowBit>,
+    /// enable/disable deflate context taker over parameter
+    pub context_take_over: bool,
+    /// extra header when perform websocket protocol handshake
+    pub extra_headers: HashMap<String, String>,
+    /// modified socket option after create tcp socket, this function will be applied
+    /// before start tls session
+    pub set_socket_fn: Box<dyn FnMut(&std::net::TcpStream) -> Result<(), WsError> + Send>,
+}
