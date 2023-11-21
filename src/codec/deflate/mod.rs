@@ -472,7 +472,7 @@ impl PMDConfig {
                     }
 
                     if lower.starts_with(CLIENT_MAX_WINDOW_BITS) {
-                        if counter.server_max_window_bits {
+                        if counter.client_max_window_bits {
                             return Err(format!("got multiple {CLIENT_MAX_WINDOW_BITS} params"));
                         }
 
