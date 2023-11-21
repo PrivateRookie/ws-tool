@@ -89,6 +89,7 @@ serde = { version = "1", features = ["derive"] }
 hproxy = { version = "0.1", features = ["sync", "async"] }
 sproxy = { version = "0.1", features = ["sync", "async"] }
 tabled = "0.13.0"
+socks = "0.3.4"
 # benchmark deps
 tungstenite = "0.20.0"
 criterion = { version = "0.5", features = ["html_reports"] }
