@@ -18,6 +18,8 @@ mod blocking {
             sync::{Arc, Mutex},
         };
 
+        use crate::codec::Split;
+
         /// reader part of a stream
         pub struct ReadHalf<T> {
             /// inner stream
@@ -64,6 +66,32 @@ mod blocking {
 
             fn flush(&mut self) -> std::io::Result<()> {
                 try_lock!(self.inner).flush()
+            }
+        }
+
+        #[cfg(feature = "sync_tls_rustls")]
+        impl<S: Read + Write> Split for rustls_connector::TlsStream<S> {
+            type R = ReadHalf<rustls_connector::TlsStream<S>>;
+
+            type W = WriteHalf<rustls_connector::TlsStream<S>>;
+
+            fn split(self) -> (Self::R, Self::W) {
+                let inner = Arc::new(Mutex::new(self));
+                let inner_c = inner.clone();
+                (ReadHalf { inner }, WriteHalf { inner: inner_c })
+            }
+        }
+
+        #[cfg(feature = "sync_tls_native")]
+        impl<S: Read + Write> Split for native_tls::TlsStream<S> {
+            type R = ReadHalf<native_tls::TlsStream<S>>;
+
+            type W = WriteHalf<native_tls::TlsStream<S>>;
+
+            fn split(self) -> (Self::R, Self::W) {
+                let inner = Arc::new(Mutex::new(self));
+                let inner_c = inner.clone();
+                (ReadHalf { inner }, WriteHalf { inner: inner_c })
             }
         }
     }
