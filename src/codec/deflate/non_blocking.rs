@@ -174,7 +174,7 @@ impl DeflateReadState {
                 error: ProtocolError::CompressedControlFrame,
             });
         }
-        if !is_data_frame {
+        if !is_data_frame || !compressed {
             return Ok((header, data.to_vec()));
         }
         let frame = match self.de.as_mut() {
