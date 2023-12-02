@@ -6,7 +6,8 @@ use std::{
 };
 
 use clap::Parser;
-use tracing::Level;
+use rayon::prelude::*;
+use tracing::{info, Level};
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{BytesCodec, PMDConfig, WindowBit},
@@ -59,10 +60,12 @@ fn main() -> Result<(), ()> {
         client_max_window_bits: args.window,
         ..Default::default()
     };
-    let handlers = (0..args.conn).map(|conn_idx| {
-        let uri = args.uri.clone();
-        let pmd_conf = pmd_conf.clone();
-        std::thread::spawn(move || {
+    let all_data: Vec<(usize, HashMap<usize, Duration>)> = (0..args.conn)
+        .into_par_iter()
+        .map(|conn_idx| {
+            let uri = args.uri.clone();
+            let pmd_conf = pmd_conf.clone();
+            info!("worker {conn_idx} started");
             let builder = ClientBuilder::new().extension(pmd_conf.ext_string());
             let stat: HashMap<usize, Duration> = (0..args.total)
                 .map(|idx| {
@@ -111,9 +114,9 @@ fn main() -> Result<(), ()> {
                 .collect();
             (conn_idx, stat)
         })
-    });
+        .collect();
     let mut stat: Vec<Record> = vec![];
-    for (connection, data) in handlers.into_iter().filter_map(|h| h.join().ok()) {
+    for (connection, data) in all_data {
         for (iteration, v) in data {
             let duration = v.as_millis();
             let qps = count as f64 / duration as f64 * 1000.0;
