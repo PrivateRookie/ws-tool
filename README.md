@@ -9,6 +9,11 @@ An easy to use websocket client/server toolkit, supporting blocking/async IO.
 | blocking | ✅     | ✅     | ✅   | ✅                | ✅       | ✅             | ✅             |
 | async    | ✅     | ✅     | ✅   | ✅                | ✅       | ✅             | ✅             |
 
+web framework integration
+
+- **axum** see [examples/ext_axum](./examples/ext_axum.rs)
+- **poem** see [examples/ext_poem](./examples/ext_poem.rs)
+
 For tls connection, ws-tool support both native-tls and rustls,
 ws-tool also support simd utf checking for faster utf8 string checking.
 
