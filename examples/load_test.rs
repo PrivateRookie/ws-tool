@@ -1,14 +1,14 @@
+use clap::Parser;
+use rayon::prelude::*;
 use std::{
     collections::HashMap,
     net::TcpStream,
     num::ParseIntError,
     time::{Duration, Instant},
 };
-
-use clap::Parser;
-use rayon::prelude::*;
 use tracing::{info, Level};
 use tracing_subscriber::util::SubscriberInitExt;
+use ws_tool::http;
 use ws_tool::{
     codec::{BytesCodec, PMDConfig, WindowBit},
     frame::OpCode::Close,

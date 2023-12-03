@@ -2,6 +2,7 @@ use clap::Parser;
 use tracing::Level;
 use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
+    http,
     codec::AsyncStringCodec,
     connector::{async_tcp_connect, async_wrap_rustls, get_host},
     ClientBuilder,

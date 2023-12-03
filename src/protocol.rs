@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-
+use crate::http;
 use bytes::BytesMut;
 use sha1::Digest;
+use std::collections::HashMap;
+use std::fmt::Debug;
 
 use crate::errors::WsError;
 
@@ -132,6 +132,7 @@ impl Mode {
 
 #[cfg(feature = "sync")]
 mod blocking {
+    use crate::http;
     use std::{
         collections::HashMap,
         io::{Read, Write},
@@ -190,6 +191,7 @@ pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking {
+    use crate::http;
     use std::collections::HashMap;
 
     use bytes::{BufMut, BytesMut};

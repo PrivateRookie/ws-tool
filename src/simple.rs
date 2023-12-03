@@ -1,3 +1,5 @@
+use crate::http;
+use crate::http::Uri;
 use crate::{
     codec::{PMDConfig, WindowBit},
     connector::{get_host, get_scheme},
@@ -5,7 +7,6 @@ use crate::{
     protocol::Mode,
     ClientBuilder,
 };
-use http::Uri;
 use std::{collections::HashMap, path::PathBuf};
 
 /// client connection config

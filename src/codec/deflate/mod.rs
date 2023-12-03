@@ -1,9 +1,9 @@
+use crate::http;
 use core::slice;
 use std::{
     ffi::{c_char, c_int, c_uint},
     mem::{self, transmute, MaybeUninit},
 };
-
 /// permessage-deflate id
 pub const EXT_ID: &str = "permessage-deflate";
 /// server_no_context_takeover param

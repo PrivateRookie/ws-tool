@@ -1,7 +1,4 @@
-use bytes::Buf;
-use std::borrow::Cow;
-use tokio::io::{AsyncRead, AsyncWrite};
-
+use crate::http;
 use crate::{
     codec::{
         AsyncFrameCodec, AsyncFrameRecv, AsyncFrameSend, FrameConfig, FrameReadState,
@@ -12,6 +9,9 @@ use crate::{
     protocol::standard_handshake_resp_check,
     Message,
 };
+use bytes::Buf;
+use std::borrow::Cow;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 macro_rules! impl_recv {
     () => {

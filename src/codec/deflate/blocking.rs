@@ -1,14 +1,14 @@
 use std::io::{Read, Write};
 
-use bytes::BytesMut;
-use rand::random;
-
+use crate::http;
 use crate::{
     codec::{apply_mask, FrameConfig, Split},
     errors::{ProtocolError, WsError},
     frame::{ctor_header, OpCode, OwnedFrame, SimplifiedHeader},
     protocol::standard_handshake_resp_check,
 };
+use bytes::BytesMut;
+use rand::random;
 
 use super::{DeflateReadState, DeflateWriteState, PMDConfig};
 

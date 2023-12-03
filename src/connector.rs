@@ -1,5 +1,5 @@
-use http::Uri;
-
+use crate::http;
+use crate::http::Uri;
 use crate::{errors::WsError, protocol::Mode};
 
 /// get websocket scheme
@@ -19,9 +19,9 @@ pub fn get_host(uri: &Uri) -> Result<&str, WsError> {
 
 #[cfg(feature = "sync")]
 mod blocking {
-    use std::net::TcpStream;
-
     use crate::errors::WsError;
+    use crate::http;
+    use std::net::TcpStream;
 
     use super::{get_host, get_scheme};
 
@@ -134,7 +134,7 @@ pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking {
-    use http::Uri;
+    use crate::http::Uri;
     use tokio::net::TcpStream;
 
     use crate::errors::WsError;
@@ -227,7 +227,7 @@ mod non_blocking {
         Ok(tls_stream)
     }
 
-    #[cfg(feature = "async_tls_rustls")]
+    #[cfg(feature = "async_tls_native")]
     impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> crate::codec::Split
         for tokio_native_tls::TlsStream<S>
     {

@@ -1,7 +1,4 @@
-use bytes::Buf;
-use std::borrow::Cow;
-use std::io::{Read, Write};
-
+use crate::http;
 use crate::{
     codec::{
         FrameCodec, FrameConfig, FrameReadState, FrameRecv, FrameSend, FrameWriteState, Split,
@@ -11,6 +8,9 @@ use crate::{
     protocol::standard_handshake_resp_check,
     Message,
 };
+use bytes::Buf;
+use std::borrow::Cow;
+use std::io::{Read, Write};
 
 macro_rules! impl_recv {
     () => {
