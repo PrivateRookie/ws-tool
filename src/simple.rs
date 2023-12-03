@@ -127,6 +127,7 @@ impl ClientConfig {
 
     /// perform websocket handshake
     #[cfg(feature = "async")]
+    #[allow(unused)]
     pub async fn async_connect_with<C, F>(
         &mut self,
         uri: impl TryInto<Uri, Error = http::uri::InvalidUri>,

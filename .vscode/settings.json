@@ -16,5 +16,4 @@
         "tungstenite",
         "webpki"
     ],
-    "rust-analyzer.cargo.features": "all",
 }
