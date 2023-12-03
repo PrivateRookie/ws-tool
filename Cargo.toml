@@ -1,5 +1,5 @@
 [workspace]
-package.version = "0.10.2"
+package.version = "0.10.3"
 members = [".", "ffi/py", "http_shim"]
 
 [package]
@@ -50,11 +50,11 @@ native-tls = { version = "0.2", optional = true }
 
 # deflate deps
 libz-sys = { version = "1.1.8", optional = true }
+# extsion deps
 poem = { version = "1", optional = true }
-axum = { version = "0.7", optional = true, features = ["ws"] }
+axum = { version = "0.7", optional = true }
 hyper = { version = "1", optional = true }
 hyper-util = { version = "0.1", optional = true }
-
 # proxy deps
 
 
