@@ -5,7 +5,8 @@
 
 use std::collections::HashMap;
 
-pub use http_shim as http;
+mod shim;
+pub use shim::http;
 
 /// websocket error definitions
 pub mod errors;
