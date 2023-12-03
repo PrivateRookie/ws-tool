@@ -24,7 +24,7 @@ keywords = ["websocket", "proxy", "network"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-http = { path = "http_shim", optional = true }
+http = { path = "http_shim", optional = true, version = "0.10" }
 thiserror = "1"
 rand = "0.8"
 base64 = "0.20"
