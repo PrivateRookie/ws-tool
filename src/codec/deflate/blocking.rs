@@ -101,7 +101,7 @@ impl DeflateWriteState {
             let mask = mask_fn();
             match (self.com.as_mut(), code.is_data()) {
                 (Some(handler), true) => {
-                    let mut output = Vec::with_capacity(chunk.len());
+                    let mut output = vec![];
                     handler
                         .com
                         .compress(&[chunk], &mut output)
