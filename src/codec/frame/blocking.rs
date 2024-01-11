@@ -1,5 +1,5 @@
 use super::{FrameConfig, FrameReadState, FrameWriteState};
-use crate::http;
+use http;
 use crate::{
     codec::{apply_mask, Split},
     errors::WsError,

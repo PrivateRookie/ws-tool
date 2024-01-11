@@ -1,4 +1,4 @@
-use crate::http;
+use http;
 use core::slice;
 use std::{
     ffi::{c_char, c_int, c_uint},

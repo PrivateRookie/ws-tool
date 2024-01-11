@@ -1,5 +1,4 @@
-use crate::http;
-use crate::http::Uri;
+use http::Uri;
 use crate::{
     codec::{PMDConfig, WindowBit},
     connector::{get_host, get_scheme},

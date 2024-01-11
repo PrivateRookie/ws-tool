@@ -1,6 +1,6 @@
 use crate::errors::{ProtocolError, WsError};
 use crate::frame::{get_bit, HeaderView, OpCode, SimplifiedHeader};
-use crate::http;
+use http;
 use crate::protocol::{cal_accept_key, standard_handshake_req_check};
 use bytes::BytesMut;
 use std::fmt::Debug;

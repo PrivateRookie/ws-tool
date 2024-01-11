@@ -3,7 +3,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use ws_tool::{
     codec::{DeflateCodec, PMDConfig, WindowBit},
     frame::OpCode,
-    http, ClientBuilder, ClientConfig,
+    ClientBuilder, ClientConfig,
 };
 
 fn main() {

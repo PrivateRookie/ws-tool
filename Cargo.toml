@@ -1,5 +1,5 @@
 [workspace]
-package.version = "0.10.5"
+package.version = "0.11.0"
 members = [".", "ffi/py"]
 
 [package]
@@ -24,8 +24,7 @@ keywords = ["websocket", "proxy", "network"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-http1_x = { package = "http", version = "1", optional = true }
-http0_x = { package = "http", version = "0.2", optional = true }
+http = { package = "http", version = "1" }
 thiserror = "1"
 rand = "0.8"
 base64 = "0.20"
@@ -52,7 +51,7 @@ native-tls = { version = "0.2", optional = true }
 # deflate deps
 libz-sys = { version = "1.1.8", optional = true }
 # extsion deps
-poem = { version = "1", optional = true }
+poem = { version = "2", optional = true }
 axum = { version = "0.7", optional = true }
 hyper = { version = "1", optional = true }
 hyper-util = { version = "0.1", optional = true }
@@ -60,7 +59,7 @@ hyper-util = { version = "0.1", optional = true }
 
 
 [features]
-default = ["sync", "simple", "sync_tls_rustls", "http_old"]
+default = ["sync", "simple", "sync_tls_rustls"]
 sync = []
 sync_tls_rustls = ["sync", "rustls-connector", "rustls-pemfile"]
 sync_tls_native = ["sync", "native-tls"]
@@ -77,11 +76,9 @@ async_tls_native = ["async", "tokio-native-tls"]
 deflate = ["libz-sys"]
 deflate_static = ["libz-sys/static"]
 deflate_ng = ["libz-sys/zlib-ng"]
-poem = ["dep:poem", "async", "http_old"]
-axum = ["dep:axum", "dep:hyper", "dep:hyper-util", "async", "http_new"]
+poem = ["dep:poem", "async"]
+axum = ["dep:axum", "dep:hyper", "dep:hyper-util", "async"]
 simple = ["deflate"]
-http_old = ["dep:http0_x"]
-http_new = ["dep:http1_x"]
 
 
 [dev-dependencies]

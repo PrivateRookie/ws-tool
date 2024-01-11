@@ -2,7 +2,7 @@
 #[cfg(feature = "poem")]
 pub mod poem_ext {
     use crate::errors::WsError;
-    use crate::http;
+    use http;
     use poem::Body;
     use std::future::Future;
 
@@ -75,7 +75,7 @@ pub mod poem_ext {
 /// axum websocket extension
 #[cfg(feature = "axum")]
 pub mod axum_ext {
-    use crate::http;
+    use http;
     use std::future::Future;
 
     use axum::{body::Body, response::Response};

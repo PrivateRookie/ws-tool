@@ -1,4 +1,5 @@
 use clap::Parser;
+use http;
 use rayon::prelude::*;
 use std::{
     collections::HashMap,
@@ -8,7 +9,6 @@ use std::{
 };
 use tracing::{info, Level};
 use tracing_subscriber::util::SubscriberInitExt;
-use ws_tool::http;
 use ws_tool::{
     codec::{BytesCodec, PMDConfig, WindowBit},
     frame::OpCode::Close,

@@ -1,4 +1,4 @@
-use crate::http;
+use http;
 use bytes::BytesMut;
 use std::{io::IoSlice, ops::Range};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};

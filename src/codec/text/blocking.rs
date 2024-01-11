@@ -1,4 +1,4 @@
-use crate::http;
+use http;
 use crate::{
     codec::{
         FrameCodec, FrameConfig, FrameReadState, FrameRecv, FrameSend, FrameWriteState, Split,

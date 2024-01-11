@@ -1,5 +1,5 @@
-use crate::http;
-use crate::http::Uri;
+use http;
+use http::Uri;
 use crate::{errors::WsError, protocol::Mode};
 
 /// get websocket scheme
@@ -20,7 +20,7 @@ pub fn get_host(uri: &Uri) -> Result<&str, WsError> {
 #[cfg(feature = "sync")]
 mod blocking {
     use crate::errors::WsError;
-    use crate::http;
+    use http;
     use std::net::TcpStream;
 
     use super::{get_host, get_scheme};
@@ -134,7 +134,7 @@ pub use blocking::*;
 
 #[cfg(feature = "async")]
 mod non_blocking {
-    use crate::http::Uri;
+    use http::Uri;
     use tokio::net::TcpStream;
 
     use crate::errors::WsError;

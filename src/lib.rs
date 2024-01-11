@@ -5,9 +5,6 @@
 
 use std::collections::HashMap;
 
-mod shim;
-pub use shim::http;
-
 /// websocket error definitions
 pub mod errors;
 /// websocket transport unit
@@ -109,7 +106,6 @@ impl ClientBuilder {
 
 #[cfg(feature = "sync")]
 mod blocking {
-    use crate::http;
     use std::{
         io::{Read, Write},
         net::TcpStream,
@@ -257,7 +253,7 @@ mod blocking {
 
 #[cfg(feature = "async")]
 mod non_blocking {
-    use crate::http;
+    use http;
     use std::fmt::Debug;
 
     use tokio::{

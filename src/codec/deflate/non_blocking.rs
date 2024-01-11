@@ -1,4 +1,4 @@
-use crate::http;
+use http;
 use crate::{
     codec::{apply_mask, FrameConfig, Split},
     errors::{ProtocolError, WsError},
