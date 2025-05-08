@@ -24,7 +24,7 @@ pub struct ClientConfig {
     pub extra_headers: HashMap<String, String>,
     /// modified socket option after create tcp socket, this function will be applied
     /// before start tls session
-    pub set_socket_fn: Box<dyn FnMut(&std::net::TcpStream) -> Result<(), WsError>>,
+    pub set_socket_fn: Box<dyn FnMut(&std::net::TcpStream) -> Result<(), WsError> + Send + 'static>,
 }
 
 impl Default for ClientConfig {
