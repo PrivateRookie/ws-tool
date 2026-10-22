@@ -42,7 +42,7 @@ tokio-rustls = { version = "0.23", optional = true }
 tokio-native-tls = { version = "0.3.1", optional = true }
 rustls-pemfile = { version = "1.0.1", optional = true }
 webpki = { version = "0.22", optional = true }
-webpki-roots = { version = "0.22.5", optional = true }
+webpki-roots = { version = "1.0.10", optional = true }
 rustls-connector = { version = "0.16", optional = true, features = [
     "webpki-roots-certs",
 ] }
